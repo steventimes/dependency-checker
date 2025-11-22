@@ -1,22 +1,30 @@
 from __future__ import annotations
-from pathlib import Path
 from typing import Dict, Optional
+from pathlib import Path
+import tomllib
 
 from .base_parser import BaseDependencyParser
 
-class RequirementParser(BaseDependencyParser):
-
+class PyProjectParser(BaseDependencyParser):
+    
     def parse(self) -> Dict[str, Optional[str]]:
         deps: Dict[str, Optional[str]] = {}
         
         if not self.path.exists():
             return deps
         
-        with self.path.open("r", encoding="utf-8") as f:
-            for line in f:
+        try:
+            data = tomllib.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            return deps
+        
+        projects = data.get("project")
+        if not projects:
+            return deps
+        
+        dep_list = projects.get("dependencies", [])
+        for line in dep_list:
                 line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
                 
                 for sign in ["==", ">=", "<=", "~=", "!=", "<", ">"]:
                     if sign in line:
@@ -25,5 +33,4 @@ class RequirementParser(BaseDependencyParser):
                         break
                 else:
                     deps[line.lower()] = None
-                    
         return deps
