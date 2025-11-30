@@ -30,6 +30,8 @@ class ReportFormatter:
                 report.append(f"Package: {pkg}")
                 for issue in issues:
                     report.append(f" - {issue['id']}: {issue['summary']}")
+                    if issue.get('fix_version'):
+                        report.append(f"    FIX: Upgrade to version {issue['fix_version']}")
         else:
             report.append(" None")
             

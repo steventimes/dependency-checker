@@ -23,5 +23,5 @@ The program will scan through all python files to find used imports, and then co
 ### Future of this little project
 
 1. try on auto fixing unused imports
-2. recommand a list of packages with their version to fix the vulnerability
+2. recommand a list of packages with their version to fix the vulnerability (ADDED)
 3. write documentations

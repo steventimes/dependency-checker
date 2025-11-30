@@ -8,6 +8,7 @@ from depcheck.analyzer.import_scanner import ImportScanner
 from depcheck.security.osv_checker import OSV_Check
 from depcheck.reporter.formatter import ReportFormatter
 from depcheck.reporter.dependency_reporter import DependencyReporter
+from depcheck.cli.util import normalize_imports
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -41,7 +42,8 @@ def main():
         
     
     scanner = ImportScanner()
-    imported_pkg = scanner.scan_directory(project_root)
+    raw_imports = scanner.scan_directory(project_root)
+    imported_pkg = normalize_imports(raw_imports)
     dep_reporter = DependencyReporter(project_root)
     declared_deps = dep_reporter.parse_all()
     

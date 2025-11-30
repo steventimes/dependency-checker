@@ -1,4 +1,5 @@
 import ast
+import sys
 from pathlib import Path
 
 class ImportScanner:
@@ -25,6 +26,8 @@ class ImportScanner:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     top = alias.name.split('.')[0]
+                    if top in sys.stdlib_module_names: 
+                        continue                      
                     imports.add(top)
                     
             elif isinstance(node, ast.ImportFrom):

@@ -19,14 +19,22 @@ class OSV_Check:
         vulns = data.get("vulns", [])
         results = []
         
-        results = [
-            {
+        for v in vulns:
+            fix_version = None
+            for affected in v.get('affected', []):
+                for range_ in affected.get('ranges', []):
+                    if range_.get('type') == 'ECOSYSTEM':
+                        for event in range_.get('events', []):
+                            if 'fixed' in event:
+                                fix_version = event['fixed']
+                                break
+
+            results.append({
                 "id": v.get("id"),
                 "summary": v.get("summary"),
-                "severity": v.get("severity", [])
-            }
-            for v in vulns
-        ]
+                "severity": v.get("severity", []),
+                "fix_version": fix_version
+            })
 
         return results
         
