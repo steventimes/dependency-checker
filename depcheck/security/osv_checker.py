@@ -1,19 +1,45 @@
 import requests
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class OSV_Check:
     
     OSV_URL = "https://api.osv.dev/v1/query"
+    TIMEOUT = 10  # seconds
     
-    def check(self, pkg, version):
+    def check(self, pkg: str, version: str) -> list:
+        version_clean = version.lstrip('=<>!~') if version else version
+        
+        if not version_clean:
+            logger.warning(f"No version specified for package {pkg}, skipping OSV check")
+            return []
+        
         payload = {
-            "package":{"name": pkg, "ecosystem":"PyPI"},
-            "version": version
+            "package": {"name": pkg, "ecosystem": "PyPI"},
+            "version": version_clean
         }
         
         try:
-            response = requests.post(self.OSV_URL, json=payload)
+            response = requests.post(
+                self.OSV_URL, 
+                json=payload, 
+                timeout=self.TIMEOUT
+            )
+            response.raise_for_status()
             data = response.json()
-        except Exception:
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout checking {pkg}@{version_clean} against OSV API")
+            return []
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error checking {pkg}@{version_clean}: {e}")
+            return []
+        except ValueError as e:
+            logger.error(f"Invalid JSON response for {pkg}@{version_clean}: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error checking {pkg}@{version_clean}: {e}")
             return []
         
         vulns = data.get("vulns", [])
@@ -28,6 +54,10 @@ class OSV_Check:
                             if 'fixed' in event:
                                 fix_version = event['fixed']
                                 break
+                        if fix_version:
+                            break
+                if fix_version:
+                    break
 
             results.append({
                 "id": v.get("id"),
@@ -37,4 +67,3 @@ class OSV_Check:
             })
 
         return results
-        

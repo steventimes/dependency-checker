@@ -1,3 +1,8 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 class ReportFormatter:
     
     def format(self, imports, declared, vulns):
@@ -11,20 +16,20 @@ class ReportFormatter:
             for u in unused:
                 report.append(f" - {u}")
         else:
-            report.append(f" None")
+            report.append(" None")
             
         # missing dependencies
-        missing = [pkg for pkg in imports.keys() if pkg not in declared]
+        missing = [pkg for pkg in imports if pkg not in declared]
         
         report.append("\nMissing Dependencies: ")
         if missing:
             for m in missing:
                 report.append(f" - {m}")
         else:
-            report.append(f" None")
+            report.append(" None")
             
-        # vulnerbilities
-        report.append("\nVunerabilities")
+        # vulnerabilities
+        report.append("\nVulnerabilities:")
         if vulns:
             for pkg, issues in vulns.items():
                 report.append(f"Package: {pkg}")

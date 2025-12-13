@@ -10,4 +10,4 @@ dependencies = [
 ]
 
 [project.scripts]
-depcheck = "depcheck.cli.main:main"
+depcheck = "depcheck.cli.__main__:main"
