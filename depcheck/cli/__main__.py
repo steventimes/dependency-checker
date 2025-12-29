@@ -3,13 +3,14 @@ import argparse
 import json
 import sys
 import logging
+import concurrent.futures
 from pathlib import Path
 
 from depcheck.analyzer.import_scanner import ImportScanner
 from depcheck.security.osv_checker import OSV_Check
 from depcheck.reporter.formatter import ReportFormatter
 from depcheck.reporter.dependency_reporter import DependencyReporter
-from depcheck.cli.util import normalize_imports
+from depcheck.cli.util import normalize_imports, load_ignore_file
 
 # logging configure
 logging.basicConfig(
@@ -35,7 +36,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Output result as json"
+        help="Output result as JSON"
+    )
+    
+    parser.add_argument(
+        "--graph",
+        metavar="FILE",
+        help="Generate a dependency graph .dot file (e.g. --graph graph.dot)"
+    )
+    
+    parser.add_argument(
+        "--fail-on-vuln",
+        action="store_true",
+        help="Exit with error code 1 if vulnerabilities are found (CI/CD mode)"
     )
     
     parser.add_argument(
@@ -45,6 +58,13 @@ def parse_args() -> argparse.Namespace:
         help="Enable verbose logging"
     )
     
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=5,
+        help="Number of threads for vulnerability checks (default: 5)"
+    )
+    
     return parser.parse_args()
 
 
@@ -52,15 +72,9 @@ def main():
     args = parse_args()
     
     if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
-    elif args.json:
-        logging.getLogger().setLevel(logging.WARNING)
-    
+        logger.setLevel(logging.DEBUG)
+        
     project_root = Path(args.project_path).resolve()
-    
-    if not project_root.exists():
-        logger.error(f"Path does not exist: {project_root}")
-        sys.exit(1)
     
     if not project_root.is_dir():
         logger.error(f"Path is not a directory: {project_root}")
@@ -68,8 +82,18 @@ def main():
     
     logger.info(f"Scanning project: {project_root}")
     
-    # Scan for imports
+    ignored_packages = load_ignore_file(project_root)
+    if ignored_packages:
+        logger.info(f"Ignored packages from config: {len(ignored_packages)}")
+
     scanner = ImportScanner()
+    
+    # new feature of generating graph
+    if args.graph:
+        graph_path = Path(args.graph)
+        logger.info(f"Generating dependency graph at {graph_path}")
+        scanner.generate_dot(project_root, graph_path)
+
     raw_imports = scanner.scan_directory(project_root)
     imported_pkg = normalize_imports(raw_imports)
     logger.info(f"Found {len(imported_pkg)} imported packages")
@@ -79,31 +103,56 @@ def main():
     declared_deps = dep_reporter.parse_all()
     logger.info(f"Found {len(declared_deps)} declared dependencies")
     
-    # Check for vulnerabilities
+
+    active_declared = {
+        k: v for k, v in declared_deps.items() 
+        if k.lower() not in ignored_packages
+    }
+
     osv = OSV_Check()
     vulns = {}
     
-    if declared_deps:
+    if active_declared:
         logger.info("Checking for vulnerabilities...")
-        for pkg, version in declared_deps.items():
-            if version:
-                issues = osv.check(pkg, version)
-                if issues:
-                    vulns[pkg] = issues
-                    logger.warning(f"Found {len(issues)} vulnerabilities in {pkg}")
+
+        check_list = {pkg: ver for pkg, ver in active_declared.items() if ver}
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+            future_to_pkg = {
+                executor.submit(osv.check, pkg, version): pkg 
+                for pkg, version in check_list.items()
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_pkg):
+                pkg = future_to_pkg[future]
+                try:
+                    issues = future.result()
+                    if issues:
+                        vulns[pkg] = issues
+                        logger.warning(f"Found {len(issues)} vulnerabilities in {pkg}")
+                except Exception as exc:
+                    logger.error(f"{pkg} check generated an exception: {exc}")
     
     # Output results
     if args.json:
         output = {
             "imported": sorted(imported_pkg),
-            "declared_dependencies": declared_deps,
+            "declared_dependencies": active_declared,
             "vulnerabilities": vulns,
         }
         print(json.dumps(output, indent=2))
     else:
         formatter = ReportFormatter()
-        print(formatter.format(imported_pkg, declared_deps, vulns))
+        print("\n" + "="*30)
+        print("       SCAN REPORT       ")
+        print("="*30)
+        print(formatter.format(imported_pkg, active_declared, vulns))
 
+    if args.fail_on_vuln and vulns:
+        logger.error(f"Build failed: Found vulnerabilities in {len(vulns)} packages.")
+        sys.exit(1)
+        
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()

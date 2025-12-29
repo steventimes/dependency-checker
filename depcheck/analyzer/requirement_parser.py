@@ -20,20 +20,14 @@ class RequirementParser(BaseDependencyParser):
         try:
             with self.path.open("r", encoding="utf-8") as f:
                 for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
+                    line = line.split('#')[0].strip()
+                    if not line:
                         continue
                     
-                    version_found = False
-                    for sign in ["==", ">=", "<=", "~=", "!=", "<", ">"]:
-                        if sign in line:
-                            name, version = line.split(sign, 1)
-                            deps[name.strip().lower()] = version.strip()
-                            version_found = True
-                            break
-                    
-                    if not version_found:
-                        deps[line.lower()] = None
+                    name, version = self.parse_line(line)
+                    if name:
+                        deps[name] = version
+                        
         except Exception as e:
             logger.error(f"Error parsing requirements file {self.path}: {e}")
                     

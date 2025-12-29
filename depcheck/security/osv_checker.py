@@ -1,5 +1,6 @@
 import requests
 import logging
+from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -7,13 +8,12 @@ logger = logging.getLogger(__name__)
 class OSV_Check:
     
     OSV_URL = "https://api.osv.dev/v1/query"
-    TIMEOUT = 10  # seconds
+    TIMEOUT = 10 
     
-    def check(self, pkg: str, version: str) -> list:
+    def check(self, pkg: str, version: str) -> List[Dict[str, Any]]:
         version_clean = version.lstrip('=<>!~') if version else version
         
         if not version_clean:
-            logger.warning(f"No version specified for package {pkg}, skipping OSV check")
             return []
         
         payload = {
@@ -29,41 +29,33 @@ class OSV_Check:
             )
             response.raise_for_status()
             data = response.json()
-        except requests.exceptions.Timeout:
-            logger.error(f"Timeout checking {pkg}@{version_clean} against OSV API")
-            return []
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Network error checking {pkg}@{version_clean}: {e}")
-            return []
-        except ValueError as e:
-            logger.error(f"Invalid JSON response for {pkg}@{version_clean}: {e}")
-            return []
         except Exception as e:
-            logger.error(f"Unexpected error checking {pkg}@{version_clean}: {e}")
+            logger.error(f"OSV check failed for {pkg}@{version_clean}: {e}")
             return []
         
+        return self._parse_response(data)
+
+    def _parse_response(self, data: dict) -> List[Dict[str, Any]]:
+        """Parses the raw OSV response and extracts key vulnerability info."""
         vulns = data.get("vulns", [])
         results = []
         
         for v in vulns:
-            fix_version = None
-            for affected in v.get('affected', []):
-                for range_ in affected.get('ranges', []):
-                    if range_.get('type') == 'ECOSYSTEM':
-                        for event in range_.get('events', []):
-                            if 'fixed' in event:
-                                fix_version = event['fixed']
-                                break
-                        if fix_version:
-                            break
-                if fix_version:
-                    break
-
             results.append({
                 "id": v.get("id"),
-                "summary": v.get("summary"),
+                "summary": v.get("summary", "No summary available"),
                 "severity": v.get("severity", []),
-                "fix_version": fix_version
+                "fix_version": self._find_fix_version(v)
             })
 
         return results
+
+    def _find_fix_version(self, vuln_data: dict) -> Optional[str]:
+        """Extracts the first fixed version from the vulnerability data."""
+        for affected in vuln_data.get('affected', []):
+            for range_ in affected.get('ranges', []):
+                if range_.get('type') == 'ECOSYSTEM':
+                    for event in range_.get('events', []):
+                        if 'fixed' in event:
+                            return event['fixed']
+        return None

@@ -34,15 +34,8 @@ class SetupCfgParser(BaseDependencyParser):
             if not line:
                 continue
             
-            version_found = False
-            for sign in ["==", ">=", "<=", "~=", "!=", "<", ">"]:
-                if sign in line:
-                    name, version = line.split(sign, 1)
-                    deps[name.strip().lower()] = version.strip()
-                    version_found = True
-                    break
-            
-            if not version_found:
-                deps[line.lower()] = None
-                    
+            name, version = self.parse_line(line)
+            if name:
+                deps[name] = version
+                
         return deps

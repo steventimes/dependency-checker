@@ -30,18 +30,16 @@ class PyProjectParser(BaseDependencyParser):
             return deps
         
         dep_list = projects.get("dependencies", [])
+        
+        optional_deps = projects.get("optional-dependencies", {})
+        for group_name, group_deps in optional_deps.items():
+            dep_list.extend(group_deps)
         for line in dep_list:
-            line = line.strip()
-            
-            version_found = False
-            for sign in ["==", ">=", "<=", "~=", "!=", "<", ">"]:
-                if sign in line:
-                    name, version = line.split(sign, 1)
-                    deps[name.strip().lower()] = version.strip()
-                    version_found = True
-                    break
-            
-            if not version_found:
-                deps[line.lower()] = None
+            if not isinstance(line, str):
+                continue
                 
+            name, version = self.parse_line(line)
+            if name:
+                deps[name] = version
+            
         return deps
