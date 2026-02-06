@@ -7,6 +7,7 @@ from ..analyzer.base_parser import BaseDependencyParser
 from ..analyzer.requirement_parser import RequirementParser
 from ..analyzer.pyproject_parser import PyProjectParser
 from ..analyzer.setupcfg_parser import SetupCfgParser
+from ..analyzer.pip_install_parser import PipInstallParser
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,11 @@ parser_map: Dict[str, Type[BaseDependencyParser]] = {
     "requirements.txt": RequirementParser,
     "pyproject.toml": PyProjectParser,
     "setup.cfg": SetupCfgParser,
+    "Dockerfile": PipInstallParser,
+    "dockerfile": PipInstallParser,
+    "Makefile": PipInstallParser,
+    "makefile": PipInstallParser,
+    "CMakeLists.txt": PipInstallParser,
 }
 
 

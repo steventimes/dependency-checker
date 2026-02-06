@@ -18,7 +18,7 @@ To run as a module: `python -m depcheck {folder to scan}`
 
 ## Workflow of the program
 
-The program will scan through all python files to find used imports, and then compare to *requirement.txt*. And for all imports, it will send to OSV API to check for vulnerabilities.
+The program will scan through all python files to find used imports, and then compare to *requirement.txt* and other supported dependency sources. It also inspects Dockerfile/Makefile/CMakeLists.txt for `pip install` commands as additional dependency hints. For all imports, it will send to OSV API to check for vulnerabilities.
 
 ### Future of this little project
 
