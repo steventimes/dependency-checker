@@ -23,6 +23,8 @@ class RequirementParser(BaseDependencyParser):
                     line = line.split('#')[0].strip()
                     if not line:
                         continue
+                    if line.startswith("-"):
+                        continue
                     
                     name, version = self.parse_line(line)
                     if name:

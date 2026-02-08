@@ -22,11 +22,11 @@ class BaseDependencyParser(ABC):
         for op in operators:
             if op in line:
                 parts = line.split(op, 1)
-                name = parts[0].strip().lower()
+                name = parts[0].split("[", 1)[0].strip().lower()
                 version = parts[1].strip()
                 return name, version
         
-        return line.lower(), None
+        return line.split("[", 1)[0].strip().lower(), None
 
     @abstractmethod
     def parse(self) -> Dict[str, Optional[str]]:
