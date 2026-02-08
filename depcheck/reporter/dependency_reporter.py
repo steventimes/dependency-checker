@@ -35,6 +35,11 @@ class DependencyReporter:
             if file.exists():
                 found_files.append(file)
                 logger.info(f"Found dependency file: {file}")
+
+        for file in sorted(self.project_root.glob("requirements*.txt")):
+            if file not in found_files:
+                found_files.append(file)
+                logger.info(f"Found dependency file: {file}")
                 
         if not found_files:
             logger.warning(f"No dependency files found in {self.project_root}")
@@ -46,7 +51,7 @@ class DependencyReporter:
         all_deps: Dict[str, Optional[str]] = {}
         
         for file_path in dependency_files:
-            parser_class = parser_map[file_path.name]
+            parser_class = self._get_parser(file_path)
             parser = parser_class(file_path)
             
             try:
@@ -57,6 +62,13 @@ class DependencyReporter:
                 logger.error(f"Failed to parse {file_path}: {e}")
                 
         return all_deps
+
+    def _get_parser(self, file_path: Path) -> Type[BaseDependencyParser]:
+        if file_path.name in parser_map:
+            return parser_map[file_path.name]
+        if file_path.name.startswith("requirements") and file_path.suffix == ".txt":
+            return RequirementParser
+        raise KeyError(f"Unsupported dependency file: {file_path}")
     
     def generate_report(self) -> str:
         deps = self.parse_all()

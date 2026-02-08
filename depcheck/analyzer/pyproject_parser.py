@@ -1,8 +1,12 @@
 from __future__ import annotations
 from typing import Dict, Optional
 from pathlib import Path
-import tomllib
 import logging
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 from .base_parser import BaseDependencyParser
 
