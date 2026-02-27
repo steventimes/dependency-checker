@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+from packaging.requirements import Requirement
+
 class BaseDependencyParser(ABC):
     
     def __init__(self, path: Path):
@@ -13,20 +15,13 @@ class BaseDependencyParser(ABC):
         Parses a dependency string into a (name, version) tuple.
         """
         line = line.strip()
-        
-        if ";" in line:
-            line = line.split(";")[0].strip()
+        try:
+            requirement = Requirement(line)
+        except Exception:
+            return "", None
 
-        operators = ["==", ">=", "<=", "~=", "!=", "<", ">"]
-        
-        for op in operators:
-            if op in line:
-                parts = line.split(op, 1)
-                name = parts[0].split("[", 1)[0].strip().lower()
-                version = parts[1].strip()
-                return name, version
-        
-        return line.split("[", 1)[0].strip().lower(), None
+        specifier = str(requirement.specifier) if requirement.specifier else None
+        return requirement.name.strip().lower(), specifier
 
     @abstractmethod
     def parse(self) -> Dict[str, Optional[str]]:

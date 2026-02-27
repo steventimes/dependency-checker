@@ -15,6 +15,9 @@ To run as a module: `python -m depcheck {folder to scan}`
 ## Option
 
 `--json` to return output in json format
+`--compat` to check dependency compatibility against PyPI metadata
+`--fix-compat` to auto-fix compatibility issues by updating requirements*.txt
+`--auto-update` to update requirements*.txt to latest compatible versions
 
 ## Workflow of the program
 

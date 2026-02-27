@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 authors = [{ name = "Steven Yang", email = "stevenyang0316@gmail.com" }]
 
 dependencies = [
+    "packaging",
     "requests",
     "tomli; python_version < '3.11'",
 ]
