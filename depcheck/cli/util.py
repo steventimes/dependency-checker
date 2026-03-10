@@ -1,11 +1,11 @@
-import sys
 from pathlib import Path
-from typing import Set
+from typing import Mapping, Set
 
 try:
     from importlib.metadata import packages_distributions
 except ImportError:
-    packages_distributions = lambda: {}
+    def packages_distributions() -> Mapping[str, list[str]]:
+        return {}
 
 
 def normalize_imports(imported_modules: Set[str]) -> Set[str]:

@@ -2,7 +2,7 @@ import ast
 import sys
 import logging
 from pathlib import Path
-from typing import Set, Dict, List
+from typing import Set, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ class ImportScanner:
     def scan_directory(self, path: Path) -> Set[str]:
         """Scans directory and returns a flat set of 3rd-party imports."""
         root = Path(path)
-        imports = set()
+        imports: Set[str] = set()
         file_count = 0
         local_modules = self._get_local_modules(root)
         logger.debug(f"Identified local modules: {local_modules}")
@@ -73,7 +73,7 @@ class ImportScanner:
 
     def _scan_for_graph(self, root: Path) -> Dict[str, Set[str]]:
         """Internal method to build a map of File -> [Imports]."""
-        mapping = {}
+        mapping: Dict[str, Set[str]] = {}
         for file in root.rglob("*.py"):
             if any(part.startswith('.') for part in file.parts):
                 continue
@@ -86,7 +86,7 @@ class ImportScanner:
         return mapping
 
     def _get_local_modules(self, root: Path) -> Set[str]:
-        locals_ = set()
+        locals_: Set[str] = set()
         if not root.exists():
             return locals_
             
@@ -100,7 +100,7 @@ class ImportScanner:
         return locals_
     
     def scan_file_(self, path: Path) -> Set[str]:
-        imports = set()
+        imports: Set[str] = set()
         try:
             with open(path, "r", encoding="utf-8") as file:
                 tree = ast.parse(file.read(), filename=str(path))

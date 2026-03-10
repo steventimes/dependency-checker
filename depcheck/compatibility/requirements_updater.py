@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
+from packaging.utils import NormalizedName
+
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
@@ -19,7 +21,7 @@ class RequirementsUpdater:
     def apply(self, file_path: Path, updates: Dict[str, str]) -> RequirementUpdate:
         lines = file_path.read_text(encoding="utf-8").splitlines()
         updated: Dict[str, str] = {}
-        remaining = updates.copy()
+        remaining: Dict[NormalizedName, str] = {canonicalize_name(name): spec for name, spec in updates.items()}
         new_lines: List[str] = []
 
         for line in lines:

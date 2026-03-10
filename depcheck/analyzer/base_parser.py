@@ -20,16 +20,10 @@ class BaseDependencyParser(ABC):
         except Exception:
             return "", None
 
-        operators = ["==", ">=", "<=", "~=", "!=", "<", ">", "="]
-        
-        for op in operators:
-            if op in line:
-                parts = line.split(op, 1)
-                name = parts[0].split("[", 1)[0].strip().lower()
-                version = BaseDependencyParser._normalize_version(parts[1])
-                return name, version
-
-        return line.split("[", 1)[0].strip().lower(), None
+        name = requirement.name.strip().lower()
+        specifier = str(requirement.specifier)
+        version = BaseDependencyParser._normalize_version(specifier) if specifier else None
+        return name, version
 
     @staticmethod
     def _normalize_version(raw_version: str) -> Optional[str]:

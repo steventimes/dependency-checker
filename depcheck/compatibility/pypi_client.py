@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Dict, Optional, List
 import logging
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

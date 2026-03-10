@@ -1,36 +1,33 @@
+import tempfile
 import unittest
-from unittest.mock import patch, mock_open
 from pathlib import Path
-import depcheck.cli.util 
-from depcheck.cli.util import normalize_imports, load_ignore_file
+from unittest.mock import patch
 
-class TestUtil(unittest.TestCase):
-    
-    @patch.object(depcheck.cli.util, "packages_distributions")
-    def test_normalize_dynamic_mapping(self, mock_dist):
-        """Test that installed packages are detected via importlib."""
-        mock_dist.return_value = {"yaml": ["PyYAML"]}
-        
-        raw = {"yaml", "requests"}
-        normalized = normalize_imports(raw)
-        
+import depcheck.cli.util
+from depcheck.cli.util import load_ignore_file, normalize_imports
+
+
+class TestUtilFunctions(unittest.TestCase):
+    def test_normalize_imports_prefers_installed_mapping_then_static_then_lowercase(self):
+        with patch.object(
+            depcheck.cli.util,
+            "packages_distributions",
+            return_value={"yaml": ["PyYAML"], "jwt": ["PyJWT"]},
+        ):
+            normalized = normalize_imports({"yaml", "jwt", "bs4", "CustomLib"})
+
         self.assertIn("PyYAML", normalized)
-        self.assertIn("requests", normalized)
-
-    def test_normalize_static_fallback(self):
-        """Test hardcoded fallback for known packages."""
-        raw = {"bs4", "cv2"}
-        normalized = normalize_imports(raw)
-        
+        self.assertIn("PyJWT", normalized)
         self.assertIn("beautifulsoup4", normalized)
-        self.assertIn("opencv-python", normalized)
+        self.assertIn("customlib", normalized)
 
-    @patch("builtins.open", new_callable=mock_open, read_data="# comment\npytest\nblack")
-    def test_load_ignore_file(self, mock_file):
-        """Test reading .depcheckignore."""
-        with patch.object(Path, 'exists', return_value=True):
-            ignored = load_ignore_file(Path("."))
-            
-        self.assertIn("pytest", ignored)
-        self.assertIn("black", ignored)
-        self.assertEqual(len(ignored), 2)
+    def test_load_ignore_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / ".depcheckignore").write_text(
+                "# comment\npytest\nBLACK\n\n",
+                encoding="utf-8",
+            )
+            ignored = load_ignore_file(root)
+
+        self.assertEqual(ignored, {"pytest", "black"})

@@ -1,4 +1,4 @@
-import requests
+import requests  # type: ignore[import-untyped]
 import logging
 from typing import Optional, List, Dict, Any
 

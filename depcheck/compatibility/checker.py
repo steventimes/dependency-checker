@@ -7,7 +7,7 @@ import logging
 
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
-from packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name, NormalizedName
 from packaging.version import Version, InvalidVersion
 
 from .pypi_client import PyPIClient
@@ -49,7 +49,7 @@ class CompatibilityChecker:
         self.client = client or PyPIClient()
 
     def check(self, declared_deps: Dict[str, Optional[str]]) -> CompatibilityReport:
-        normalized = {
+        normalized: Dict[NormalizedName, Optional[str]] = {
             canonicalize_name(name): spec
             for name, spec in declared_deps.items()
         }
@@ -113,7 +113,7 @@ class CompatibilityChecker:
     def suggest_updates(
         self, declared_deps: Dict[str, Optional[str]], constraints_only: bool = True
     ) -> Dict[str, str]:
-        normalized = {
+        normalized: Dict[NormalizedName, Optional[str]] = {
             canonicalize_name(name): spec
             for name, spec in declared_deps.items()
         }
@@ -133,9 +133,9 @@ class CompatibilityChecker:
         return updates
 
     def _collect_constraints(
-        self, declared: Dict[str, Optional[str]]
-    ) -> DefaultDict[str, List[RequirementConstraint]]:
-        constraints: DefaultDict[str, List[RequirementConstraint]] = defaultdict(list)
+        self, declared: Dict[NormalizedName, Optional[str]]
+    ) -> DefaultDict[NormalizedName, List[RequirementConstraint]]:
+        constraints: DefaultDict[NormalizedName, List[RequirementConstraint]] = defaultdict(list)
 
         for package, spec in declared.items():
             metadata = self._fetch_metadata(package, spec)
@@ -159,7 +159,7 @@ class CompatibilityChecker:
 
         return constraints
 
-    def _fetch_metadata(self, package: str, spec: Optional[str]) -> Optional[Dict]:
+    def _fetch_metadata(self, package: NormalizedName, spec: Optional[str]) -> Optional[Dict]:
         version = self._extract_exact_version(spec)
         return self.client.get_metadata(package, version)
 
@@ -216,8 +216,8 @@ class CompatibilityChecker:
 
     def _suggest_fixes(
         self,
-        constraints: DefaultDict[str, List[RequirementConstraint]],
-        declared: Dict[str, Optional[str]],
+        constraints: DefaultDict[NormalizedName, List[RequirementConstraint]],
+        declared: Dict[NormalizedName, Optional[str]],
         conflicts: List[CompatibilityConflict],
         missing: List[CompatibilityGap],
         unconstrained: List[CompatibilityGap],
