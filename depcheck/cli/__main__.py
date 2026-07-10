@@ -10,6 +10,9 @@ from depcheck.analyzer.import_scanner import ImportScanner
 from depcheck.security.osv_checker import OSV_Check
 from depcheck.reporter.formatter import ReportFormatter
 from depcheck.reporter.dependency_reporter import DependencyReporter
+from depcheck.reporter.scan_summary import build_scan_summary, should_fail
+from depcheck.reporter.policy import evaluate_policy, load_policy, should_fail_policy
+from depcheck.reporter.sarif_reporter import SarifReporter
 from depcheck.cli.util import normalize_imports, load_ignore_file
 from depcheck.compatibility import CompatibilityChecker
 from depcheck.compatibility.requirements_updater import RequirementsUpdater
@@ -40,6 +43,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Output result as JSON"
     )
+
+    parser.add_argument(
+        "--sarif",
+        metavar="FILE",
+        help="Write a SARIF 2.1.0 report for GitHub code scanning and enterprise security tools"
+    )
     
     parser.add_argument(
         "--graph",
@@ -50,9 +59,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fail-on-vuln",
         action="store_true",
-        help="Exit with error code 1 if vulnerabilities are found (CI/CD mode)"
+        help="Exit with error code 1 if vulnerabilities are found (legacy CI/CD mode)"
+    )
+
+    parser.add_argument(
+        "--fail-on",
+        action="append",
+        choices=["any", "missing", "unused", "vuln", "compat"],
+        default=[],
+        help=(
+            "Exit with error code 1 for selected risk classes. "
+            "May be repeated. Choices: any, missing, unused, vuln, compat."
+        ),
     )
     
+    parser.add_argument(
+        "--policy",
+        metavar="FILE",
+        help="Read depcheck policy JSON with fail_on rules and time-bound exemptions"
+    )
+
     parser.add_argument(
         "--verbose",
         "-v",
@@ -169,13 +195,43 @@ def main():
             updates = checker.suggest_updates(active_declared)
             _apply_requirements_updates(dep_reporter, updater, updates)
 
+    summary = build_scan_summary(imported_pkg, active_declared, vulns, compat_report)
+
+    policy_evaluation = None
+    if args.policy:
+        policy_path = Path(args.policy)
+        policy = load_policy(policy_path)
+        policy_evaluation = evaluate_policy(summary, policy)
+        logger.info("Loaded policy file: %s", policy_path)
+
+    if args.sarif:
+        sarif_path = Path(args.sarif)
+        sarif_path.parent.mkdir(parents=True, exist_ok=True)
+        sarif_doc = SarifReporter().build(
+            summary=summary,
+            project_root=project_root,
+            dependency_files=dep_reporter.last_dependency_files,
+            vulnerabilities=vulns,
+            compatibility=compat_report,
+        )
+        sarif_path.write_text(json.dumps(sarif_doc, indent=2), encoding="utf-8")
+        logger.info("Wrote SARIF report: %s", sarif_path)
+
+    fail_policies = list(args.fail_on)
+    if args.fail_on_vuln:
+        fail_policies.append("vuln")
+
     # Output results
     if args.json:
         output = {
             "imported": sorted(imported_pkg),
             "declared_dependencies": active_declared,
             "vulnerabilities": vulns,
+            "summary": summary.to_dict(),
+            "fail_policies": fail_policies,
         }
+        if policy_evaluation is not None:
+            output["policy"] = policy_evaluation.to_dict()
         if compat_report is not None:
             output["compatibility"] = _compatibility_json(compat_report)
         print(json.dumps(output, indent=2))
@@ -184,12 +240,23 @@ def main():
         print("\n" + "="*30)
         print("       SCAN REPORT       ")
         print("="*30)
-        print(formatter.format(imported_pkg, active_declared, vulns, compat_report))
+        print(formatter.format(imported_pkg, active_declared, vulns, compat_report, policy_evaluation))
 
-    if args.fail_on_vuln and vulns:
-        logger.error(f"Build failed: Found vulnerabilities in {len(vulns)} packages.")
+    if policy_evaluation is not None and should_fail_policy(policy_evaluation, fail_policies):
+        logger.error(
+            "Build failed by policy governance: %s effective risks.",
+            policy_evaluation.effective_risk_count,
+        )
         sys.exit(1)
-        
+
+    if should_fail(summary, fail_policies):
+        logger.error(
+            "Build failed by policy %s: %s total risks.",
+            ",".join(fail_policies),
+            summary.risk_count,
+        )
+        sys.exit(1)
+
     sys.exit(0)
 
 def _compatibility_json(report):

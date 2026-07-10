@@ -1,15 +1,24 @@
 import logging
 
+from .scan_summary import build_scan_summary
+
 logger = logging.getLogger(__name__)
 
 
 class ReportFormatter:
 
-    def format(self, imports, declared, vulns, compatibility=None):
+    def format(self, imports, declared, vulns, compatibility=None, policy_evaluation=None):
         report = []
-        
+        summary = build_scan_summary(imports, declared, vulns, compatibility)
+
+        report.append("Summary:")
+        report.append(f" Status: {summary.status.upper()}")
+        report.append(f" Imported packages: {summary.imported_count}")
+        report.append(f" Declared dependencies: {summary.declared_count}")
+        report.append(f" Total risks: {summary.risk_count}")
+
         # unused dependencies
-        unused = [pkg for pkg in declared.keys() if pkg not in imports]
+        unused = summary.unused
         
         report.append("Unused Dependencies: ")
         if unused:
@@ -19,7 +28,7 @@ class ReportFormatter:
             report.append(" None")
             
         # missing dependencies
-        missing = [pkg for pkg in imports if pkg not in declared]
+        missing = summary.missing
         
         report.append("\nMissing Dependencies: ")
         if missing:
@@ -79,5 +88,15 @@ class ReportFormatter:
                     report.append(f" - {name}{spec}")
             else:
                 report.append(" Suggested fixes: None")
+
+        if policy_evaluation is not None:
+            policy = policy_evaluation.to_dict()
+            report.append("\nPolicy governance:")
+            report.append(f" Status: {policy['status'].upper()}")
+            report.append(f" Effective risks: {policy['effective_risk_count']}")
+            report.append(f" Active exemptions: {len(policy['active_exemptions'])}")
+            report.append(f" Expired exemptions: {len(policy['expired_exemptions'])}")
+            report.append(f" Invalid exemptions: {len(policy['invalid_exemptions'])}")
+            report.append(f" Unmatched exemptions: {len(policy['unmatched_exemptions'])}")
 
         return "\n".join(report)

@@ -1,4 +1,5 @@
 import ast
+import os
 import sys
 import logging
 from pathlib import Path
@@ -8,6 +9,20 @@ logger = logging.getLogger(__name__)
 
 
 class ImportScanner:
+    IGNORED_DIRECTORIES = {
+        ".git",
+        ".hg",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "venv",
+    }
     
     def scan_directory(self, path: Path) -> Set[str]:
         """Scans directory and returns a flat set of 3rd-party imports."""
@@ -17,10 +32,7 @@ class ImportScanner:
         local_modules = self._get_local_modules(root)
         logger.debug(f"Identified local modules: {local_modules}")
         
-        for file in root.rglob("*.py"):
-            if any(part.startswith('.') for part in file.parts):
-                continue
-
+        for file in self._iter_python_files(root):
             try:
                 file_imports = self.scan_file_(file)
                 imports.update(file_imports)
@@ -74,10 +86,7 @@ class ImportScanner:
     def _scan_for_graph(self, root: Path) -> Dict[str, Set[str]]:
         """Internal method to build a map of File -> [Imports]."""
         mapping: Dict[str, Set[str]] = {}
-        for file in root.rglob("*.py"):
-            if any(part.startswith('.') for part in file.parts):
-                continue
-            
+        for file in self._iter_python_files(root):
             try:
                 rel_path = file.relative_to(root).as_posix()
                 mapping[rel_path] = self.scan_file_(file)
@@ -89,15 +98,39 @@ class ImportScanner:
         locals_: Set[str] = set()
         if not root.exists():
             return locals_
-            
-        for child in root.iterdir():
-            if child.name.startswith("."):
-                continue
-            if child.is_file() and child.suffix == ".py":
-                locals_.add(child.stem)
-            elif child.is_dir() and (child / "__init__.py").exists():
-                locals_.add(child.name)
+
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [
+                dirname
+                for dirname in dirnames
+                if not self._should_ignore_dir(dirname)
+            ]
+            current_dir = Path(dirpath)
+            if "__init__.py" in filenames:
+                locals_.add(current_dir.name)
+            for filename in filenames:
+                if not filename.endswith(".py") or filename.startswith("."):
+                    continue
+                module_name = Path(filename).stem
+                if module_name != "__init__":
+                    locals_.add(module_name)
         return locals_
+
+    def _iter_python_files(self, root: Path):
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [
+                dirname
+                for dirname in dirnames
+                if not self._should_ignore_dir(dirname)
+            ]
+            current_dir = Path(dirpath)
+            for filename in sorted(filenames):
+                if filename.startswith(".") or not filename.endswith(".py"):
+                    continue
+                yield current_dir / filename
+
+    def _should_ignore_dir(self, name: str) -> bool:
+        return name.startswith(".") or name in self.IGNORED_DIRECTORIES
     
     def scan_file_(self, path: Path) -> Set[str]:
         imports: Set[str] = set()
