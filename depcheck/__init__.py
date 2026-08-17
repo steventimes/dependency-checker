@@ -1,11 +1,43 @@
-from .reporter.dependency_reporter import DependencyReporter
-from .analyzer.import_scanner import ImportScanner
-from .security.osv_checker import OSV_Check
-from .reporter.formatter import ReportFormatter
+"""Canonical public API for depcheck."""
+
+from .engine import RepositoryScanner, RepositoryScanOptions
+from .model import (
+    AnalysisReport,
+    Capability,
+    CapabilityState,
+    DependencyDeclaration,
+    Diagnostic,
+    EvidenceBundle,
+    Finding,
+    PackageIdentity,
+    PackageRef,
+    ProjectUnit,
+    ResolvedDependency,
+    ScanResult,
+    SourceLocation,
+    UsageEvidence,
+    VersionConstraint,
+)
+
+__version__ = "0.4.0"
 
 __all__ = [
-    "DependencyReporter",
-    "ImportScanner",
-    "OSV_Check",
-    "ReportFormatter"
+    "AnalysisReport",
+    "Capability",
+    "CapabilityState",
+    "DependencyDeclaration",
+    "Diagnostic",
+    "EvidenceBundle",
+    "Finding",
+    "PackageIdentity",
+    "PackageRef",
+    "ProjectUnit",
+    "RepositoryScanOptions",
+    "RepositoryScanner",
+    "ResolvedDependency",
+    "ScanResult",
+    "SourceLocation",
+    "UsageEvidence",
+    "VersionConstraint",
+    "__version__",
 ]

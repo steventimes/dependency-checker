@@ -1,105 +1,208 @@
-# Description
+# depcheck
 
-`depcheck` is a dependency risk scanner for Python repositories and monorepos. It detects:
+`depcheck` is a static dependency-evidence scanner for repositories and coding
+agents. It correlates declarations, exact resolutions, source usage, security
+results, and policy findings without importing project code or running package
+managers.
 
-1. Unused declared dependencies
-2. Missing dependencies imported by source code
-3. Package security issues using OSV
-4. Compatibility conflicts from PyPI dependency metadata
+## Capabilities
 
-The CLI is designed for local audits and CI policy gates, with text, JSON, and SARIF output for automation.
+- One qualified identity for every component:
+  `(project_id, ecosystem, package, version, instance)`.
+- Missing, unused, unpinned, conflicting, and scope-mismatched dependency
+  findings, gated by evidence confidence.
+- Exact-version OSV queries for PyPI, npm, Go, and Maven.
+- Python compatibility analysis backed by PyPI metadata when explicitly enabled.
+- Text, `depcheck.scan.v1` JSON, SARIF 2.1.0, and CycloneDX 1.7 output.
+- A rebuildable `depcheck.index.v3` SQLite evidence index.
+- Qualified inventory queries, dependency explanations, impact analysis, and
+  read-only Python requirements update previews.
+- CLI and MCP interfaces over the same scanner, model, index, and service layer.
 
-## How to Run
+A scan distinguishes findings from incomplete analysis. A skipped, unsupported,
+or failed capability never becomes a clean result.
 
-To run from source code: `python main.py <path>`
+## Ecosystem coverage
 
-To run as a module: `python -m depcheck {folder to scan}`
+| Ecosystem | Evidence |
+| --- | --- |
+| Python / PyPI | `pyproject.toml`, requirements files, setup metadata, Pipfile, supported locks, Docker/Make install hints, Python and notebook imports |
+| JavaScript / npm | `package.json`, npm lockfiles, literal ESM/CommonJS/dynamic imports, resolved instance edges |
+| Go modules | `go.mod`, `go.sum`, replacements, exclusions, direct/indirect requirements, literal imports |
+| Java/Kotlin / Maven or Gradle | effective local POM evidence, properties and dependency management, literal Gradle declarations, lock evidence, imports |
+| C/C++ / Conan or vcpkg | supported manifests and JSON locks, includes, CMake `find_package` evidence |
 
-## Options
+Dynamic or ambiguous syntax is reported as incomplete evidence. Conan and vcpkg
+currently emit a `security.ecosystem-unsupported` diagnostic and keep security incomplete because depcheck cannot produce safe
+OSV coordinates for them.
 
-- `--json` returns machine-readable JSON including a `summary` object.
-- `--sarif depcheck.sarif` writes SARIF 2.1.0 for GitHub code scanning and enterprise security tools.
-- `--graph graph.dot` writes a Graphviz dependency graph.
-- `--fail-on missing|unused|vuln|compat|any` exits with status 1 for selected risk classes. Repeat the flag to combine policies.
-- `--fail-on-vuln` keeps backward-compatible vulnerability-only CI behavior.
-- `--policy depcheck-policy.json` reads enterprise policy rules and time-bound exemptions.
-- `--compat` checks dependency compatibility against PyPI metadata.
-- `--fix-compat` auto-fixes compatibility issues by updating `requirements*.txt`.
-- `--auto-update` updates `requirements*.txt` to latest compatible versions.
+## Install
 
-
-## CI examples
-
-Fail a build on missing imports or known vulnerabilities:
-
-```bash
-python -m depcheck . --json --fail-on missing --fail-on vuln
-```
-
-Fail on any dependency hygiene, security, or compatibility risk:
-
-```bash
-python -m depcheck . --compat --fail-on any
-```
-
-Write a SARIF artifact while preserving normal CLI output:
+Python 3.11 or 3.12 is required.
 
 ```bash
-python -m depcheck . --compat --sarif depcheck.sarif
+python -m venv .venv
+.venv/bin/python -m pip install -e '.[agent,test]'
+.venv/bin/depcheck --version
 ```
 
-GitHub Actions can upload the generated SARIF with `github/codeql-action/upload-sarif`, which lets dependency hygiene, OSV vulnerabilities, and compatibility risks appear in code scanning dashboards.
+The plugin launchers use the checked-in `uv.lock` with uv 0.12.4.
 
-Example JSON output includes a stable summary for dashboards and policy engines:
+## CLI
+
+Scan offline and emit canonical JSON:
+
+```bash
+depcheck scan . --offline --format json
+```
+
+Run security and Python compatibility analysis:
+
+```bash
+depcheck scan . --security --compatibility --python-version 3.12
+```
+
+Generate integration formats:
+
+```bash
+depcheck scan . --offline --format sarif --output depcheck.sarif
+depcheck scan . --offline --format cyclonedx-json --output bom.json
+```
+
+Build and query the local index:
+
+```bash
+depcheck index .
+depcheck context .
+depcheck query . requests --ecosystem PyPI --project pypi:python:.
+depcheck explain . requests --ecosystem PyPI --project pypi:python:.
+depcheck impact . requests --ecosystem PyPI --project pypi:python:.
+```
+
+Preview an update without changing the manifest:
+
+```bash
+depcheck update . "requests===2.32.4" \
+  --ecosystem PyPI --project pypi:python:.
+```
+
+Use `depcheck doctor .` to inspect the installed version, index, and optional
+MCP runtime.
+
+### Exit policy
+
+`--fail-on` accepts `any`, `incomplete`, `missing`, `unused`,
+`unpinned`, `scope`, `duplicate`, `vuln`, or `compat`. Options may be
+repeated.
+
+A JSON policy file can add expiring, qualified exemptions:
 
 ```json
 {
-  "summary": {
-    "status": "fail",
-    "risk_count": 2,
-    "missing_count": 1,
-    "unused_count": 1,
-    "vulnerability_count": 0
-  }
-}
-```
-
-
-## Policy governance
-
-Enterprise CI can use a JSON policy file to keep exceptions explicit, owned, and time-bound:
-
-```json
-{
-  "schema": "depcheck.policy.v1",
-  "fail_on": ["missing", "vuln", "compat"],
+  "fail_on": ["missing", "vuln", "incomplete"],
   "exemptions": [
     {
-      "id": "TEMP-MISSING-FASTAPI",
-      "risk": "missing",
-      "package": "fastapi",
-      "reason": "Optional plugin dependency until service split is complete",
-      "owner": "platform-team",
-      "expires_at": "2026-12-31"
+      "id": "temporary-requests-exemption",
+      "risk": "vuln",
+      "package": "requests",
+      "project_id": "pypi:python:.",
+      "ecosystem": "PyPI",
+      "reason": "Upgrade is scheduled",
+      "owner": "platform",
+      "expires_at": "2026-09-01"
     }
   ]
 }
 ```
 
-Run with:
+Pass it with `--policy policy.json`. Invalid, expired, or unmatched exemptions
+remain observable; invalid and expired exemptions fail governance evaluation.
 
-```bash
-python -m depcheck . --json --compat --policy depcheck-policy.json
+## Configuration
+
+Use `.depcheck.toml` at the repository root:
+
+```toml
+security = false
+compatibility = false
+python-version = "3.12"
+enabled-ecosystems = ["PyPI", "npm", "Go", "Maven", "Conan", "vcpkg"]
+excluded-directories = ["generated"]
+ignore-packages = ["internal-placeholder"]
+fail-on = ["missing", "incomplete"]
+
+[mappings.PyPI."pypi:python:."]
+PIL = "pillow"
+
+[mappings.npm."npm:npm:apps/web"]
+"@internal/ui" = "@company/ui"
 ```
 
-Active exemptions reduce the effective risk count but remain visible in the JSON output. Expired or invalid exemptions are governance risks and fail the run even if the underlying package risk is otherwise exempted. Supported exemption risk types are `missing`, `unused`, and `vuln`.
+Mappings are scoped by ecosystem and stable project ID. Excluded directories
+must be relative paths inside the repository.
 
-## Workflow of the program
+## Result model
 
-The program will scan through all python files to find used imports, and then compare to *requirements*.txt and other supported dependency sources. It also inspects Dockerfile/Makefile/CMakeLists.txt for `pip install` commands as additional dependency hints. For all imports, it will send to OSV API to check for vulnerabilities.
+`depcheck.scan.v1` contains:
 
-### Future of this little project
+- `summary`: status, completeness, counts, risks, and diagnostics.
+- `capabilities`: explicit `complete`, `incomplete`, `skipped`, or
+  `unsupported` states.
+- `findings` and `diagnostics`: separate policy risks and analysis failures.
+- `inventory`: sources, manifests, declarations, resolved identities, and
+  dependency edges.
+- `projects` and `ecosystems`: per-project capability and evidence summaries.
+- `vulnerabilities`: issues keyed by full package identity.
+- `metadata`: structured optional-stage results such as compatibility.
 
-1. try on auto fixing unused imports
-2. recommand a list of packages with their version to fix the vulnerability (ADDED)
-3. write documentations
+An incompatible SQLite cache is discarded and rebuilt at its configured cache
+path. Source files and manifests are never changed by scanning or indexing.
+
+## MCP and agent integration
+
+The stdio server exports seven tools:
+
+- `index_repository`
+- `scan_repository`
+- `repository_context`
+- `query_dependencies`
+- `explain_dependency`
+- `dependency_impact`
+- `plan_dependency_updates`
+
+The server authorizes only roots supplied by the MCP client or explicit
+`--root` arguments. Query tools accept `ecosystem` and `project_id`
+qualifiers; ambiguous unqualified names return structured choices. Update
+planning is read-only. `scan_repository` runs offline and therefore reports
+security as skipped.
+
+Plugin descriptors are provided in `plugin.json`, `.codex-plugin/plugin.json`,
+`mcp.json`, and `.mcp.json`. The coding-agent workflow is in
+`skills/check-dependencies/SKILL.md`.
+
+## Safety boundary
+
+Repository files are parsed as data. depcheck does not evaluate `setup.py`,
+load target modules, or invoke pip, npm, pnpm, yarn, Go, Maven, Gradle, Conan,
+vcpkg, or build scripts. Symlink and parent-directory escapes are rejected.
+
+OSV is the only default network path and receives an ecosystem, package name,
+and exact version. Python compatibility analysis additionally accesses PyPI
+only when `--compatibility` is requested. Use `--offline` to disable OSV.
+
+## Development
+
+The suite is intentionally consolidated into five test files.
+
+```bash
+.venv/bin/pytest test -q
+.venv/bin/ruff check depcheck test
+.venv/bin/mypy
+.venv/bin/python -m compileall -q depcheck test
+.venv/bin/python -m build
+.venv/bin/python -m pip check
+.venv/bin/uv lock --check
+```
+
+A repository benchmark fixture can be generated with
+`scripts/benchmark_monorepo.py`.

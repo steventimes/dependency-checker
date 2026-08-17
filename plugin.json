@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "dependency-checker",
+  "version": "0.4.0",
+  "description": "Static multi-ecosystem dependency evidence, security, SBOM, and update-impact analysis for coding agents.",
+  "author": {
+    "name": "Steven Yang",
+    "email": "stevenyang0316@gmail.com",
+    "url": "https://github.com/steventimes"
+  },
+  "homepage": "https://github.com/steventimes/dependency-checker",
+  "repository": "https://github.com/steventimes/dependency-checker",
+  "license": "MIT",
+  "keywords": [
+    "dependencies",
+    "mcp",
+    "multi-ecosystem",
+    "python",
+    "security",
+    "sbom"
+  ]
+}

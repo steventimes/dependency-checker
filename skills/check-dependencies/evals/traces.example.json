@@ -1,0 +1,76 @@
+{
+  "schema": "depcheck.skill-eval-traces.v2",
+  "traces": [
+    {
+      "case_id": "multilang-health",
+      "task": "Audit dependency health in this monorepo containing Java, C++, JavaScript, TypeScript, and Go projects.",
+      "initial_state": {"index": "current", "security": "disabled-by-user"},
+      "fixtures": {"ecosystems": ["Maven", "Conan", "npm", "Go"], "locked": true},
+      "skills_loaded": ["check-dependencies"],
+      "tool_calls": [
+        {"name": "repository_context", "arguments": {"project_root": "."}, "result": {"status": "current", "complete": true}},
+        {"name": "query_dependencies", "arguments": {"project_root": ".", "limit": 20}, "result": {"ecosystems": ["Maven", "Conan", "npm", "Go"], "dependencies": []}}
+      ],
+      "events": [],
+      "final_status": "pass",
+      "final_answer": "The inventory covers Maven, Conan, npm, and Go projects. Security was not requested, so this is a dependency-hygiene result only.",
+      "claims": {"security_safe": false, "release_ready": false, "limitations": ["security-not-run"]}
+    },
+    {
+      "case_id": "rename-symbol",
+      "task": "Rename the CustomerRecord class to AccountRecord without changing dependencies.",
+      "initial_state": {"index": "unknown"},
+      "fixtures": {"dependency_change": false},
+      "skills_loaded": [],
+      "tool_calls": [],
+      "events": [],
+      "final_status": "not-triggered",
+      "final_answer": "I will rename CustomerRecord to AccountRecord and update its references.",
+      "claims": {"security_safe": null, "release_ready": null, "limitations": ["dependency-skill-not-applicable"]}
+    },
+    {
+      "case_id": "stale-index-refresh",
+      "task": "Explain whether the current dependency inventory has unused packages.",
+      "initial_state": {"index": "stale"},
+      "fixtures": {"security": "skipped-by-offline-scan"},
+      "skills_loaded": ["check-dependencies"],
+      "tool_calls": [
+        {"name": "repository_context", "arguments": {"project_root": "."}, "result": {"status": "stale", "stale": true}},
+        {"name": "scan_repository", "arguments": {"project_root": "."}, "result": {"summary": {"status": "incomplete", "complete": false}, "capabilities": {"security": {"status": "skipped"}}}},
+        {"name": "query_dependencies", "arguments": {"project_root": ".", "limit": 20}, "result": {"status": "current", "dependencies": []}}
+      ],
+      "events": ["report.incomplete"],
+      "final_status": "incomplete",
+      "final_answer": "The dependency-hygiene index was refreshed, but the overall result remains incomplete because security was skipped.",
+      "claims": {"security_safe": false, "release_ready": false, "limitations": ["security-skipped"]}
+    },
+    {
+      "case_id": "unsupported-security",
+      "task": "Check this vcpkg project for dependency vulnerabilities.",
+      "initial_state": {"index": "current"},
+      "fixtures": {"ecosystem": "vcpkg", "security_capability": "unsupported"},
+      "skills_loaded": ["check-dependencies"],
+      "tool_calls": [
+        {"name": "repository_context", "arguments": {"project_root": "."}, "result": {"status": "current"}}
+      ],
+      "events": ["capability.unsupported", "report.incomplete"],
+      "final_status": "incomplete",
+      "final_answer": "Vulnerability analysis for vcpkg is unsupported here, so the security result is incomplete.",
+      "claims": {"security_safe": false, "release_ready": false, "limitations": ["security-unsupported"]}
+    },
+    {
+      "case_id": "missing-lockfile",
+      "task": "Are this application's dependencies safe to release?",
+      "initial_state": {"index": "current"},
+      "fixtures": {"ecosystem": "npm", "locked": false, "resolved_versions": []},
+      "skills_loaded": ["check-dependencies"],
+      "tool_calls": [
+        {"name": "repository_context", "arguments": {"project_root": "."}, "result": {"status": "incomplete", "complete": false, "incomplete_reasons": ["resolution"]}}
+      ],
+      "events": ["report.incomplete"],
+      "final_status": "incomplete",
+      "final_answer": "Exact versions are unavailable without a lockfile, so the release-safety conclusion is incomplete.",
+      "claims": {"security_safe": false, "release_ready": false, "limitations": ["exact-versions-unavailable"]}
+    }
+  ]
+}

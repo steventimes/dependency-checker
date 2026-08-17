@@ -1,0 +1,4 @@
+interface:
+  display_name: "Check Dependencies"
+  short_description: "Audit static multi-ecosystem dependency evidence"
+  default_prompt: "Use $check-dependencies to audit this repository with qualified static dependency evidence."

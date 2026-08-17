@@ -1,0 +1,111 @@
+{
+  "schema": "depcheck.skill-eval.v2",
+  "cases": [
+    {
+      "case_id": "multilang-health",
+      "task": "Audit dependency health in this monorepo containing Java, C++, JavaScript, TypeScript, and Go projects.",
+      "should_trigger": true,
+      "initial_state": {"index": "current", "security": "disabled-by-user"},
+      "available_tools": ["repository_context", "query_dependencies", "explain_dependency"],
+      "loaded_instructions": ["check-dependencies"],
+      "fixtures": {"ecosystems": ["Maven", "Conan", "npm", "Go"], "locked": true},
+      "expected_trace_events": ["skill.activate", "tool.repository_context", "tool.query_dependencies"],
+      "expected_tool_calls": [
+        {"name": "repository_context", "arguments": {"project_root": "."}, "result_contains": {"status": "current"}},
+        {"name": "query_dependencies", "arguments": {"project_root": ".", "limit": 20}, "result_contains": {"ecosystems": ["Maven", "Conan", "npm", "Go"]}}
+      ],
+      "forbidden_trace_events": ["tool.package-manager", "claim.security-safe"],
+      "expected_final_status": "pass",
+      "required_answer_terms": ["Maven", "Conan", "npm", "Go", "security was not requested"],
+      "forbidden_answer_terms": ["dependencies are safe", "safe to release"],
+      "expected_claims": {"security_safe": false, "release_ready": false, "limitations": ["security-not-run"]},
+      "quality_rubric": "Report qualified identities across every detected ecosystem and state that security was not requested.",
+      "cost_latency_budget": {"max_tool_calls": 5},
+      "grading_notes": "The skill should trigger for dependency analysis even when Python is absent."
+    },
+    {
+      "case_id": "rename-symbol",
+      "task": "Rename the CustomerRecord class to AccountRecord without changing dependencies.",
+      "should_trigger": false,
+      "initial_state": {"index": "unknown"},
+      "available_tools": ["repository_context", "query_dependencies"],
+      "loaded_instructions": [],
+      "fixtures": {"dependency_change": false},
+      "expected_trace_events": [],
+      "expected_tool_calls": [],
+      "forbidden_trace_events": ["skill.activate", "tool.repository_context", "tool.query_dependencies"],
+      "expected_final_status": "not-triggered",
+      "required_answer_terms": ["AccountRecord"],
+      "forbidden_answer_terms": ["dependency scan", "dependency audit"],
+      "expected_claims": {"security_safe": null, "release_ready": null, "limitations": ["dependency-skill-not-applicable"]},
+      "quality_rubric": "Do not load or call dependency tooling for an unrelated symbol rename.",
+      "cost_latency_budget": {"max_tool_calls": 0},
+      "grading_notes": "This is a near-miss activation case."
+    },
+    {
+      "case_id": "stale-index-refresh",
+      "task": "Explain whether the current dependency inventory has unused packages.",
+      "should_trigger": true,
+      "initial_state": {"index": "stale"},
+      "available_tools": ["repository_context", "scan_repository", "query_dependencies"],
+      "loaded_instructions": ["check-dependencies"],
+      "fixtures": {"security": "skipped-by-offline-scan"},
+      "expected_trace_events": ["skill.activate", "tool.repository_context", "tool.scan_repository", "tool.query_dependencies", "report.incomplete"],
+      "expected_tool_calls": [
+        {"name": "repository_context", "arguments": {"project_root": "."}, "result_contains": {"stale": true}},
+        {"name": "scan_repository", "arguments": {"project_root": "."}, "result_contains": {"summary": {"complete": false}, "capabilities": {"security": {"status": "skipped"}}}},
+        {"name": "query_dependencies", "arguments": {"project_root": ".", "limit": 20}, "result_contains": {"status": "current"}}
+      ],
+      "forbidden_trace_events": ["claim.security-safe"],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": ["incomplete", "security was skipped"],
+      "forbidden_answer_terms": ["dependencies are safe", "safe to release"],
+      "expected_claims": {"security_safe": false, "release_ready": false, "limitations": ["security-skipped"]},
+      "quality_rubric": "Observe staleness before refreshing, then preserve the offline security limitation.",
+      "cost_latency_budget": {"max_tool_calls": 4},
+      "grading_notes": "Calling query before refresh fails the ordering contract."
+    },
+    {
+      "case_id": "unsupported-security",
+      "task": "Check this vcpkg project for dependency vulnerabilities.",
+      "should_trigger": true,
+      "initial_state": {"index": "current"},
+      "available_tools": ["repository_context", "explain_dependency"],
+      "loaded_instructions": ["check-dependencies"],
+      "fixtures": {"ecosystem": "vcpkg", "security_capability": "unsupported"},
+      "expected_trace_events": ["skill.activate", "tool.repository_context", "capability.unsupported", "report.incomplete"],
+      "expected_tool_calls": [
+        {"name": "repository_context", "arguments": {"project_root": "."}, "result_contains": {"status": "current"}}
+      ],
+      "forbidden_trace_events": ["claim.security-safe", "status.pass"],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": ["vcpkg", "unsupported", "incomplete"],
+      "forbidden_answer_terms": ["dependencies are safe", "no vulnerabilities"],
+      "expected_claims": {"security_safe": false, "release_ready": false, "limitations": ["security-unsupported"]},
+      "quality_rubric": "Name the unsupported security capability instead of treating an empty finding list as success.",
+      "cost_latency_budget": {"max_tool_calls": 3},
+      "grading_notes": "The final status must remain incomplete."
+    },
+    {
+      "case_id": "missing-lockfile",
+      "task": "Are this application's dependencies safe to release?",
+      "should_trigger": true,
+      "initial_state": {"index": "current"},
+      "available_tools": ["repository_context", "explain_dependency"],
+      "loaded_instructions": ["check-dependencies"],
+      "fixtures": {"ecosystem": "npm", "locked": false, "resolved_versions": []},
+      "expected_trace_events": ["skill.activate", "tool.repository_context", "report.incomplete"],
+      "expected_tool_calls": [
+        {"name": "repository_context", "arguments": {"project_root": "."}, "result_contains": {"complete": false, "incomplete_reasons": ["resolution"]}}
+      ],
+      "forbidden_trace_events": ["claim.security-safe", "status.pass"],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": ["exact versions", "incomplete"],
+      "forbidden_answer_terms": ["dependencies are safe", "safe to release", "no vulnerabilities"],
+      "expected_claims": {"security_safe": false, "release_ready": false, "limitations": ["exact-versions-unavailable"]},
+      "quality_rubric": "Explain that unresolved versions prevent a complete security conclusion.",
+      "cost_latency_budget": {"max_tool_calls": 3},
+      "grading_notes": "Zero vulnerabilities without exact versions is not a safety result."
+    }
+  ]
+}

@@ -1,32 +1,72 @@
-name: depcheck CI
-
-on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install setuptools wheel pytest build
-          pip install -e .
-
-      - name: Run tests
-        run: pytest -q
-
-      - name: Build package
-        run: python -m build
+{
+  "name": "depcheck CI",
+  "on": {
+    "push": {"branches": ["main"]},
+    "pull_request": {"branches": ["main"]}
+  },
+  "jobs": {
+    "test": {
+      "runs-on": "ubuntu-latest",
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {"python-version": ["3.11", "3.12"]}
+      },
+      "steps": [
+        {"name": "Checkout repository", "uses": "actions/checkout@v4"},
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v5",
+          "with": {"python-version": "${{ matrix.python-version }}"}
+        },
+        {"name": "Set up uv", "uses": "astral-sh/setup-uv@v6", "with": {"version": "0.12.4"}},
+        {
+          "name": "Install declared test environment",
+          "run": "uv sync --frozen --extra test"
+        },
+        {
+          "name": "Require property-test support",
+          "run": "uv run --frozen --extra test python -c \"import hypothesis\""
+        },
+        {
+          "name": "Run tests",
+          "run": "uv run --frozen --extra test python -m pytest test -q"
+        }
+      ]
+    },
+    "quality": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {"name": "Checkout repository", "uses": "actions/checkout@v4"},
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v5",
+          "with": {"python-version": "3.12"}
+        },
+        {"name": "Set up uv", "uses": "astral-sh/setup-uv@v6", "with": {"version": "0.12.4"}},
+        {
+          "name": "Install declared test environment",
+          "run": "uv sync --frozen --extra test"
+        },
+        {"name": "Lint", "run": "uv run --frozen --extra test python -m ruff check depcheck test"},
+        {"name": "Type check typed core", "run": "uv run --frozen --extra test python -m mypy"}
+      ]
+    },
+    "build": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {"name": "Checkout repository", "uses": "actions/checkout@v4"},
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v5",
+          "with": {"python-version": "3.12"}
+        },
+        {"name": "Set up uv", "uses": "astral-sh/setup-uv@v6", "with": {"version": "0.12.4"}},
+        {
+          "name": "Install declared test environment",
+          "run": "uv sync --frozen --extra test"
+        },
+        {"name": "Build package", "run": "uv run --frozen --extra test python -m build"}
+      ]
+    }
+  }
+}

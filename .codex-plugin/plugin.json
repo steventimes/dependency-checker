@@ -1,0 +1,40 @@
+{
+  "name": "dependency-checker",
+  "version": "0.4.0",
+  "description": "Static multi-ecosystem dependency evidence and update-impact tools for coding agents.",
+  "author": {
+    "name": "Steven Yang",
+    "email": "stevenyang0316@gmail.com",
+    "url": "https://github.com/steventimes"
+  },
+  "homepage": "https://github.com/steventimes/dependency-checker",
+  "repository": "https://github.com/steventimes/dependency-checker",
+  "license": "MIT",
+  "keywords": [
+    "dependencies",
+    "mcp",
+    "multi-ecosystem",
+    "python",
+    "security"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Dependency Checker",
+    "shortDescription": "Audit dependency evidence and update impact.",
+    "longDescription": "Index qualified dependency declarations, resolutions, and source usage, diagnose hygiene and security findings, explain impact, and preview supported updates without executing package managers.",
+    "developerName": "Steven Yang",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Dependency analysis",
+      "Security scanning",
+      "SBOM evidence",
+      "Read-only update planning"
+    ],
+    "defaultPrompt": [
+      "Audit this repository's dependency health.",
+      "Explain why this package is present and what it affects.",
+      "Preview safe dependency updates without editing files."
+    ]
+  }
+}

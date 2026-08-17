@@ -1,20 +1,71 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "depcheck"
-version = "0.2.0"
-description = "Detect unused dependencies and security vulnerabilities in Python projects."
+version = "0.4.0"
+description = "Static multi-ecosystem dependency evidence, security, and SBOM scanner."
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Steven Yang", email = "stevenyang0316@gmail.com" }]
-
+keywords = ["dependencies", "security", "osv", "sarif", "sbom", "multi-ecosystem"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Security",
+]
 dependencies = [
-    "packaging",
-    "requests",
-    "tomli; python_version < '3.11'",
+    "packaging>=23.2",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
+agent = [
+    "mcp>=1.28,<2",
+]
 test = [
-    "hypothesis>=6.0",
+    "build>=1.2,<2",
+    "hypothesis>=6.100,<7",
+    "mcp>=1.28,<2",
+    "mypy>=1.10,<2",
+    "pytest>=8,<9",
+    "ruff>=0.6,<1",
+    "setuptools==80.9.0",
+    "uv>=0.8,<1",
 ]
 
+[tool.uv]
+required-version = "==0.12.4"
+build-constraint-dependencies = ["setuptools==80.9.0"]
+
 [project.scripts]
-depcheck = "depcheck.cli.__main__:main"
+depcheck = "depcheck.command:cli"
+depcheck-mcp = "depcheck.agent.mcp_server:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["depcheck*"]
+exclude = ["test*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["depcheck"]
+check_untyped_defs = true
+follow_imports = "skip"
+ignore_missing_imports = true
+no_implicit_optional = true
+warn_unreachable = true

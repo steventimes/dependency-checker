@@ -1,0 +1,11 @@
+[
+  {
+    "id": "depcheck",
+    "name": "depcheck dependency evidence",
+    "description": "Run an offline, repository-wide dependency evidence scan.",
+    "entry": "depcheck scan --no-security --fail-on missing --fail-on scope --fail-on duplicate --fail-on incomplete",
+    "language": "python",
+    "pass_filenames": false,
+    "always_run": true
+  }
+]

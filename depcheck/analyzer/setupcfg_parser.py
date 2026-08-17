@@ -1,7 +1,16 @@
 from __future__ import annotations
-from typing import Dict, Optional
+
 import configparser
 import logging
+
+from packaging.requirements import InvalidRequirement
+
+from depcheck.model import (
+    PythonRequirement,
+    Diagnostic,
+    ManifestParseResult,
+    SourceLocation,
+)
 
 from .base_parser import BaseDependencyParser
 
@@ -9,32 +18,91 @@ logger = logging.getLogger(__name__)
 
 
 class SetupCfgParser(BaseDependencyParser):
-    
-    def parse(self) -> Dict[str, Optional[str]]:
-        deps: Dict[str, Optional[str]] = {}
+    def parse(self) -> dict[str, str | None]:
+        deps: dict[str, str | None] = {}
+        for item in self.parse_detailed().declarations:
+            deps[item.name] = self._normalize_version(str(item.specifier))
+        return deps
+
+    def parse_detailed(self) -> ManifestParseResult:
+        declarations: list[PythonRequirement] = []
+        diagnostics: list[Diagnostic] = []
         if not self.path.exists():
-            logger.warning(f"setup.cfg not found: {self.path}")
-            return deps
-        
+            return ManifestParseResult(
+                diagnostics=(
+                    Diagnostic(
+                        code="manifest.not-found",
+                        severity="error",
+                        message=f"setup.cfg 不存在：{self.path}",
+                        source=SourceLocation(self.path),
+                    ),
+                )
+            )
+
         config = configparser.ConfigParser()
         try:
-            config.read(self.path)
-        except Exception as e:
-            logger.error(f"Error parsing setup.cfg {self.path}: {e}")
-            return deps
-        
-        if "options" not in config or "install_requires" not in config["options"]:
-            logger.info(f"No install_requires found in {self.path}")
-            return deps
-        
-        requires = config["options"]["install_requires"].splitlines()
-        for line in requires:
-            line = line.strip()
-            if not line:
+            with self.path.open(encoding="utf-8") as handle:
+                config.read_file(handle)
+        except (OSError, UnicodeError, configparser.Error) as exc:
+            return ManifestParseResult(
+                diagnostics=(
+                    Diagnostic(
+                        code="manifest.invalid-setup-cfg",
+                        severity="error",
+                        message=f"无法解析 setup.cfg：{exc}",
+                        source=SourceLocation(self.path),
+                    ),
+                ),
+                files=(self.path,),
+            )
+
+        if config.has_option("options", "install_requires"):
+            self._append_lines(
+                config.get("options", "install_requires"),
+                "runtime",
+                declarations,
+                diagnostics,
+            )
+        if config.has_section("options.extras_require"):
+            for group, value in config.items("options.extras_require"):
+                self._append_lines(
+                    value,
+                    f"optional:{group}",
+                    declarations,
+                    diagnostics,
+                )
+
+        return ManifestParseResult(
+            declarations=tuple(declarations),
+            diagnostics=tuple(diagnostics),
+            files=(self.path,),
+        )
+
+    def _append_lines(
+        self,
+        value: str,
+        group: str,
+        declarations: list[PythonRequirement],
+        diagnostics: list[Diagnostic],
+    ) -> None:
+        for raw_line in value.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
                 continue
-            
-            name, version = self.parse_line(line)
-            if name:
-                deps[name] = version
-                
-        return deps
+            try:
+                declarations.append(
+                    PythonRequirement.from_requirement(
+                        line,
+                        source=SourceLocation(self.path),
+                        group=group,
+                    )
+                )
+            except InvalidRequirement as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        code="manifest.invalid-requirement",
+                        severity="error",
+                        message=f"无效依赖声明 {line!r}：{exc}",
+                        source=SourceLocation(self.path),
+                    )
+                )
