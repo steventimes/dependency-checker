@@ -47,8 +47,18 @@ class EvidenceAnalyzer:
             for item in bundle.usages
         )
 
+        manifest_complete = all(
+            item.complete for item in bundle.capabilities if item.name == "manifest"
+        )
+        usage_complete = all(
+            item.complete
+            for item in bundle.capabilities
+            if item.name in {"usage", "mapping"}
+        )
         findings = self._usage_findings(qualified, declarations)
-        if unknown_count == 0:
+        if not manifest_complete:
+            findings = [item for item in findings if item.code != "dependency.missing"]
+        if unknown_count == 0 and usage_complete:
             findings.extend(self._unused_findings(declarations, qualified, inferred))
         findings.extend(self._unpinned_findings(declarations, resolved))
         declaration_findings, declaration_diagnostics = self._declaration_findings(

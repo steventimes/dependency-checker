@@ -7,6 +7,7 @@ from typing import Any
 from packaging.utils import canonicalize_name
 
 from depcheck.compatibility.safe_updater import RequirementsUpdater
+from depcheck.config import load_project_config
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
 from depcheck.indexing import RepositoryIndex, RepositoryIndexer
 from depcheck.ecosystems.python_manifest import PythonManifestCollector
@@ -57,7 +58,7 @@ class DependencyAgentService:
     def scan_repository(self) -> dict[str, Any]:
         result = RepositoryScanner().scan(
             self.project_root,
-            RepositoryScanOptions(security=False),
+            RepositoryScanOptions(security=False, compatibility=False),
         )
         payload = result.to_dict()
         findings = list(payload["findings"])
@@ -107,10 +108,10 @@ class DependencyAgentService:
     ) -> dict[str, Any]:
         normalized = self._normalized_package(package, ecosystem)
         records = RepositoryIndex(self.project_root).dependencies(
-            search=normalized,
+            package=normalized,
             ecosystem=ecosystem,
             project_id=project_id,
-            limit=self.max_results,
+            limit=max(2, self.max_results),
         )
         matches = [
             record for record in records if self._package_matches(record, normalized)
@@ -195,7 +196,10 @@ class DependencyAgentService:
 
         updater = RequirementsUpdater(self.project_root)
         plans: list[dict[str, Any]] = []
-        reporter = PythonManifestCollector(self.project_root)
+        config = load_project_config(self.project_root)
+        reporter = PythonManifestCollector(
+            self.project_root, config.excluded_directories
+        )
         for path in reporter.find_dependency_file():
             if not path.name.startswith("requirements") or path.suffix != ".txt":
                 continue
@@ -228,7 +232,7 @@ class DependencyAgentService:
         value = str(package).strip()
         if not value:
             raise ValueError("package must be non-empty")
-        if ecosystem is None or ecosystem.lower() == "pypi":
+        if ecosystem is not None and ecosystem.lower() == "pypi":
             return str(canonicalize_name(value))
         return value
 

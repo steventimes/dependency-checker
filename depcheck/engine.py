@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+from packaging.utils import canonicalize_name
 
 from depcheck.compatibility.checker import CompatibilityChecker, CompatibilityReport
 from depcheck.config import DepcheckConfig, load_project_config
@@ -66,9 +68,15 @@ class RepositoryScanner:
         options: RepositoryScanOptions | None = None,
     ) -> ScanResult:
         root = Path(repository_root).resolve()
+        if not root.is_dir():
+            raise ValueError(f"repository root is not a directory: {root}")
         active = options or RepositoryScanOptions()
         config = load_project_config(root)
-        enabled = active.enabled_ecosystems or config.enabled_ecosystems
+        enabled = (
+            config.enabled_ecosystems
+            if active.enabled_ecosystems is None
+            else active.enabled_ecosystems
+        )
         registry = self.registry or create_default_registry()
         for ecosystem in enabled:
             try:
@@ -100,7 +108,9 @@ class RepositoryScanner:
         for project in projects:
             pack = self._pack_for_project(registry, project, config, active)
             bundle = self._collect(root, project, pack, provider_settings)
-            bundle = self._without_ignored(bundle, active.ignored_packages)
+            bundle = self._without_ignored(
+                bundle, (*config.ignored_packages, *active.ignored_packages)
+            )
             report = EvidenceAnalyzer().analyze(bundle)
             bundles.append(bundle)
             reports.append(report)
@@ -119,7 +129,12 @@ class RepositoryScanner:
             )
         compatibility_metadata: dict[str, Any] = {}
         compatibility_capability: Capability | None = None
-        if active.compatibility:
+        compatibility_enabled = (
+            config.compatibility
+            if active.compatibility is None
+            else active.compatibility
+        )
+        if compatibility_enabled:
             (
                 reports,
                 compatibility_metadata,
@@ -280,31 +295,32 @@ class RepositoryScanner:
         bundle: EvidenceBundle,
         ignored_packages: tuple[str, ...],
     ) -> EvidenceBundle:
-        ignored = {item.lower() for item in ignored_packages}
+        normalize = (
+            canonicalize_name
+            if bundle.project.ecosystem.lower() == "pypi"
+            else str.lower
+        )
+        ignored = {normalize(item) for item in ignored_packages}
         if not ignored:
             return bundle
-        return EvidenceBundle(
-            project=bundle.project,
+        return replace(
+            bundle,
             declarations=tuple(
                 item
                 for item in bundle.declarations
-                if item.package.name.lower() not in ignored
+                if normalize(item.package.name) not in ignored
             ),
             resolved=tuple(
                 item
                 for item in bundle.resolved
-                if item.package.name.lower() not in ignored
+                if normalize(item.package.name) not in ignored
             ),
             usages=tuple(
                 item
                 for item in bundle.usages
                 if item.mapped_package is None
-                or item.mapped_package.name.lower() not in ignored
+                or normalize(item.mapped_package.name) not in ignored
             ),
-            diagnostics=bundle.diagnostics,
-            capabilities=bundle.capabilities,
-            source_files=bundle.source_files,
-            evidence_files=bundle.evidence_files,
         )
 
     @staticmethod

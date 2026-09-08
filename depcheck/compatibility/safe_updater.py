@@ -60,9 +60,10 @@ class RequirementsUpdater:
         original_bytes = path.read_bytes()
         original = original_bytes.decode("utf-8")
         normalized: dict[NormalizedName, str] = {
-            canonicalize_name(name): self._normalize_spec(spec)
+            canonicalize_name(name, validate=True): self._normalize_spec(spec)
             for name, spec in updates.items()
         }
+        self._check_hashed_updates(original, normalized)
         updated: dict[str, str] = {}
         matched: set[NormalizedName] = set()
         new_lines: list[str] = []
@@ -88,7 +89,11 @@ class RequirementsUpdater:
                 continue
 
             name = canonicalize_name(requirement.name)
-            if name not in normalized or requirement.url is not None:
+            if name not in normalized:
+                new_lines.append(raw_line)
+                continue
+            matched.add(name)
+            if requirement.url is not None:
                 new_lines.append(raw_line)
                 continue
 
@@ -162,6 +167,24 @@ class RequirementsUpdater:
         """兼容便捷接口；内部仍先生成计划并执行并发校验。"""
         plan = self.plan(file_path, updates, add_missing=add_missing)
         return self.apply_plan(plan)
+
+    @staticmethod
+    def _check_hashed_updates(content: str, updates: dict[NormalizedName, str]) -> None:
+        # 版本变化后旧 hash 失效；离线预览无法重新计算，必须明确拒绝。
+        logical = re.sub(r"\\\r?\n", " ", content)
+        for line in logical.splitlines():
+            prefix, separator, _ = line.partition("--hash")
+            if not separator:
+                continue
+            try:
+                requirement = Requirement(prefix.strip())
+            except InvalidRequirement:
+                continue
+            name = canonicalize_name(requirement.name)
+            if name in updates and requirement.specifier != SpecifierSet(updates[name]):
+                raise ValueError(
+                    f"cannot update {name} without regenerating requirement hashes"
+                )
 
     @staticmethod
     def _normalize_spec(spec: str) -> str:

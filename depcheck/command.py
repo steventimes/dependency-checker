@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
 from depcheck.agent import DependencyAgentService
+from depcheck.config import load_project_config
+from depcheck.policy_codes import normalize_fail_on
 from depcheck.engine import RepositoryScanOptions, RepositoryScanner
 from depcheck.output import (
     build_cyclonedx,
@@ -41,11 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--offline",
         action="store_true",
-        help="Disable network-backed security queries",
+        help="Disable security and compatibility network queries",
     )
     scan.add_argument(
         "--compatibility",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Resolve Python compatibility using PyPI metadata",
     )
     scan.add_argument("--python-version")
@@ -133,12 +137,19 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _scan(root: Path, arguments: argparse.Namespace) -> int:
+    config = load_project_config(root)
+    policy = load_policy(arguments.policy) if arguments.policy else {}
+    fail_on = normalize_fail_on(policy.get("fail_on", ()))
+    policy = {
+        **policy,
+        "fail_on": normalize_fail_on((*config.fail_on, *fail_on, *arguments.fail_on)),
+    }
     security = False if arguments.offline else arguments.security
     result = RepositoryScanner().scan(
         root,
         RepositoryScanOptions(
             security=security,
-            compatibility=arguments.compatibility,
+            compatibility=False if arguments.offline else arguments.compatibility,
             enabled_ecosystems=(
                 tuple(arguments.ecosystem) if arguments.ecosystem else None
             ),
@@ -147,6 +158,10 @@ def _scan(root: Path, arguments: argparse.Namespace) -> int:
             import_mapping=_parse_updates(arguments.mappings, option="--map"),
             python_version=arguments.python_version,
         ),
+    )
+    evaluation = evaluate_policy(result, policy)
+    result = replace(
+        result, metadata={**result.metadata, "policy": evaluation.to_dict()}
     )
     if arguments.format == "text":
         rendered = render_text(result)
@@ -170,17 +185,6 @@ def _scan(root: Path, arguments: argparse.Namespace) -> int:
     else:
         arguments.output.write_text(rendered + "\n", encoding="utf-8")
 
-    policy = load_policy(arguments.policy) if arguments.policy else {}
-    evaluation = evaluate_policy(
-        result,
-        {
-            **policy,
-            "fail_on": [
-                *(policy.get("fail_on", ()) or ()),
-                *arguments.fail_on,
-            ],
-        },
-    )
     return 1 if evaluation.should_fail() else 0
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from depcheck.analyzer.import_scanner import ImportScanner
 from depcheck.model import (
@@ -270,7 +271,11 @@ def filter_python_manifest(
     """Apply target-Python markers before any scan or index consumes evidence."""
     if python_version is None:
         return manifest_result
-    environment = {"python_version": str(python_version)}
+    version = Version(str(python_version))
+    environment = {
+        "python_version": f"{version.major}.{version.minor}",
+        "python_full_version": str(version),
+    }
     active_direct = {
         item.name
         for item in manifest_result.declarations

@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from depcheck.compatibility.checker import (
     CompatibilityConflict,
     CompatibilityReport,
@@ -249,3 +251,170 @@ def test_compatibility_is_a_stage_of_the_repository_scan(tmp_path: Path) -> None
     assert result.metadata["compatibility"]["pypi:python:."]["suggestions"] == {
         "requests": "==2.32.4"
     }
+
+
+def test_configured_ignores_match_scan_and_index(tmp_path: Path) -> None:
+    from depcheck.indexing import RepositoryIndex, RepositoryIndexer
+
+    (tmp_path / ".depcheck.toml").write_text(
+        'security = false\nignore-packages = ["demo_pkg"]\n'
+    )
+    (tmp_path / "requirements.txt").write_text("demo-pkg>=1\n")
+    (tmp_path / "app.py").write_text("import demo_pkg\n")
+    result = RepositoryScanner().scan(tmp_path)
+    RepositoryIndexer().refresh(tmp_path)
+    assert result.findings == ()
+    assert result.bundles[0].declarations == ()
+    assert RepositoryIndex(tmp_path).dependencies() == []
+
+
+def test_configured_compatibility_can_be_overridden(tmp_path: Path) -> None:
+    class Compatibility:
+        calls = 0
+
+        def check_detailed(self, manifest, *, python_version=None):
+            self.calls += 1
+            return CompatibilityReport([], [], [], {})
+
+    (tmp_path / ".depcheck.toml").write_text("security = false\ncompatibility = true\n")
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
+    checker = Compatibility()
+    scanner = RepositoryScanner(compatibility_checker=checker)
+    scanner.scan(tmp_path)
+    assert checker.calls == 1
+    scanner.scan(tmp_path, RepositoryScanOptions(compatibility=False))
+    assert checker.calls == 1
+
+
+@pytest.mark.parametrize("ecosystem", ["PyPI", "npm"])
+def test_incomplete_usage_does_not_claim_dependencies_are_unused(
+    tmp_path: Path, ecosystem: str
+) -> None:
+    if ecosystem == "PyPI":
+        (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
+        (tmp_path / "app.py").write_text("import requests\nthis is invalid !!!\n")
+    else:
+        (tmp_path / "package.json").write_text('{"dependencies":{"react":"18.0.0"}}')
+        (tmp_path / "app.js").write_text("const lib = import(resolveName());\n")
+    result = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, enabled_ecosystems=(ecosystem,))
+    )
+    assert not result.capability("dependency_hygiene").complete
+    assert not any(item.code == "dependency.unused" for item in result.findings)
+
+
+@pytest.mark.parametrize(
+    "vulns", [{"id": "OSV-1"}, ["OSV-1"], [{"summary": "no id"}], 7]
+)
+def test_osv_malformed_results_never_become_clean(vulns) -> None:
+    from depcheck.security.osv_client import OSVClient
+
+    class Session:
+        def post(self, *args, **kwargs):
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"results": [{"vulns": vulns}]},
+            )
+
+    result = OSVClient(session=Session()).scan({"requests": "2.31.0"})
+    assert result.complete is False
+    assert result.diagnostics[0].code == "osv.invalid-response"
+
+
+def test_osv_stops_repeated_pagination_tokens() -> None:
+    from depcheck.security.osv_client import OSVClient
+
+    class Session:
+        calls = 0
+
+        def post(self, *args, **kwargs):
+            self.calls += 1
+            assert self.calls <= 2, "pagination must stop when the token repeats"
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"results": [{"next_page_token": "same"}]},
+            )
+
+    result = OSVClient(session=Session()).scan({"requests": "2.31.0"})
+    assert not result.complete
+
+
+def test_osv_keeps_confirmed_vulnerabilities_when_later_batch_fails() -> None:
+    import requests
+    from depcheck.security.osv_client import OSVClient
+
+    class Session:
+        calls = 0
+
+        def post(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls > 1:
+                raise requests.ConnectionError("connection interrupted")
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"results": [{"vulns": [{"id": "OSV-1"}]}]},
+            )
+
+        def get(self, *args, **kwargs):
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"id": "OSV-1", "summary": "affected"},
+            )
+
+    result = OSVClient(session=Session(), batch_size=1, max_attempts=1).scan(
+        {"requests": "2.31.0", "httpx": "0.27.0"}
+    )
+    assert not result.complete
+    assert result.vulnerabilities["requests"][0]["id"] == "OSV-1"
+
+
+def test_compatibility_honors_requirement_constraints(tmp_path: Path) -> None:
+    from depcheck.compatibility.checker import CompatibilityChecker
+    from depcheck.compatibility.pypi_client import PyPIFetchResult
+
+    class PyPI:
+        def fetch_metadata(self, package, version=None):
+            if version is None:
+                return PyPIFetchResult({"releases": {"1.0": [{}], "2.0": [{}]}})
+            return PyPIFetchResult({"info": {"requires_dist": []}})
+
+    (tmp_path / "requirements.txt").write_text("demo>=1\n-c constraints.txt\n")
+    (tmp_path / "constraints.txt").write_text("demo<2\n")
+    result = RepositoryScanner(compatibility_checker=CompatibilityChecker(PyPI())).scan(
+        tmp_path, RepositoryScanOptions(security=False, compatibility=True)
+    )
+    assert result.metadata["compatibility"]["pypi:python:."]["selected_versions"] == {
+        "demo": "1.0"
+    }
+
+
+@pytest.mark.parametrize("requires_dist", [["invalid requirement !!!"], 7, "requests"])
+def test_invalid_compatibility_metadata_is_incomplete(
+    tmp_path: Path, requires_dist
+) -> None:
+    from depcheck.compatibility.checker import CompatibilityChecker
+    from depcheck.compatibility.pypi_client import PyPIFetchResult
+
+    class PyPI:
+        def fetch_metadata(self, package, version=None):
+            return PyPIFetchResult({"info": {"requires_dist": requires_dist}})
+
+    (tmp_path / "requirements.txt").write_text("demo==1.0\n")
+    result = RepositoryScanner(compatibility_checker=CompatibilityChecker(PyPI())).scan(
+        tmp_path, RepositoryScanOptions(security=False, compatibility=True)
+    )
+    assert not result.capability("compatibility").complete
+
+
+def test_python_full_version_marker_uses_requested_target() -> None:
+    from depcheck.ecosystems.python import filter_python_manifest
+    from depcheck.model import ManifestParseResult
+
+    requirement = PythonRequirement.from_requirement(
+        'demo==1; python_full_version == "3.10.7"',
+        source=SourceLocation(Path("requirements.txt")),
+    )
+    filtered = filter_python_manifest(
+        ManifestParseResult(declarations=(requirement,)), "3.10.7"
+    )
+    assert filtered.declarations == (requirement,)

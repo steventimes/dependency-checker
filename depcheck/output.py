@@ -14,7 +14,7 @@ from uuid import uuid4
 from packaging.utils import canonicalize_name
 
 from depcheck.model import Finding, PackageIdentity, ScanResult
-from depcheck.policy_codes import matches_risk, normalize_fail_on
+from depcheck.policy_codes import RISK_CODES, matches_risk, normalize_fail_on
 
 
 def render_json(result: ScanResult) -> str:
@@ -70,6 +70,19 @@ def render_text(result: ScanResult) -> str:
                 f" [{diagnostic.severity.upper()}] "
                 f"{diagnostic.code}{diagnostic_location}: {diagnostic.message}"
             )
+    policy = result.metadata.get("policy")
+    if isinstance(policy, Mapping):
+        lines.extend(("", f"Policy: {str(policy['status']).upper()}"))
+        for group in (
+            "invalid_exemptions",
+            "expired_exemptions",
+            "unmatched_exemptions",
+        ):
+            for exemption in policy.get(group, []):
+                lines.append(
+                    f" {exemption['id']}: "
+                    f"{exemption.get('validation_error', group.replace('_', ' '))}"
+                )
     return "\n".join(lines)
 
 
@@ -96,6 +109,14 @@ def build_sarif(result: ScanResult) -> dict[str, Any]:
                     {
                         "executionSuccessful": result.complete,
                         "properties": result.to_dict()["summary"],
+                        "toolExecutionNotifications": [
+                            {
+                                "descriptor": {"id": item.code},
+                                "level": _sarif_level(item.severity),
+                                "message": {"text": item.message},
+                            }
+                            for item in result.diagnostics
+                        ],
                     }
                 ],
                 "results": [
@@ -124,7 +145,9 @@ def _sarif_result(result: ScanResult, finding: Finding) -> dict[str, Any]:
     locations = []
     for location in finding.locations:
         physical: dict[str, Any] = {
-            "artifactLocation": {"uri": _relative(location.path, result.root)}
+            "artifactLocation": {
+                "uri": quote(_relative(location.path, result.root), safe="/")
+            }
         }
         if location.line is not None:
             region = {"startLine": location.line}
@@ -134,10 +157,19 @@ def _sarif_result(result: ScanResult, finding: Finding) -> dict[str, Any]:
         locations.append({"physicalLocation": physical})
     if not locations:
         manifests = [
-            path for bundle in result.bundles for path in bundle.project.manifests
+            path
+            for bundle in result.bundles
+            if bundle.project.project_id == finding.package.project_id
+            for path in bundle.project.manifests
         ]
         fallback = manifests[0].as_posix() if manifests else "."
-        locations.append({"physicalLocation": {"artifactLocation": {"uri": fallback}}})
+        locations.append(
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": quote(fallback, safe="/")}
+                }
+            }
+        )
     return {
         "ruleId": _rule_id(finding.code),
         "level": _sarif_level(finding.severity),
@@ -175,6 +207,7 @@ def build_cyclonedx(
     component_by_identity: dict[PackageIdentity, dict[str, Any]] = {}
     reference_by_identity: dict[PackageIdentity, str] = {}
     for bundle in result.bundles:
+        resolved_names = {item.package.name for item in bundle.resolved}
         for resolution in bundle.resolved:
             identity = resolution.identity
             reference = _component_reference(identity)
@@ -185,12 +218,7 @@ def build_cyclonedx(
                 direct=resolution.direct,
             )
         for declaration in bundle.declarations:
-            matching = [
-                item
-                for item in bundle.resolved
-                if item.package.name == declaration.package.name
-            ]
-            if matching:
+            if declaration.package.name in resolved_names:
                 continue
             identity = PackageIdentity(
                 declaration.project_id,
@@ -288,19 +316,15 @@ def build_cyclonedx(
 
 
 def _component_reference(identity: PackageIdentity) -> str:
-    if identity.purl:
-        reference = identity.purl
-        if identity.version:
-            reference += f"@{quote(identity.version, safe='-._~+')}"
-    else:
-        reference = (
-            "urn:depcheck:"
-            f"{quote(identity.project_id, safe='')}:"
-            f"{quote(identity.ecosystem, safe='')}:"
-            f"{quote(identity.name, safe='')}"
-        )
-        if identity.version:
-            reference += f"@{quote(identity.version, safe='-._~+')}"
+    # purl 标识发布包；bom-ref 还必须区分项目和安装实例。
+    reference = (
+        "urn:depcheck:"
+        f"{quote(identity.project_id, safe='')}:"
+        f"{quote(identity.ecosystem, safe='')}:"
+        f"{quote(identity.name, safe='')}"
+    )
+    if identity.version:
+        reference += f"@{quote(identity.version, safe='-._~+')}"
     if identity.instance:
         reference += f"#instance={quote(identity.instance, safe='-._~/')}"
     return reference
@@ -471,7 +495,7 @@ def _normalize_exemption(
     return {
         "id": str(value.get("id", f"exemption-{index + 1}")),
         "risk": str(value.get("risk", "")).lower(),
-        "package": str(canonicalize_name(str(value.get("package", "")))),
+        "package": str(value.get("package", "")).strip(),
         "project_id": (str(value["project_id"]) if value.get("project_id") else None),
         "ecosystem": (str(value["ecosystem"]) if value.get("ecosystem") else None),
         "reason": str(value.get("reason", "")),
@@ -483,6 +507,8 @@ def _normalize_exemption(
 def _validate_exemption(value: Mapping[str, Any]) -> str | None:
     if not value.get("risk"):
         return "risk is required"
+    if value["risk"] not in RISK_CODES:
+        return "unknown exemption risk"
     for field in ("package", "reason", "owner", "expires_at"):
         if not value.get(field):
             return f"{field} is required"
@@ -494,8 +520,9 @@ def _matches_exemption(
     exemption: Mapping[str, Any],
 ) -> bool:
     identity = finding.package
+    normalize = canonicalize_name if identity.ecosystem.lower() == "pypi" else str
     return (
-        identity.name == exemption["package"]
+        normalize(identity.name) == normalize(str(exemption["package"]))
         and (
             exemption["project_id"] is None
             or identity.project_id == exemption["project_id"]

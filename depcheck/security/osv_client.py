@@ -79,6 +79,7 @@ class OSVClient:
             for package, version in queried.items()
         ]
         diagnostics: list[Diagnostic] = []
+        seen_tokens: dict[str, set[str]] = {package: set() for package in queried}
 
         # querybatch 的分页令每个查询拥有独立 token，因此下一轮只重发未完成项。
         while pending:
@@ -91,7 +92,7 @@ class OSVClient:
                 )
                 if diagnostic is not None:
                     diagnostics.append(diagnostic)
-                    return OSVScanResult({}, tuple(diagnostics), queried)
+                    continue
 
                 results = data.get("results") if data else None
                 if not isinstance(results, list) or len(results) != len(chunk):
@@ -102,7 +103,7 @@ class OSVClient:
                             message="OSV 批量响应数量与查询数量不一致",
                         )
                     )
-                    return OSVScanResult({}, tuple(diagnostics), queried)
+                    continue
 
                 for (package, query), result in zip(chunk, results):
                     if not isinstance(result, dict):
@@ -114,14 +115,38 @@ class OSVClient:
                             )
                         )
                         continue
-                    for item in result.get("vulns", []) or []:
-                        if isinstance(item, dict) and item.get("id"):
-                            vuln_id = str(item["id"])
-                            if vuln_id not in ids_by_package[package]:
-                                ids_by_package[package].append(vuln_id)
+                    vulns = result.get("vulns", [])
+                    if not isinstance(vulns, list):
+                        diagnostics.append(
+                            self._invalid_result(package, "vulns must be an array")
+                        )
+                        continue
+                    for item in vulns:
+                        if (
+                            not isinstance(item, dict)
+                            or not isinstance(item.get("id"), str)
+                            or not item["id"]
+                        ):
+                            diagnostics.append(
+                                self._invalid_result(
+                                    package, "vulnerability id is missing"
+                                )
+                            )
+                            continue
+                        vuln_id = item["id"]
+                        if vuln_id not in ids_by_package[package]:
+                            ids_by_package[package].append(vuln_id)
                     token = result.get("next_page_token")
                     if token:
-                        next_page.append((package, {**query, "page_token": str(token)}))
+                        if not isinstance(token, str) or token in seen_tokens[package]:
+                            diagnostics.append(
+                                self._invalid_result(
+                                    package, "invalid or repeated pagination token"
+                                )
+                            )
+                            continue
+                        seen_tokens[package].add(token)
+                        next_page.append((package, {**query, "page_token": token}))
             pending = next_page
 
         vulnerabilities: dict[str, list[dict[str, Any]]] = {}
@@ -146,6 +171,14 @@ class OSVClient:
                 vulnerabilities[package] = issues
 
         return OSVScanResult(vulnerabilities, tuple(diagnostics), queried)
+
+    @staticmethod
+    def _invalid_result(package: str, reason: str) -> Diagnostic:
+        return Diagnostic(
+            code="osv.invalid-response",
+            severity="error",
+            message=f"Invalid OSV result for {package}: {reason}",
+        )
 
     def _get_detail(self, vuln_id: str) -> tuple[dict[str, Any], Diagnostic | None]:
         if vuln_id in self._detail_cache:

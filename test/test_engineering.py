@@ -113,3 +113,71 @@ def test_suite_is_intentionally_bounded_to_five_files() -> None:
         "test_interfaces.py",
         "test_outputs.py",
     ]
+
+
+def test_new_exclusions_remove_previously_indexed_manifests(tmp_path: Path) -> None:
+    from depcheck.indexing import RepositoryIndex, RepositoryIndexer
+
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    (generated / "requirements.txt").write_text("requests==2.31.0\n")
+    indexer = RepositoryIndexer()
+    indexer.refresh(tmp_path)
+    (tmp_path / ".depcheck.toml").write_text('excluded-directories = ["generated"]\n')
+    indexer.refresh(tmp_path)
+    (generated / "requirements.txt").write_text("requests==2.32.4\n")
+    assert RepositoryIndex(tmp_path).context()["stale"] is False
+    assert RepositoryIndex(tmp_path).dependencies() == []
+
+
+def test_index_does_not_invent_a_python_project_from_cmake(tmp_path: Path) -> None:
+    from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+    from depcheck.indexing import RepositoryIndex, RepositoryIndexer
+
+    (tmp_path / "CMakeLists.txt").write_text("find_package(fmt REQUIRED)\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    RepositoryIndexer().refresh(tmp_path)
+    indexed = RepositoryIndex(tmp_path).context()
+    assert {bundle.project.project_id for bundle in result.bundles} == {
+        project["project_id"] for project in indexed["projects"]
+    }
+
+
+@pytest.mark.parametrize("target", [".depcheck.toml", "pyproject.toml", ".depcheck"])
+def test_config_and_default_index_reject_symlink_escape(
+    tmp_path: Path, target: str
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    if target == ".depcheck":
+        outside.mkdir()
+    else:
+        outside.write_text("security = false\n")
+    (root / target).symlink_to(outside, target_is_directory=outside.is_dir())
+    with pytest.raises(ProjectPathError):
+        if target == ".depcheck":
+            with IndexStore(root):
+                pass
+        else:
+            load_project_config(root)
+    if target == ".depcheck":
+        assert list(outside.iterdir()) == []
+
+
+def test_summary_counts_are_not_multiplied_by_other_evidence(tmp_path: Path) -> None:
+    from depcheck.indexing import RepositoryIndexer
+
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\nhttpx==0.27.0\n")
+    (tmp_path / "app.py").write_text("import requests\nimport httpx\n")
+    (tmp_path / "other.py").write_text("import requests\n")
+    RepositoryIndexer().refresh(tmp_path)
+    with IndexStore(tmp_path) as store:
+        assert store.ecosystem_summary() == {
+            "PyPI": {
+                "project_count": 1,
+                "declaration_count": 2,
+                "usage_count": 3,
+                "source_file_count": 2,
+            }
+        }

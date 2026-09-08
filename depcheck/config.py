@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from depcheck.policy_codes import VALID_FAIL_ON
+from depcheck.path_policy import require_within_project
 
 
 class ConfigurationError(ValueError):
@@ -71,8 +72,10 @@ class DepcheckConfig:
 
 def load_project_config(project_root: Path) -> DepcheckConfig:
     """优先加载中立配置；缺失时回退到旧 Python 配置。"""
-    root = Path(project_root)
-    neutral_path = root / ".depcheck.toml"
+    root = Path(project_root).resolve()
+    neutral_path = require_within_project(
+        root, root / ".depcheck.toml", operation="read configuration"
+    )
     if neutral_path.is_file():
         return _parse_config(
             _load_toml(neutral_path),
@@ -81,7 +84,9 @@ def load_project_config(project_root: Path) -> DepcheckConfig:
             default_ecosystems=DEFAULT_ECOSYSTEMS,
         )
 
-    legacy_path = root / "pyproject.toml"
+    legacy_path = require_within_project(
+        root, root / "pyproject.toml", operation="read configuration"
+    )
     if not legacy_path.is_file():
         return DepcheckConfig()
 

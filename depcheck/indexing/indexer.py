@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+from collections import defaultdict
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +20,8 @@ from depcheck.ecosystems.python import (
     create_python_pack,
     filter_python_manifest,
 )
-from depcheck.ecosystems.static import discover_files
+from depcheck.ecosystems.static import discover_files, is_excluded
+from depcheck.path_policy import require_within_project
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
 from depcheck.ecosystems.python_manifest import PythonManifestCollector
 
@@ -148,12 +150,13 @@ class RepositoryIndexer:
             }
             previous_manifests = store.file_digests("manifest")
             manifest_candidates = discovered_manifests | set(previous_manifests)
-            candidate_manifest_digests = {
-                path: _file_digest(root / path)
-                for path in sorted(manifest_candidates)
-                if (root / path).is_file()
-            }
-            manifest_changed = candidate_manifest_digests != previous_manifests
+            candidate_manifest_digests = _manifest_digests(
+                root, manifest_candidates, config.excluded_directories
+            )
+            manifest_changed = (
+                candidate_manifest_digests != previous_manifests
+                or metadata.get("config_digest") != config_digest
+            )
             ecosystem_digests = _ecosystem_digests(root, config)
 
             workspace_digest = _state_digest(
@@ -191,6 +194,14 @@ class RepositoryIndexer:
                 python_by_relative[path] for path in sorted(changed_python)
             ]
             changed_imports = import_scanner.scan_files(root, changed_paths)
+            # 按文件分组一次，避免每写入一个文件都遍历全部导入证据。
+            imports_by_path = defaultdict(list)
+            diagnostics_by_path = defaultdict(list)
+            for item in changed_imports.imports:
+                imports_by_path[item.source.path].append(item)
+            for diagnostic in changed_imports.diagnostics:
+                if diagnostic.source is not None:
+                    diagnostics_by_path[diagnostic.source.path].append(diagnostic)
             manifest_result = reporter.collect() if manifest_changed else None
             if manifest_result is not None:
                 manifest_digests = {
@@ -205,21 +216,11 @@ class RepositoryIndexer:
                 store.remove_files(sorted(removed_python))
                 for relative in sorted(changed_python):
                     absolute = python_by_relative[relative]
-                    file_imports = tuple(
-                        item
-                        for item in changed_imports.imports
-                        if item.source.path == absolute
-                    )
-                    diagnostics = tuple(
-                        item
-                        for item in changed_imports.diagnostics
-                        if item.source is not None and item.source.path == absolute
-                    )
                     store.replace_python_file(
                         relative,
                         python_digests[relative],
-                        file_imports,
-                        diagnostics,
+                        tuple(imports_by_path[absolute]),
+                        tuple(diagnostics_by_path[absolute]),
                     )
                 if manifest_result is not None:
                     store.replace_manifests(manifest_result, manifest_digests)
@@ -254,10 +255,23 @@ class RepositoryIndexer:
                     filter_python_manifest(manifests, config.python_version),
                     cached_imports,
                 )
+                bundle = RepositoryScanner._without_ignored(
+                    bundle, config.ignored_packages
+                )
                 python_enabled = any(
                     item.lower() == "pypi" for item in config.enabled_ecosystems
                 )
-                has_python_evidence = bool(cached_imports.files or manifests.files)
+                has_python_evidence = bool(cached_imports.files) or any(
+                    path.name
+                    not in {
+                        "Dockerfile",
+                        "dockerfile",
+                        "Makefile",
+                        "makefile",
+                        "CMakeLists.txt",
+                    }
+                    for path in manifests.files
+                )
                 repository_reports = (
                     [EvidenceAnalyzer().analyze(bundle)]
                     if python_enabled and has_python_evidence
@@ -274,6 +288,7 @@ class RepositoryIndexer:
                         root,
                         RepositoryScanOptions(
                             security=False,
+                            compatibility=False,
                             enabled_ecosystems=non_python_ecosystems,
                             ignored_packages=config.ignored_packages,
                         ),
@@ -394,6 +409,7 @@ class RepositoryIndexer:
     ) -> IndexRefreshResult:
         options = RepositoryScanOptions(
             security=False,
+            compatibility=False,
             enabled_ecosystems=ecosystems if ecosystems else None,
             project_ids=project_ids,
             ignored_packages=config.ignored_packages,
@@ -512,7 +528,11 @@ class RepositoryIndex:
         self.index_path = (
             Path(index_path).resolve()
             if index_path is not None
-            else self.project_root / ".depcheck" / "index.sqlite3"
+            else require_within_project(
+                self.project_root,
+                self.project_root / ".depcheck" / "index.sqlite3",
+                operation="read dependency index",
+            )
         )
 
     def context(self) -> dict[str, Any]:
@@ -625,6 +645,7 @@ class RepositoryIndex:
         self,
         *,
         search: str | None = None,
+        package: str | None = None,
         ecosystem: str | None = None,
         project_id: str | None = None,
         limit: int = 100,
@@ -633,6 +654,7 @@ class RepositoryIndex:
         with IndexStore(self.project_root, self.index_path) as store:
             return store.dependency_inventory(
                 search=search,
+                package=package,
                 ecosystem=ecosystem,
                 project_id=project_id,
                 limit=limit,
@@ -657,6 +679,7 @@ def _current_filtered_workspace_digest(
             root,
             RepositoryScanOptions(
                 security=False,
+                compatibility=False,
                 enabled_ecosystems=ecosystems if ecosystems else None,
                 project_ids=project_ids,
                 ignored_packages=config.ignored_packages,
@@ -687,11 +710,7 @@ def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) ->
     reporter = PythonManifestCollector(root, config.excluded_directories)
     discovered = {_relative(root, path) for path in reporter.find_dependency_file()}
     candidates = discovered | set(previous_manifests)
-    manifest_digests = {
-        path: _file_digest(root / path)
-        for path in sorted(candidates)
-        if (root / path).is_file()
-    }
+    manifest_digests = _manifest_digests(root, candidates, config.excluded_directories)
     return _state_digest(
         python_digests,
         manifest_digests,
@@ -702,9 +721,24 @@ def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) ->
 
 def _config_digest(config: DepcheckConfig) -> str:
     payload = asdict(config)
+    # 数据表结构未变时，也要使旧分析语义生成的缓存失效。
+    payload["analysis_revision"] = 1
     payload["import_mapping"] = dict(sorted(config.import_mapping.items()))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _manifest_digests(
+    root: Path, candidates: set[str], excluded_directories: tuple[str, ...]
+) -> dict[str, str]:
+    result = {}
+    for relative in sorted(candidates):
+        if is_excluded(Path(relative), excluded_directories):
+            continue
+        path = require_within_project(root, root / relative, operation="hash manifest")
+        if path.is_file():
+            result[relative] = _file_digest(path)
+    return result
 
 
 def _file_digest(path: Path) -> str:

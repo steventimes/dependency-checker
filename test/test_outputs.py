@@ -1,4 +1,5 @@
 from datetime import date
+from dataclasses import replace
 from pathlib import Path
 
 from depcheck.model import (
@@ -160,3 +161,82 @@ def test_policy_exemptions_apply_to_qualified_findings() -> None:
 
     assert evaluation.effective_findings == ()
     assert evaluation.should_fail() is False
+
+
+def test_sbom_references_are_unique_across_projects() -> None:
+    first = sample_result()
+    bundle = first.bundles[0]
+    second_id = "npm:npm:apps/second"
+    second = replace(
+        bundle,
+        project=replace(bundle.project, project_id=second_id),
+        declarations=tuple(
+            replace(item, project_id=second_id) for item in bundle.declarations
+        ),
+        resolved=tuple(replace(item, project_id=second_id) for item in bundle.resolved),
+    )
+    sbom = build_cyclonedx(replace(first, bundles=(bundle, second)))
+    refs = [item["bom-ref"] for item in sbom["components"]]
+    assert len(refs) == len(set(refs)) == 4
+    owners = {
+        item["bom-ref"]: item["properties"][0]["value"] for item in sbom["components"]
+    }
+    for edge in sbom["dependencies"][1:]:
+        assert all(owners[child] == owners[edge["ref"]] for child in edge["dependsOn"])
+
+
+def test_sarif_encodes_paths_and_preserves_failure_diagnostics() -> None:
+    from depcheck.model import Diagnostic
+
+    result = sample_result()
+    result = replace(
+        result,
+        diagnostics=(Diagnostic("source.invalid", "error", "cannot parse source"),),
+        findings=(
+            replace(
+                result.findings[0],
+                locations=(SourceLocation(Path("/repo/a #b.js"), 1),),
+            ),
+        ),
+    )
+    run = build_sarif(result)["runs"][0]
+    assert (
+        run["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        == "a%20%23b.js"
+    )
+    assert (
+        run["invocations"][0]["toolExecutionNotifications"][0]["message"]["text"]
+        == "cannot parse source"
+    )
+
+
+def test_policy_preserves_go_coordinates_and_rejects_unknown_risks() -> None:
+    result = sample_result()
+    result = replace(
+        result,
+        findings=(
+            replace(
+                result.findings[0],
+                package=PackageIdentity("go:go:.", "Go", "example.com/Some_Module"),
+            ),
+        ),
+    )
+    exemption = {
+        "risk": "unused",
+        "package": "example.com/Some_Module",
+        "ecosystem": "Go",
+        "project_id": "go:go:.",
+        "reason": "migration",
+        "owner": "platform",
+        "expires_at": "2026-12-01",
+    }
+    evaluation = evaluate_policy(
+        result,
+        {"fail_on": ["unused"], "exemptions": [exemption]},
+        today=date(2026, 9, 5),
+    )
+    assert not evaluation.should_fail()
+    invalid = evaluate_policy(
+        result, {"exemptions": [{**exemption, "risk": "typo"}]}, today=date(2026, 9, 5)
+    )
+    assert invalid.governance_risk_count == 1

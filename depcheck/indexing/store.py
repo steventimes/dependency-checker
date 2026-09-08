@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Self
 
+from packaging.utils import canonicalize_name
+
 from depcheck.model import AnalysisReport
 from depcheck.model import (
     PythonRequirement,
@@ -18,6 +20,7 @@ from depcheck.model import (
 )
 from depcheck.model import EvidenceBundle, ResolvedDependencyLink
 from depcheck.indexing.models import INDEX_SCHEMA
+from depcheck.path_policy import require_within_project
 
 
 class IndexStore:
@@ -29,7 +32,11 @@ class IndexStore:
         self.path = (
             Path(index_path).resolve()
             if index_path is not None
-            else self.project_root / ".depcheck" / "index.sqlite3"
+            else require_within_project(
+                self.project_root,
+                self.project_root / ".depcheck" / "index.sqlite3",
+                operation="write dependency index",
+            )
         )
         self.rebuilt = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -815,16 +822,25 @@ class IndexStore:
         rows = self.connection.execute(
             """
             SELECT p.ecosystem,
-                   COUNT(DISTINCT p.project_id) AS project_count,
-                   COUNT(DISTINCT d.rowid) AS declaration_count,
-                   COUNT(DISTINCT u.rowid) AS usage_count,
-                   COUNT(DISTINCT s.rowid) AS source_file_count
+                   COUNT(*) AS project_count,
+                   SUM(COALESCE(d.total, 0)) AS declaration_count,
+                   SUM(COALESCE(u.total, 0)) AS usage_count,
+                   SUM(COALESCE(s.total, 0)) AS source_file_count
             FROM projects AS p
-            LEFT JOIN normalized_declarations AS d
+            LEFT JOIN (
+                SELECT project_id, COUNT(*) AS total
+                FROM normalized_declarations GROUP BY project_id
+            ) AS d
               ON d.project_id = p.project_id
-            LEFT JOIN usages AS u
+            LEFT JOIN (
+                SELECT project_id, COUNT(*) AS total
+                FROM usages GROUP BY project_id
+            ) AS u
               ON u.project_id = p.project_id
-            LEFT JOIN normalized_source_files AS s
+            LEFT JOIN (
+                SELECT project_id, COUNT(*) AS total
+                FROM normalized_source_files GROUP BY project_id
+            ) AS s
               ON s.project_id = p.project_id
             GROUP BY p.ecosystem
             ORDER BY lower(p.ecosystem)
@@ -844,6 +860,7 @@ class IndexStore:
         self,
         *,
         search: str | None = None,
+        package: str | None = None,
         ecosystem: str | None = None,
         project_id: str | None = None,
         limit: int = 100,
@@ -851,99 +868,19 @@ class IndexStore:
         """按发行包聚合声明、导入与 finding，只返回结构化证据。"""
         if limit < 1:
             raise ValueError("limit must be positive")
-        project_count = self.connection.execute(
-            "SELECT COUNT(*) FROM projects"
-        ).fetchone()[0]
-        if project_count:
-            return self._normalized_dependency_inventory(
-                search=search,
-                ecosystem=ecosystem,
-                project_id=project_id,
-                limit=limit,
-            )
-        metadata = self.metadata()
-        import_mapping = json.loads(metadata.get("import_mapping", "{}"))
-        packages: dict[str, dict[str, Any]] = {}
-
-        declaration_rows = self.connection.execute(
-            """
-            SELECT source_path, line, column_number, raw_requirement,
-                   dependency_group, declaration_kind
-            FROM declarations
-            ORDER BY source_path, line, raw_requirement
-            """
+        return self._normalized_dependency_inventory(
+            search=search,
+            package=package,
+            ecosystem=ecosystem,
+            project_id=project_id,
+            limit=limit,
         )
-        for row in declaration_rows:
-            declaration = PythonRequirement.from_requirement(
-                str(row["raw_requirement"]),
-                source=SourceLocation(
-                    self.project_root / str(row["source_path"]),
-                    line=row["line"],
-                    column=row["column_number"],
-                ),
-                group=str(row["dependency_group"]),
-                kind=str(row["declaration_kind"]),
-            )
-            record = packages.setdefault(
-                declaration.name, _empty_dependency(declaration.name)
-            )
-            record["declarations"].append(
-                {
-                    "requirement": declaration.raw_requirement,
-                    "group": declaration.group,
-                    "kind": declaration.kind,
-                    "location": _row_location(row, "source_path"),
-                }
-            )
-
-        import_rows = self.connection.execute(
-            """
-            SELECT file_path, module, line, column_number, scope, import_kind
-            FROM imports
-            ORDER BY module, file_path, line
-            """
-        )
-        for row in import_rows:
-            module = str(row["module"])
-            package = str(import_mapping.get(module, module))
-            record = packages.setdefault(package, _empty_dependency(package))
-            record["imports"].append(
-                {
-                    "module": module,
-                    "scope": str(row["scope"]),
-                    "kind": str(row["import_kind"]),
-                    "location": _row_location(row, "file_path"),
-                }
-            )
-
-        for finding in self.findings(limit=10000):
-            package = str(finding["package"])
-            record = packages.setdefault(package, _empty_dependency(package))
-            record["findings"].append(finding)
-
-        needle = (search or "").strip().lower()
-        results: list[dict[str, Any]] = []
-        for package in sorted(packages):
-            record = packages[package]
-            if (
-                needle
-                and needle not in package.lower()
-                and not any(
-                    needle in str(item["module"]).lower() for item in record["imports"]
-                )
-            ):
-                continue
-            record["declared"] = bool(record["declarations"])
-            record["imported"] = bool(record["imports"])
-            results.append(record)
-            if len(results) == limit:
-                break
-        return results
 
     def _normalized_dependency_inventory(
         self,
         *,
         search: str | None,
+        package: str | None,
         ecosystem: str | None,
         project_id: str | None,
         limit: int,
@@ -972,15 +909,21 @@ class IndexStore:
             row_ecosystem = str(row[ecosystem_key])
             if ecosystem is not None and row_ecosystem.lower() != ecosystem.lower():
                 return None
-            package = str(row[package_key])
-            key = (row_project_id, row_ecosystem.lower(), package)
+            row_package = str(row[package_key])
+            if package is not None:
+                normalize = (
+                    canonicalize_name if row_ecosystem.lower() == "pypi" else str
+                )
+                if normalize(row_package) != normalize(package):
+                    return None
+            key = (row_project_id, row_ecosystem.lower(), row_package)
             return records.setdefault(
                 key,
                 {
                     "project_id": row_project_id,
                     "ecosystem": row_ecosystem,
                     "manager": str(project["manager"]),
-                    "package": package,
+                    "package": row_package,
                     "display_name": str(row[display_key]),
                     "purl": row[purl_key],
                     "declared": False,
@@ -1113,19 +1056,6 @@ class IndexStore:
 
     def _relative(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.project_root).as_posix()
-
-
-def _empty_dependency(package: str) -> dict[str, Any]:
-    return {
-        "package": package,
-        "declared": False,
-        "imported": False,
-        "resolved_version": None,
-        "resolved_versions": [],
-        "declarations": [],
-        "imports": [],
-        "findings": [],
-    }
 
 
 def _legacy_link(package: Any) -> ResolvedDependencyLink:

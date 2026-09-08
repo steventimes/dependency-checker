@@ -123,9 +123,7 @@ class CompatibilityChecker:
         active = [
             item
             for item in manifest.declarations
-            if item.group != "build"
-            and item.kind != "constraint"
-            and item.is_active(environment)
+            if item.group != "build" and item.is_active(environment)
         ]
         direct = [item for item in active if item.kind == "direct"]
         locked = [item for item in active if item.kind == "locked"]
@@ -134,13 +132,21 @@ class CompatibilityChecker:
             defaultdict(list)
         )
         direct_extras: defaultdict[NormalizedName, set[str]] = defaultdict(set)
+        constraint_specs: defaultdict[NormalizedName, list[RequirementConstraint]] = (
+            defaultdict(list)
+        )
+        for item in active:
+            if item.kind == "constraint":
+                constraint_specs[canonicalize_name(item.name)].append(
+                    RequirementConstraint("constraints file", item.specifier)
+                )
         for item in direct:
             direct_constraints[canonicalize_name(item.name)].append(
                 RequirementConstraint("project manifest", item.specifier)
             )
             direct_extras[canonicalize_name(item.name)].update(item.extras)
 
-        diagnostics: list[Diagnostic] = []
+        diagnostics: list[Diagnostic] = list(manifest.diagnostics)
         seed_conflicts: list[CompatibilityConflict] = []
         selected: dict[NormalizedName, str] = {}
         fixed_versions: set[NormalizedName] = set()
@@ -209,7 +215,20 @@ class CompatibilityChecker:
                 if info is None:
                     continue
                 metadata[package] = info
-                for raw_requirement in info.get("requires_dist", []) or []:
+                requires_dist = info.get("requires_dist")
+                if requires_dist is None:
+                    requires_dist = []
+                if not isinstance(requires_dist, list):
+                    self._append_diagnostic(
+                        diagnostics,
+                        Diagnostic(
+                            code="pypi.invalid-requires-dist",
+                            severity="error",
+                            message=f"PyPI requires_dist 不是数组：{package}",
+                        ),
+                    )
+                    continue
+                for raw_requirement in requires_dist:
                     try:
                         requirement = Requirement(str(raw_requirement))
                     except (InvalidRequirement, TypeError) as exc:
@@ -217,7 +236,7 @@ class CompatibilityChecker:
                             diagnostics,
                             Diagnostic(
                                 code="pypi.invalid-requires-dist",
-                                severity="warning",
+                                severity="error",
                                 message=f"无法解析 {package} 的依赖元数据：{exc}",
                             ),
                         )
@@ -241,6 +260,7 @@ class CompatibilityChecker:
             for package in sorted(packages, key=str):
                 constraints = [
                     *direct_constraints.get(package, []),
+                    *constraint_specs.get(package, []),
                     *transitive.get(package, []),
                 ]
                 combined = self._combine_specifiers(constraints)
