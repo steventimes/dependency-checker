@@ -8,8 +8,26 @@
       "fixtures": {"ecosystems": ["Maven", "Conan", "npm", "Go"], "locked": true},
       "skills_loaded": ["check-dependencies"],
       "tool_calls": [
-        {"name": "repository_context", "arguments": {"project_root": "."}, "result": {"status": "current", "complete": true}},
-        {"name": "query_dependencies", "arguments": {"project_root": ".", "limit": 20}, "result": {"ecosystems": ["Maven", "Conan", "npm", "Go"], "dependencies": []}}
+        {
+          "name": "repository_context",
+          "arguments": {"project_root": "."},
+          "result": {
+            "indexed": true,
+            "stale": false,
+            "complete": true,
+            "ecosystems": {
+              "Maven": {"project_count": 1},
+              "Conan": {"project_count": 1},
+              "npm": {"project_count": 1},
+              "Go": {"project_count": 1}
+            }
+          }
+        },
+        {
+          "name": "query_dependencies",
+          "arguments": {"project_root": ".", "limit": 20},
+          "result": {"count": 4, "truncated": false, "offset": 0, "next_offset": null}
+        }
       ],
       "events": [],
       "final_status": "pass",
@@ -35,9 +53,25 @@
       "fixtures": {"security": "skipped-by-offline-scan"},
       "skills_loaded": ["check-dependencies"],
       "tool_calls": [
-        {"name": "repository_context", "arguments": {"project_root": "."}, "result": {"status": "stale", "stale": true}},
-        {"name": "scan_repository", "arguments": {"project_root": "."}, "result": {"summary": {"status": "incomplete", "complete": false}, "capabilities": {"security": {"status": "skipped"}}}},
-        {"name": "query_dependencies", "arguments": {"project_root": ".", "limit": 20}, "result": {"status": "current", "dependencies": []}}
+        {
+          "name": "repository_context",
+          "arguments": {"project_root": "."},
+          "result": {"indexed": true, "stale": true}
+        },
+        {
+          "name": "scan_repository",
+          "arguments": {"project_root": "."},
+          "result": {
+            "summary": {"complete": false},
+            "capabilities": {"security": {"state": "skipped"}, "dependency_hygiene": {"state": "complete"}},
+            "context": {"indexed": true, "stale": false, "complete": true}
+          }
+        },
+        {
+          "name": "query_dependencies",
+          "arguments": {"project_root": ".", "limit": 20},
+          "result": {"count": 0, "truncated": false, "next_offset": null, "dependencies": []}
+        }
       ],
       "events": ["report.incomplete"],
       "final_status": "incomplete",
@@ -51,7 +85,16 @@
       "fixtures": {"ecosystem": "vcpkg", "security_capability": "unsupported"},
       "skills_loaded": ["check-dependencies"],
       "tool_calls": [
-        {"name": "repository_context", "arguments": {"project_root": "."}, "result": {"status": "current"}}
+        {
+          "name": "repository_context",
+          "arguments": {"project_root": "."},
+          "result": {
+            "indexed": true,
+            "stale": false,
+            "complete": true,
+            "runtime_capabilities": {"vcpkg": ["manifest", "mapping", "resolution", "usage"]}
+          }
+        }
       ],
       "events": ["capability.unsupported", "report.incomplete"],
       "final_status": "incomplete",
@@ -65,12 +108,109 @@
       "fixtures": {"ecosystem": "npm", "locked": false, "resolved_versions": []},
       "skills_loaded": ["check-dependencies"],
       "tool_calls": [
-        {"name": "repository_context", "arguments": {"project_root": "."}, "result": {"status": "incomplete", "complete": false, "incomplete_reasons": ["resolution"]}}
+        {
+          "name": "repository_context",
+          "arguments": {"project_root": "."},
+          "result": {"indexed": true, "stale": false, "complete": true}
+        },
+        {
+          "name": "explain_dependency",
+          "arguments": {"project_root": ".", "package": "lodash", "ecosystem": "npm", "project_id": "npm:npm:."},
+          "result": {"package": "lodash", "ecosystem": "npm", "project_id": "npm:npm:.", "resolved_versions": []}
+        }
       ],
       "events": ["report.incomplete"],
       "final_status": "incomplete",
       "final_answer": "Exact versions are unavailable without a lockfile, so the release-safety conclusion is incomplete.",
       "claims": {"security_safe": false, "release_ready": false, "limitations": ["exact-versions-unavailable"]}
+    },
+    {
+      "case_id": "paginated-inventory",
+      "task": "List all 65 indexed Python dependencies without network access.",
+      "initial_state": {"index": "current"},
+      "fixtures": {"dependency_count": 65},
+      "skills_loaded": ["check-dependencies"],
+      "tool_calls": [
+        {
+          "name": "repository_context",
+          "arguments": {"project_root": "."},
+          "result": {"indexed": true, "stale": false, "complete": true}
+        },
+        {
+          "name": "query_dependencies",
+          "arguments": {"project_root": ".", "limit": 20, "offset": 0},
+          "result": {"count": 20, "offset": 0, "next_offset": 20, "truncated": true}
+        },
+        {
+          "name": "query_dependencies",
+          "arguments": {"project_root": ".", "limit": 20, "offset": 20},
+          "result": {"count": 20, "offset": 20, "next_offset": 40, "truncated": true}
+        },
+        {
+          "name": "query_dependencies",
+          "arguments": {"project_root": ".", "limit": 20, "offset": 40},
+          "result": {"count": 20, "offset": 40, "next_offset": 60, "truncated": true}
+        },
+        {
+          "name": "query_dependencies",
+          "arguments": {"project_root": ".", "limit": 20, "offset": 60},
+          "result": {"count": 5, "offset": 60, "next_offset": null, "truncated": false}
+        }
+      ],
+      "events": [],
+      "final_status": "pass",
+      "final_answer": "Inspected all 65 dependency records across four pages. Security was not run.",
+      "claims": {"security_safe": false, "release_ready": false, "limitations": ["security-not-run"]}
+    },
+    {
+      "case_id": "unsupported-pyproject-preview",
+      "task": "Preview upgrading requests to 2.32.4 in pyproject.toml without editing it.",
+      "initial_state": {"index": "current"},
+      "fixtures": {"manifest": "pyproject.toml"},
+      "skills_loaded": ["check-dependencies"],
+      "tool_calls": [
+        {
+          "name": "plan_dependency_updates",
+          "arguments": {"project_root": ".", "updates": {"requests": "2.32.4"}, "ecosystem": "PyPI"},
+          "result": {
+            "plans": [],
+            "read_only": true,
+            "diagnostics": [{"code": "update.unsupported-target", "severity": "error"}]
+          }
+        }
+      ],
+      "events": [],
+      "final_status": "incomplete",
+      "final_answer": "The pyproject.toml target is unsupported; no preview was generated and no manifest was changed.",
+      "claims": {"security_safe": false, "release_ready": false, "limitations": ["update-target-unsupported"]}
+    },
+    {
+      "case_id": "fresh-filtered-scope",
+      "task": "Explain lodash within the existing npm selection only; do not expand repository coverage.",
+      "initial_state": {"index": "current"},
+      "fixtures": {"selection": "npm"},
+      "skills_loaded": ["check-dependencies"],
+      "tool_calls": [
+        {
+          "name": "repository_context",
+          "arguments": {"project_root": "."},
+          "result": {"indexed": true, "stale": false, "complete": false, "incomplete_reasons": ["index-selection"]}
+        },
+        {
+          "name": "explain_dependency",
+          "arguments": {"project_root": ".", "package": "lodash", "ecosystem": "npm", "project_id": "npm:npm:."},
+          "result": {"package": "lodash", "project_id": "npm:npm:.", "ecosystem": "npm", "resolved_versions": []}
+        }
+      ],
+      "events": [],
+      "final_status": "incomplete",
+      "final_answer": "The fresh index covers the npm selection only. Exact versions are unresolved; the result is incomplete for security. No refresh was needed for this scope.",
+      "claims": {
+        "security_safe": false,
+        "release_ready": false,
+        "limitations": ["filtered-index", "exact-versions-unavailable"]
+      }
     }
-  ]
+  ],
+  "provenance": "Hand-authored scorer examples, not recorded agent runs. Use run_live.py for actual MCP contract traces; independently trial SKILL.md for agent behavior."
 }

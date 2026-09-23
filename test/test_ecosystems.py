@@ -1,3 +1,4 @@
+import pytest
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -221,3 +222,57 @@ def test_ambiguous_javascript_marks_scan_incomplete(tmp_path: Path) -> None:
     assert result.complete is False
     assert result.capability("dependency_hygiene").state.value == "incomplete"
     assert {item.code for item in result.diagnostics} == {"usage.dynamic"}
+
+
+def test_python_fallback_mapping_does_not_assert_a_distribution(tmp_path: Path) -> None:
+    (tmp_path / "requirements.txt").write_text("other-distribution==1.0\n")
+    (tmp_path / "app.py").write_text("import unknown_import\n")
+    options = RepositoryScanOptions(security=False, compatibility=False)
+    result = RepositoryScanner().scan(tmp_path, options)
+    usage = result.bundles[0].usages[0]
+    assert usage.mapping_confidence.value == "inferred"
+    assert usage.mapped_package.name == "unknown-import"
+    assert not any(f.code == "dependency.missing" for f in result.findings)
+    configured = RepositoryScanner().scan(
+        tmp_path,
+        RepositoryScanOptions(
+            security=False, import_mapping={"unknown_import": "real-package"}
+        ),
+    )
+    assert configured.bundles[0].usages[0].mapping_confidence.value == "configured"
+    assert any(f.code == "dependency.missing" for f in configured.findings)
+
+
+@pytest.mark.parametrize(
+    "ecosystem,manifest,lock,content",
+    [
+        (
+            "npm",
+            "package.json",
+            "package-lock.json",
+            '{"dependencies":{"secret":"1.0.0"}}',
+        ),
+        (
+            "Go",
+            "go.mod",
+            "go.sum",
+            "module example.com/app\nrequire example.com/secret v1.0.0\n",
+        ),
+    ],
+)
+def test_external_lock_symlink_is_incomplete(
+    tmp_path: Path, ecosystem: str, manifest: str, lock: str, content: str
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / manifest).write_text(content)
+    external = tmp_path / lock
+    external.write_text(
+        '{"lockfileVersion":3,"packages":{"node_modules/secret":{"version":"1.0.0"}}}'
+    )
+    (root / lock).symlink_to(external)
+    result = RepositoryScanner().scan(
+        root, RepositoryScanOptions(security=False, enabled_ecosystems=(ecosystem,))
+    )
+    assert not result.capability("dependency_hygiene").complete
+    assert any("symlink" in d.message for d in result.diagnostics)

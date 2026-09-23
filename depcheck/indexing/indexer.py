@@ -21,7 +21,7 @@ from depcheck.ecosystems.python import (
     filter_python_manifest,
 )
 from depcheck.ecosystems.static import discover_files, is_excluded
-from depcheck.path_policy import require_within_project
+from depcheck.path_policy import external_path_executable, require_within_project
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
 from depcheck.ecosystems.python_manifest import PythonManifestCollector
 
@@ -536,6 +536,16 @@ class RepositoryIndex:
         )
 
     def context(self) -> dict[str, Any]:
+        context = self._context()
+        capabilities = create_default_registry().runtime_capabilities()
+        context["runtime_capabilities"] = capabilities
+        for project in context["projects"]:
+            project["supported_capabilities"] = capabilities.get(
+                project["ecosystem"], []
+            )
+        return context
+
+    def _context(self) -> dict[str, Any]:
         if not self.index_path.is_file():
             return {
                 "schema": INDEX_SCHEMA,
@@ -649,6 +659,7 @@ class RepositoryIndex:
         ecosystem: str | None = None,
         project_id: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         self._require_index()
         with IndexStore(self.project_root, self.index_path) as store:
@@ -658,12 +669,17 @@ class RepositoryIndex:
                 ecosystem=ecosystem,
                 project_id=project_id,
                 limit=limit,
+                offset=offset,
             )
 
     def _require_index(self) -> None:
         if not self.index_path.is_file():
             raise FileNotFoundError(
                 f"repository index does not exist: {self.index_path}"
+            )
+        if self._context()["stale"]:
+            raise RuntimeError(
+                "repository index is stale; run 'depcheck index' before querying"
             )
 
 
@@ -722,7 +738,7 @@ def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) ->
 def _config_digest(config: DepcheckConfig) -> str:
     payload = asdict(config)
     # 数据表结构未变时，也要使旧分析语义生成的缓存失效。
-    payload["analysis_revision"] = 1
+    payload["analysis_revision"] = 3
     payload["import_mapping"] = dict(sorted(config.import_mapping.items()))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
@@ -913,9 +929,12 @@ def _relative(root: Path, path: Path) -> str:
 
 
 def _git_head(root: Path) -> str | None:
+    executable = external_path_executable(root, "git")
+    if executable is None:
+        return None
     try:
         completed = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            [executable, "-C", str(root), "rev-parse", "HEAD"],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

@@ -11,17 +11,17 @@ RISK_CODES: dict[str, tuple[str, ...]] = {
     "vuln": ("security.vulnerability",),
     "compat": ("compatibility.",),
 }
-VALID_FAIL_ON = frozenset({"any", "incomplete", *RISK_CODES})
+VALID_FAIL_ON = frozenset({"any", "incomplete", "hygiene-incomplete", *RISK_CODES})
 EXEMPTABLE_PACKAGE_RISKS = frozenset({"missing", "unused", "vuln"})
 
 
 def normalize_fail_on(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         values: Iterable[object] = (value,)
-    elif isinstance(value, Iterable):
+    elif isinstance(value, (list, tuple, set, frozenset)):
         values = value
     else:
-        values = ()
+        raise ValueError("fail_on must be a string or a collection of risk names")
     normalized = {str(item).lower() for item in values}
     unknown = normalized - VALID_FAIL_ON
     if unknown:

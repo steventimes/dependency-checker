@@ -98,7 +98,7 @@ class PythonManifestCollector:
                 self._append_dependency_file(current_dir / filename, found_files, seen)
 
         if not found_files:
-            logger.warning(f"No dependency files found in {self.project_root}")
+            logger.debug("No Python dependency files found in %s", self.project_root)
 
         self.last_dependency_files = found_files
         return found_files

@@ -110,14 +110,16 @@ def create_server(
         limit: int = 20,
         ecosystem: str | None = None,
         project_id: str | None = None,
+        offset: int = 0,
         context: Context = None,
     ) -> dict[str, Any]:
-        """Search compact package inventory by distribution or import name."""
+        """Search inventory; follow next_offset for more matches without changing filters."""
         return (await service(project_root, context)).query_dependencies(
             query,
             ecosystem=ecosystem,
             project_id=project_id,
             limit=limit,
+            offset=offset,
         )
 
     @server.tool()
@@ -213,9 +215,13 @@ def cli(argv: Sequence[str] | None = None) -> None:
         if args.allow_root
         else _environment_roots()
     )
-    create_server(allowed_roots=roots or None, max_results=args.max_results).run(
-        transport="stdio"
-    )
+    try:
+        server = create_server(
+            allowed_roots=roots or None, max_results=args.max_results
+        )
+    except (RuntimeError, ValueError) as exc:
+        parser.error(str(exc))
+    server.run(transport="stdio")
 
 
 if __name__ == "__main__":

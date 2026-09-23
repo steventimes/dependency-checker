@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from dataclasses import replace
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
+from depcheck._version import __version__
 from depcheck.agent import DependencyAgentService
 from depcheck.config import load_project_config
 from depcheck.policy_codes import normalize_fail_on
@@ -30,7 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="depcheck",
         description="Static multi-ecosystem dependency evidence scanner.",
     )
-    parser.add_argument("--version", action="version", version="depcheck 0.4.0")
+    parser.add_argument(
+        "--version", action="version", version=f"depcheck {__version__}"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     scan = commands.add_parser("scan", help="Scan a repository")
@@ -75,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("package", nargs="?")
     _identity_options(query)
     query.add_argument("--limit", type=int, default=20)
+    query.add_argument("--offset", type=int, default=0)
 
     explain = commands.add_parser("explain", help="Explain one indexed dependency")
     _root_argument(explain)
@@ -129,11 +134,25 @@ def main(argv: list[str] | None = None) -> int:
             return _scan(root, arguments)
         service = DependencyAgentService(root)
         payload = _service_command(service, arguments)
-    except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+    except (
+        KeyError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        sqlite3.Error,
+    ) as exc:
         print(f"depcheck {arguments.command}: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
-    return 0
+    return (
+        2
+        if "error" in payload
+        or any(
+            item.get("severity") == "error" for item in payload.get("diagnostics", [])
+        )
+        else 0
+    )
 
 
 def _scan(root: Path, arguments: argparse.Namespace) -> int:
@@ -206,6 +225,7 @@ def _service_command(
             ecosystem=arguments.ecosystem,
             project_id=arguments.project_id,
             limit=arguments.limit,
+            offset=arguments.offset,
         )
     if command == "explain":
         return service.explain_dependency(
@@ -229,7 +249,7 @@ def _service_command(
     if command == "doctor":
         return {
             "schema": "depcheck.doctor.v1",
-            "version": "0.4.0",
+            "version": __version__,
             "root": service.project_root.as_posix(),
             "dependency_index": service.repository_context(),
             "mcp": {

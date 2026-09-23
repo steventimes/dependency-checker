@@ -1,3 +1,4 @@
+import pytest
 from datetime import date
 from dataclasses import replace
 from pathlib import Path
@@ -240,3 +241,40 @@ def test_policy_preserves_go_coordinates_and_rejects_unknown_risks() -> None:
         result, {"exemptions": [{**exemption, "risk": "typo"}]}, today=date(2026, 9, 5)
     )
     assert invalid.governance_risk_count == 1
+
+
+def test_cyclonedx_transitive_is_not_optional() -> None:
+    components = build_cyclonedx(sample_result())["components"]
+    for component in components:
+        assert "scope" not in component
+        properties = {item["name"]: item["value"] for item in component["properties"]}
+        assert properties["depcheck:dependency:direct"] == (
+            "true" if component["name"] == "app-lib" else "false"
+        )
+
+
+def test_offline_hygiene_policy_preserves_strict_incomplete_policy() -> None:
+    result = replace(
+        sample_result(),
+        capabilities=(
+            Capability("dependency_hygiene", CapabilityState.COMPLETE),
+            Capability("security", CapabilityState.SKIPPED),
+        ),
+    )
+    assert evaluate_policy(result, {"fail_on": ["incomplete"]}).should_fail()
+    assert not evaluate_policy(
+        result, {"fail_on": ["hygiene-incomplete"]}
+    ).should_fail()
+    incomplete = replace(
+        result,
+        capabilities=(Capability("dependency_hygiene", CapabilityState.INCOMPLETE),),
+    )
+    assert evaluate_policy(
+        incomplete, {"fail_on": ["hygiene-incomplete"]}
+    ).should_fail()
+
+
+@pytest.mark.parametrize("invalid", [False, 17, None, {"missing": True}])
+def test_invalid_policy_fail_on_is_rejected(invalid) -> None:
+    with pytest.raises(ValueError, match="fail_on"):
+        evaluate_policy(sample_result(), {"fail_on": invalid})

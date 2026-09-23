@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 
 class ProjectPathError(PermissionError):
     """文件访问目标越过调用方指定的权威项目根目录。"""
+
+
+def external_path_executable(project_root: Path, name: str) -> str | None:
+    """Resolve a PATH command, rejecting executables inside the target repository."""
+    executable = shutil.which(name)
+    if not executable:
+        return None
+    resolved = Path(executable).resolve()
+    if resolved.is_relative_to(Path(project_root).resolve()):
+        return None
+    return str(resolved)
 
 
 def require_within_project(

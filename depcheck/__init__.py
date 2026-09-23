@@ -19,7 +19,7 @@ from .model import (
     VersionConstraint,
 )
 
-__version__ = "0.4.0"
+from ._version import __version__
 
 __all__ = [
     "AnalysisReport",

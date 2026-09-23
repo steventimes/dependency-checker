@@ -1,16 +1,16 @@
 # depcheck
 
-`depcheck` is a static dependency-evidence scanner for repositories and coding
-agents. It correlates declarations, exact resolutions, source usage, security
-results, and policy findings without importing project code or running package
-managers.
+`depcheck` scans dependency declarations, resolved versions, and source imports.
+It reports how packages are used, dependency issues, and optional security
+results through a CLI and MCP tools. It reads repository files without importing
+project code or running package managers.
 
 ## Capabilities
 
-- One qualified identity for every component:
+- Components are identified by
   `(project_id, ecosystem, package, version, instance)`.
-- Missing, unused, unpinned, conflicting, and scope-mismatched dependency
-  findings, gated by evidence confidence.
+- Reports missing, unused, unpinned, conflicting, and scope-mismatched dependencies
+  when the collected evidence supports those findings.
 - Exact-version OSV queries for PyPI, npm, Go, and Maven.
 - Python compatibility analysis backed by PyPI metadata when explicitly enabled.
 - Text, `depcheck.scan.v1` JSON, SARIF 2.1.0, and CycloneDX 1.7 output.
@@ -19,8 +19,8 @@ managers.
   read-only Python requirements update previews.
 - CLI and MCP interfaces over the same scanner, model, index, and service layer.
 
-A scan distinguishes findings from incomplete analysis. A skipped, unsupported,
-or failed capability never becomes a clean result.
+Scan results separate dependency findings from analysis failures. Skipped,
+unsupported, and failed stages keep the overall result incomplete.
 
 ## Ecosystem coverage
 
@@ -32,13 +32,13 @@ or failed capability never becomes a clean result.
 | Java/Kotlin / Maven or Gradle | effective local POM evidence, properties and dependency management, literal Gradle declarations, lock evidence, imports |
 | C/C++ / Conan or vcpkg | supported manifests and JSON locks, includes, CMake `find_package` evidence |
 
-Dynamic or ambiguous syntax is reported as incomplete evidence. Conan and vcpkg
-currently emit a `security.ecosystem-unsupported` diagnostic and keep security incomplete because depcheck cannot produce safe
-OSV coordinates for them.
+Dynamic or ambiguous syntax produces incomplete evidence. Security scanning for
+Conan and vcpkg returns `security.ecosystem-unsupported`: depcheck cannot map
+these packages to OSV coordinates, so their security results remain incomplete.
 
 ## Install
 
-Python 3.11 or 3.12 is required.
+Python 3.11 or newer is required. CI tests Python 3.11 and 3.12.
 
 ```bash
 python -m venv .venv
@@ -79,6 +79,14 @@ depcheck explain . requests --ecosystem PyPI --project pypi:python:.
 depcheck impact . requests --ecosystem PyPI --project pypi:python:.
 ```
 
+Queries reject stale indexes. Run `depcheck index .` again after changing source,
+manifests, or configuration. A corrupt SQLite cache produces a command error;
+move `.depcheck/index.sqlite3` aside and rebuild it with `depcheck index .`.
+
+Inventory queries return pages. When `truncated` is true, pass `next_offset` as
+`--offset` with the same query and filters to continue. `count` is the number of
+items in the current page, not the total inventory size.
+
 Preview an update without changing the manifest:
 
 ```bash
@@ -91,9 +99,12 @@ MCP runtime.
 
 ### Exit policy
 
-`--fail-on` accepts `any`, `incomplete`, `missing`, `unused`,
+`--fail-on` accepts `any`, `incomplete`, `hygiene-incomplete`, `missing`, `unused`,
 `unpinned`, `scope`, `duplicate`, `vuln`, or `compat`. Options may be
-repeated.
+repeated. `incomplete` includes skipped stages; `hygiene-incomplete` checks
+only dependency evidence, so the offline pre-commit hook can pass without an
+OSV query. Command errors, including unsupported update targets, exit with code 2.
+Policy failures exit with code 1.
 
 A JSON policy file can add expiring, qualified exemptions:
 
@@ -171,7 +182,7 @@ The stdio server exports seven tools:
 - `plan_dependency_updates`
 
 The server authorizes only roots supplied by the MCP client or explicit
-`--root` arguments. Query tools accept `ecosystem` and `project_id`
+`--allow-root` arguments. Query tools accept `ecosystem` and `project_id`
 qualifiers; ambiguous unqualified names return structured choices. Update
 planning is read-only. `scan_repository` runs offline and therefore reports
 security as skipped.
@@ -188,21 +199,49 @@ vcpkg, or build scripts. Symlink and parent-directory escapes are rejected.
 
 OSV is the only default network path and receives an ecosystem, package name,
 and exact version. Python compatibility analysis additionally accesses PyPI
-only when `--compatibility` is requested. Use `--offline` to disable OSV.
+when enabled by `--compatibility` or configuration. Use `--offline` to disable
+both OSV and PyPI queries.
+
+## Analysis limits
+
+Python import names without a configured or built-in distribution mapping remain
+`inferred`; they do not establish a missing dependency. Add a scoped mapping when
+you know the distribution name.
+
+Compatibility analysis checks a selected candidate graph without full version
+backtracking. Conflicts involving unpinned candidates carry an incomplete
+diagnostic because other versions may work. Non-Python indexing rescans the
+selected evidence rather than reusing individual parsed files.
+
+Use `repository_context.runtime_capabilities` or a project's
+`supported_capabilities` to check which operations its ecosystem pack supports.
+The project's `capabilities` report the state of indexed evidence. Update previews
+support version entries in `requirements*.txt`; other targets return diagnostics.
 
 ## Development
 
-The suite is intentionally consolidated into five test files.
+Tests are grouped in five files under `test/`.
 
 ```bash
 .venv/bin/pytest test -q
 .venv/bin/ruff check depcheck test
+.venv/bin/ruff format --check depcheck test scripts/smoke_installed.py
 .venv/bin/mypy
 .venv/bin/python -m compileall -q depcheck test
 .venv/bin/python -m build
 .venv/bin/python -m pip check
 .venv/bin/uv lock --check
 ```
+
+CI also installs the built wheel without extras into a separate environment and
+runs `scripts/smoke_installed.py` to check the base CLI away from source imports.
+
+`skills/check-dependencies/evals/run_live.py` exercises the skill's MCP contracts
+offline using temporary repositories. Pass `--output /tmp/depcheck-live.json` to
+record actual calls. CI runs it alongside the tests. The hand-authored
+`traces.example.json` checks the scorer's format and rules; it is not evidence
+that an agent followed the skill. Evaluate agent behavior separately with real
+tasks and recorded calls.
 
 A repository benchmark fixture can be generated with
 `scripts/benchmark_monorepo.py`.

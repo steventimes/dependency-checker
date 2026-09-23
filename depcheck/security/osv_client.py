@@ -10,6 +10,7 @@ import requests  # type: ignore[import-untyped]
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from depcheck._version import USER_AGENT
 from depcheck.model import Diagnostic
 
 
@@ -31,7 +32,7 @@ class OSVClient:
     DETAIL_BASE_URL = "https://api.osv.dev/v1/vulns"
     DEFAULT_HEADERS: ClassVar[dict[str, str]] = {
         "Accept": "application/json",
-        "User-Agent": "depcheck/0.3 (+https://pypi.org/project/depcheck/)",
+        "User-Agent": USER_AGENT,
     }
 
     def __init__(

@@ -48,7 +48,11 @@
           "run": "uv sync --frozen --extra test"
         },
         {"name": "Lint", "run": "uv run --frozen --extra test python -m ruff check depcheck test"},
-        {"name": "Type check typed core", "run": "uv run --frozen --extra test python -m mypy"}
+        {"name": "Check formatting", "run": "uv run --frozen --extra test python -m ruff format --check depcheck test scripts/smoke_installed.py"},
+        {"name": "Check lockfile", "run": "uv lock --check --offline"},
+        {"name": "Type check typed core", "run": "uv run --frozen --extra test python -m mypy"},
+        {"name": "Check skill evaluation scripts", "run": "uv run --frozen --extra test python -m ruff check skills/check-dependencies/evals\nuv run --frozen --extra test python -m ruff format --check skills/check-dependencies/evals"},
+        {"name": "Exercise skill MCP contracts offline", "run": "uv run --frozen --extra test python skills/check-dependencies/evals/run_live.py"}
       ]
     },
     "build": {
@@ -65,7 +69,8 @@
           "name": "Install declared test environment",
           "run": "uv sync --frozen --extra test"
         },
-        {"name": "Build package", "run": "uv run --frozen --extra test python -m build"}
+        {"name": "Build package", "run": "uv run --frozen --extra test python -m build"},
+        {"name": "Smoke test installed wheel without extras", "run": "uv venv /tmp/depcheck-wheel-venv\nuv pip install --python /tmp/depcheck-wheel-venv/bin/python dist/*.whl\n/tmp/depcheck-wheel-venv/bin/python scripts/smoke_installed.py"}
       ]
     }
   }

@@ -186,8 +186,8 @@ class PythonUsageMapper:
             reason = "built-in Python import mapping"
         else:
             name = str(canonicalize_name(reference))
-            confidence = MappingConfidence.EXACT
-            reason = "canonical top-level Python import"
+            confidence = MappingConfidence.INFERRED
+            reason = "inferred distribution name from top-level Python import"
         return replace(
             usage,
             mapped_package=_package_ref(name, name),

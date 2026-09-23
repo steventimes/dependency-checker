@@ -425,7 +425,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.31" },
     { name = "ruff", marker = "extra == 'test'", specifier = ">=0.6,<1" },
     { name = "setuptools", marker = "extra == 'test'", specifier = "==80.9.0" },
-    { name = "uv", marker = "extra == 'test'", specifier = ">=0.8,<1" },
+    { name = "uv", marker = "extra == 'test'", specifier = "==0.12.4" },
 ]
 provides-extras = ["agent", "test"]
 

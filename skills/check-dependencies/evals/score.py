@@ -69,7 +69,10 @@ def load_cases(path: Path) -> tuple[EvalCase, ...]:
         forbidden_events = _string_tuple(raw, "forbidden_trace_events")
         activation_expected = "skill.activate" in expected_events
         activation_forbidden = "skill.activate" in forbidden_events
-        if should_trigger != activation_expected or should_trigger == activation_forbidden:
+        if (
+            should_trigger != activation_expected
+            or should_trigger == activation_forbidden
+        ):
             raise ValueError(
                 f"activation contract disagrees with should_trigger: {case_id}"
             )
@@ -92,15 +95,9 @@ def load_cases(path: Path) -> tuple[EvalCase, ...]:
                 expected_trace_events=expected_events,
                 expected_tool_calls=_tool_calls(raw, "expected_tool_calls"),
                 forbidden_trace_events=forbidden_events,
-                expected_final_status=_required_string(
-                    raw, "expected_final_status"
-                ),
-                required_answer_terms=_string_tuple(
-                    raw, "required_answer_terms"
-                ),
-                forbidden_answer_terms=_string_tuple(
-                    raw, "forbidden_answer_terms"
-                ),
+                expected_final_status=_required_string(raw, "expected_final_status"),
+                required_answer_terms=_string_tuple(raw, "required_answer_terms"),
+                forbidden_answer_terms=_string_tuple(raw, "forbidden_answer_terms"),
                 expected_claims=_object(raw, "expected_claims"),
                 quality_rubric=_required_string(raw, "quality_rubric"),
                 max_tool_calls=max_tool_calls,
@@ -158,9 +155,7 @@ def score_suite(
                 problems.append("trace initial_state does not match the fixture")
             if trace.get("fixtures") != case.fixtures:
                 problems.append("trace fixtures do not match the eval case")
-            skills_loaded = tuple(
-                str(item) for item in trace.get("skills_loaded", ())
-            )
+            skills_loaded = tuple(str(item) for item in trace.get("skills_loaded", ()))
             if skills_loaded != case.loaded_instructions:
                 problems.append("loaded instructions do not match the eval case")
             activated = "check-dependencies" in skills_loaded
@@ -168,9 +163,7 @@ def score_suite(
                 problems.append("skill activation does not match should_trigger")
 
             raw_calls = trace.get("tool_calls", ())
-            calls = tuple(
-                item for item in raw_calls if isinstance(item, Mapping)
-            )
+            calls = tuple(item for item in raw_calls if isinstance(item, Mapping))
             if len(calls) != len(raw_calls):
                 problems.append("tool_calls must contain only objects")
             if len(calls) > case.max_tool_calls:
@@ -201,9 +194,7 @@ def score_suite(
             if forbidden:
                 problems.append(f"forbidden trace events: {', '.join(forbidden)}")
             if str(trace.get("final_status", "")) != case.expected_final_status:
-                problems.append(
-                    "final status must be " + case.expected_final_status
-                )
+                problems.append("final status must be " + case.expected_final_status)
             answer = str(trace.get("final_answer", ""))
             lowered_answer = answer.casefold()
             missing_terms = [
@@ -222,8 +213,7 @@ def score_suite(
             ]
             if forbidden_terms:
                 problems.append(
-                    "answer contains forbidden claims: "
-                    + ", ".join(forbidden_terms)
+                    "answer contains forbidden claims: " + ", ".join(forbidden_terms)
                 )
             claims = trace.get("claims")
             if not isinstance(claims, Mapping):
@@ -253,9 +243,9 @@ def _check_claim_consistency(
     security_safe = claims.get("security_safe")
     release_ready = claims.get("release_ready")
     limitations = claims.get("limitations")
-    if security_safe not in {True, False, None}:
+    if security_safe is not None and not isinstance(security_safe, bool):
         problems.append("claims.security_safe must be boolean or null")
-    if release_ready not in {True, False, None}:
+    if release_ready is not None and not isinstance(release_ready, bool):
         problems.append("claims.release_ready must be boolean or null")
     if not isinstance(limitations, list) or not all(
         isinstance(item, str) and item for item in limitations
@@ -324,7 +314,11 @@ def _contains(actual: Any, expected: Any) -> bool:
             for key, value in expected.items()
         )
     if isinstance(expected, list):
-        return isinstance(actual, list) and all(item in actual for item in expected)
+        if not expected:
+            return actual == []
+        return isinstance(actual, list) and all(
+            any(_contains(candidate, item) for candidate in actual) for item in expected
+        )
     return actual == expected
 
 
@@ -349,9 +343,7 @@ def _object(data: Mapping[str, Any], key: str) -> dict[str, Any]:
     return dict(value)
 
 
-def _tool_calls(
-    data: Mapping[str, Any], key: str
-) -> tuple[Mapping[str, Any], ...]:
+def _tool_calls(data: Mapping[str, Any], key: str) -> tuple[Mapping[str, Any], ...]:
     value = data.get(key)
     if not isinstance(value, list):
         raise ValueError(f"{key} must be a list")

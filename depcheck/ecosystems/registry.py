@@ -26,6 +26,12 @@ class EcosystemRegistry:
         except KeyError as exc:
             raise KeyError(f"unknown ecosystem: {ecosystem}") from exc
 
+    def runtime_capabilities(self) -> dict[str, list[str]]:
+        return {
+            pack.ecosystem: sorted(pack.capabilities)
+            for _, pack in sorted(self._packs.items())
+        }
+
     def discover(
         self,
         repository_root: Path,

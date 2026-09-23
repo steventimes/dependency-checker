@@ -1,0 +1,196 @@
+"""Exercise real MCP contracts used by the skill; this does not grade agent prose.
+
+Run with a depcheck[agent] environment from the repository root:
+    python skills/check-dependencies/evals/run_live.py --output /tmp/depcheck-live.json
+All fixtures are temporary, and every scan is offline.
+"""
+
+import argparse
+import asyncio
+import json
+import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+def check(condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError(message)
+
+
+async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
+    fixtures = {
+        "python": {
+            "requirements.txt": "requests==2.31.0\n",
+            "app.py": "import requests\n",
+        },
+        "preview": {
+            "pyproject.toml": '[project]\nname="app"\nversion="1"\n'
+            'dependencies=["requests==2.31.0"]\n'
+        },
+        "npm": {
+            "package.json": '{"dependencies":{"lodash":"^4.17.0"}}',
+            "app.js": "import lodash from 'lodash';\n",
+        },
+        "pages": {
+            "requirements.txt": "".join(f"package-{i:03d}==1.0\n" for i in range(65))
+        },
+        "ambiguous": {
+            "one/package.json": '{"dependencies":{"shared":"1.0"}}',
+            "two/package.json": '{"dependencies":{"shared":"2.0"}}',
+        },
+    }
+    for folder, files in fixtures.items():
+        for name, content in files.items():
+            path = root / folder / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "depcheck.agent.mcp_server", "--allow-root", str(root)],
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            async def call(name: str, fixture: str, **arguments) -> dict:
+                arguments = {"project_root": str(root / fixture), **arguments}
+                result = await session.call_tool(name, arguments)
+                check(not result.isError, f"{name}: {result.content}")
+                payload = json.loads(result.content[0].text)
+                calls.append({"name": name, "arguments": arguments, "result": payload})
+                return payload
+
+            scan = await call("scan_repository", "python")
+            check(
+                not scan["summary"]["complete"], "Offline summary must stay incomplete"
+            )
+            check(
+                scan["capabilities"]["security"]["state"] == "skipped", "Security ran"
+            )
+            check(
+                scan["capabilities"]["dependency_hygiene"]["state"] == "complete",
+                "Hygiene incomplete",
+            )
+            check(
+                scan["context"]["complete"] and not scan["context"]["stale"],
+                "Stale index",
+            )
+            passed.append("offline-freshness-vs-security")
+
+            await call("index_repository", "npm")
+            npm = await call("explain_dependency", "npm", package="lodash")
+            impact = await call("dependency_impact", "npm", package="lodash")
+            check(
+                npm["resolved_versions"] == [], "Range treated as an exact resolution"
+            )
+            check(
+                impact["usage_count"] == 1 and impact["files"] == ["app.js"],
+                "Lost usage",
+            )
+            passed.append("default-npm-index-without-lock")
+
+            await call("index_repository", "pages")
+            names = []
+            offset = 0
+            while True:
+                page = await call(
+                    "query_dependencies", "pages", limit=20, offset=offset
+                )
+                names.extend(item["package"] for item in page["dependencies"])
+                if not page["truncated"]:
+                    check(page["next_offset"] is None, "Unexpected next page")
+                    break
+                check(page["next_offset"] > offset, "Pagination did not advance")
+                offset = page["next_offset"]
+            check(
+                names == [f"package-{i:03d}" for i in range(65)],
+                "Missing/duplicate packages",
+            )
+            passed.append("complete-paginated-inventory")
+
+            await call("index_repository", "ambiguous")
+            ambiguous = await call("explain_dependency", "ambiguous", package="shared")
+            check(
+                ambiguous["error"]["code"] == "dependency.ambiguous", "Lost ambiguity"
+            )
+            chosen = next(
+                item
+                for item in ambiguous["error"]["choices"]
+                if item["project_id"] == "npm:npm:two"
+            )
+            qualified = await call(
+                "explain_dependency",
+                "ambiguous",
+                **{key: chosen[key] for key in ("project_id", "ecosystem", "package")},
+            )
+            check(qualified["project_id"] == "npm:npm:two", "Wrong project selected")
+            passed.append("qualified-ambiguous-identity")
+
+            preview = await call(
+                "plan_dependency_updates", "preview", updates={"requests": "2.32.4"}
+            )
+            check(preview["plans"] == [], "Unsupported preview produced a plan")
+            check(
+                preview["diagnostics"][0]["code"] == "update.unsupported-target",
+                "Missing unsupported-target diagnostic",
+            )
+            check(
+                (root / "preview" / "pyproject.toml").read_text()
+                == fixtures["preview"]["pyproject.toml"],
+                "Preview changed the manifest",
+            )
+            passed.append("unsupported-preview-is-not-noop")
+
+            noop = await call(
+                "plan_dependency_updates", "python", updates={"requests": "2.31.0"}
+            )
+            check(
+                not noop["plans"] and not noop["diagnostics"],
+                "No-op treated as failure",
+            )
+            passed.append("supported-preview-noop")
+
+            (root / "python" / "requirements.txt").write_text("requests==2.32.4\n")
+            stale = await call("repository_context", "python")
+            check(stale["stale"], "Manifest edit did not stale the index")
+            refreshed = await call("scan_repository", "python")
+            check(not refreshed["context"]["stale"], "Scan did not refresh the index")
+            passed.append("refresh-after-manifest-change")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", type=Path, help="Write actual tool calls and results"
+    )
+    args = parser.parse_args()
+    calls: list[dict] = []
+    passed: list[str] = []
+    result = {
+        "kind": "live-mcp-contracts",
+        "passed_scenarios": passed,
+        "tool_calls": calls,
+    }
+    try:
+        with TemporaryDirectory(prefix="depcheck-skill-") as directory:
+
+            async def bounded():
+                async with asyncio.timeout(60):
+                    await exercise(Path(directory), calls, passed)
+
+            asyncio.run(bounded())
+    finally:
+        if args.output:
+            args.output.write_text(
+                json.dumps(result, indent=2) + "\n", encoding="utf-8"
+            )
+    print(json.dumps({"passed_scenarios": passed, "tool_call_count": len(calls)}))
+
+
+if __name__ == "__main__":
+    main()

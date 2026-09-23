@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from packaging.utils import canonicalize_name
 
+from depcheck._version import __version__
 from depcheck.model import Finding, PackageIdentity, ScanResult
 from depcheck.policy_codes import RISK_CODES, matches_risk, normalize_fail_on
 
@@ -98,7 +99,7 @@ def build_sarif(result: ScanResult) -> dict[str, Any]:
                 "tool": {
                     "driver": {
                         "name": "depcheck",
-                        "semanticVersion": "0.4.0",
+                        "semanticVersion": __version__,
                         "rules": [
                             _sarif_rule(code, findings)
                             for code, findings in sorted(grouped.items())
@@ -294,7 +295,7 @@ def build_cyclonedx(
                     {
                         "type": "application",
                         "name": "depcheck",
-                        "version": "0.4.0",
+                        "version": __version__,
                     }
                 ]
             },
@@ -340,7 +341,6 @@ def _component(
         "type": "library",
         "bom-ref": reference,
         "name": identity.name,
-        "scope": "required" if direct else "optional",
         "properties": [
             {
                 "name": "depcheck:identity:project-id",
@@ -350,6 +350,7 @@ def _component(
                 "name": "depcheck:identity:ecosystem",
                 "value": identity.ecosystem,
             },
+            {"name": "depcheck:dependency:direct", "value": str(direct).lower()},
         ],
     }
     if identity.version:
@@ -381,6 +382,11 @@ class PolicyEvaluation:
         if self.governance_risk_count:
             return True
         if "incomplete" in policies and not self.result.complete:
+            return True
+        if "hygiene-incomplete" in policies and not any(
+            capability.name == "dependency_hygiene" and capability.complete
+            for capability in self.result.capabilities
+        ):
             return True
         if "any" in policies and self.effective_findings:
             return True

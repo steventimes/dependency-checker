@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+from depcheck.path_policy import external_path_executable
 
 _COMMIT_PATTERN = re.compile(r"\b[0-9a-fA-F]{40}\b")
 _CURRENT_STATUSES = {"current", "ready", "up-to-date", "up_to_date", "uptodate"}
@@ -60,7 +61,7 @@ class GitNexusCompanion:
         current_head = _git_head(
             root,
             self.timeout,
-            executable=_external_path_executable(root, "git"),
+            executable=external_path_executable(root, "git"),
         )
         command = self.command or self._resolve_command(root)
         if command is None:
@@ -105,7 +106,7 @@ class GitNexusCompanion:
         return self._from_human(command, current_head, human, diagnostics)
 
     def _resolve_command(self, root: Path) -> tuple[str, ...] | None:
-        executable = _external_path_executable(root, "gitnexus")
+        executable = external_path_executable(root, "gitnexus")
         if not executable:
             return None
         return (executable,)
@@ -278,16 +279,6 @@ def _string_items(value: object) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return []
     return [str(item) for item in value if str(item).strip()]
-
-
-def _external_path_executable(root: Path, name: str) -> str | None:
-    executable = shutil.which(name)
-    if not executable:
-        return None
-    resolved = Path(executable).resolve()
-    if resolved == root or root in resolved.parents:
-        return None
-    return str(resolved)
 
 
 def _git_head(

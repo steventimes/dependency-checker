@@ -418,3 +418,36 @@ def test_python_full_version_marker_uses_requested_target() -> None:
         ManifestParseResult(declarations=(requirement,)), "3.10.7"
     )
     assert filtered.declarations == (requirement,)
+
+
+def test_greedy_compatibility_conflict_is_not_a_complete_resolution() -> None:
+    from depcheck.compatibility.checker import CompatibilityChecker
+    from depcheck.compatibility.pypi_client import PyPIFetchResult
+
+    class PyPI:
+        def fetch_metadata(self, package, version=None):
+            releases = {
+                "alpha": {"1.0": [], "2.0": ["beta>=2"]},
+                "beta": {"1.0": []},
+            }
+            if version is None:
+                return PyPIFetchResult(
+                    {"releases": {v: [{}] for v in releases[package]}}
+                )
+            return PyPIFetchResult(
+                {"info": {"requires_dist": releases[package][version]}}
+            )
+
+    checker = CompatibilityChecker(PyPI())
+    report = checker.check({"alpha": ">=1", "beta": "==1.0"})
+    assert not report.complete
+    assert report.conflicts
+    assert any(
+        d.code == "compatibility.backtracking-required" for d in report.diagnostics
+    )
+    compatible = checker.check({"alpha": "==1.0", "beta": "==1.0"})
+    assert compatible.complete
+    assert not compatible.conflicts
+    pinned_conflict = checker.check({"alpha": "==2.0", "beta": "==1.0"})
+    assert pinned_conflict.complete
+    assert pinned_conflict.conflicts

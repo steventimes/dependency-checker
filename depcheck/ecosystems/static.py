@@ -109,6 +109,8 @@ def read_text(
     max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> str:
     candidate = Path(path)
+    if candidate.is_symlink():
+        raise StaticReadError(f"refusing to read symlinked evidence: {candidate}")
     try:
         size = candidate.stat().st_size
     except OSError as exc:

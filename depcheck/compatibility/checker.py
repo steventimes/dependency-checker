@@ -67,7 +67,7 @@ class RequirementConstraint:
 
 
 class CompatibilityChecker:
-    """依据发布元数据迭代解析完整依赖图，并显式区分冲突与扫描失败。"""
+    """用发布元数据检查候选依赖图；不做完整的版本回溯。"""
 
     MAX_RESOLUTION_ROUNDS = 100
 
@@ -75,7 +75,7 @@ class CompatibilityChecker:
         self.client = client or PyPIClient()
 
     def check(self, declared_deps: dict[str, str | None]) -> CompatibilityReport:
-        """兼容旧字典接口，但统一委托给证据化解析器。"""
+        """将旧字典输入转换为依赖声明，再调用 check_detailed。"""
         declarations: list[PythonRequirement] = []
         for raw_name, raw_specifier in declared_deps.items():
             specifier = str(raw_specifier or "").strip()
@@ -101,7 +101,7 @@ class CompatibilityChecker:
         declared_deps: dict[str, str | None],
         constraints_only: bool = True,
     ) -> dict[str, str]:
-        """返回解析报告的安全建议；默认不把传递包升级为直接依赖。"""
+        """返回报告中的版本建议，默认只包含直接声明的包。"""
         suggestions = self.check(declared_deps).suggestions
         if not constraints_only:
             return suggestions
@@ -310,6 +310,19 @@ class CompatibilityChecker:
             current_python,
             diagnostics,
         )
+        if (final_conflicts or python_conflicts) and set(selected) - fixed_versions:
+            self._append_diagnostic(
+                diagnostics,
+                Diagnostic(
+                    code="compatibility.backtracking-required",
+                    severity="error",
+                    message=(
+                        "The selected candidate graph has conflicts. Alternative "
+                        "versions were not exhaustively searched; this does not "
+                        "establish that the declared constraints are unsatisfiable."
+                    ),
+                ),
+            )
         return CompatibilityReport(
             conflicts=final_conflicts,
             missing=[],

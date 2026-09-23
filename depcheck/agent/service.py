@@ -77,6 +77,7 @@ class DependencyAgentService:
         ecosystem: str | None = None,
         project_id: str | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> dict[str, Any]:
         if query is not None and search is not None:
             raise ValueError("query and search are aliases; provide only one")
@@ -87,6 +88,7 @@ class DependencyAgentService:
             ecosystem=ecosystem,
             project_id=project_id,
             limit=effective_limit + 1,
+            offset=offset,
         )
         truncated = len(records) > effective_limit
         return {
@@ -95,6 +97,8 @@ class DependencyAgentService:
             "ecosystem": ecosystem,
             "project_id": project_id,
             "count": min(len(records), effective_limit),
+            "offset": offset,
+            "next_offset": offset + effective_limit if truncated else None,
             "truncated": truncated,
             "dependencies": records[:effective_limit],
         }
@@ -196,6 +200,7 @@ class DependencyAgentService:
 
         updater = RequirementsUpdater(self.project_root)
         plans: list[dict[str, Any]] = []
+        supported_targets: set[str] = set()
         config = load_project_config(self.project_root)
         reporter = PythonManifestCollector(
             self.project_root, config.excluded_directories
@@ -204,6 +209,8 @@ class DependencyAgentService:
             if not path.name.startswith("requirements") or path.suffix != ".txt":
                 continue
             plan = updater.plan(path, normalized, add_missing=add_missing)
+            supported_targets.update(plan.updated)
+            supported_targets.update(plan.added)
             if plan.updated_content == plan.original_content:
                 continue
             plans.append(
@@ -215,16 +222,27 @@ class DependencyAgentService:
                     "original_digest": plan.original_digest,
                 }
             )
+        diagnostics = [
+            item.to_dict(self.project_root) for item in reporter.discovery_diagnostics
+        ]
+        for package in sorted(normalized.keys() - supported_targets):
+            diagnostics.append(
+                {
+                    "code": "update.unsupported-target",
+                    "severity": "error",
+                    "message": (
+                        f"No supported requirements entry for {package!r}; "
+                        "update previews support requirements*.txt version entries only."
+                    ),
+                }
+            )
         return {
             "schema": "depcheck.agent.update-plan.v1",
             "read_only": True,
             "ecosystem": ecosystem or "PyPI",
             "project_id": project_id or "pypi:python:.",
             "plans": plans,
-            "diagnostics": [
-                item.to_dict(self.project_root)
-                for item in reporter.discovery_diagnostics
-            ],
+            "diagnostics": diagnostics,
         }
 
     @staticmethod
@@ -268,7 +286,14 @@ class DependencyAgentService:
                 "ecosystem": ecosystem,
                 "project_id": project_id,
                 "capability": "update_preview",
-            }
+            },
+            "diagnostics": [
+                {
+                    "code": "capability.unsupported",
+                    "severity": "error",
+                    "message": f"Update previews are unsupported for {ecosystem}/{project_id}.",
+                }
+            ],
         }
 
     def _limit(self, requested: int | None) -> int:

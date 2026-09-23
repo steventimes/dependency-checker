@@ -864,16 +864,20 @@ class IndexStore:
         ecosystem: str | None = None,
         project_id: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """按发行包聚合声明、导入与 finding，只返回结构化证据。"""
         if limit < 1:
             raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
         return self._normalized_dependency_inventory(
             search=search,
             package=package,
             ecosystem=ecosystem,
             project_id=project_id,
             limit=limit,
+            offset=offset,
         )
 
     def _normalized_dependency_inventory(
@@ -884,6 +888,7 @@ class IndexStore:
         ecosystem: str | None,
         project_id: str | None,
         limit: int,
+        offset: int,
     ) -> list[dict[str, Any]]:
         projects = {
             str(row["project_id"]): row
@@ -1048,6 +1053,9 @@ class IndexStore:
                     [],
                 )
             if needle and not _normalized_record_matches(record, needle):
+                continue
+            if offset:
+                offset -= 1
                 continue
             results.append(record)
             if len(results) == limit:

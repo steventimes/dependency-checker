@@ -105,7 +105,9 @@ def test_mcp_server_exposes_the_dependency_capability_set(
 def test_cli_honors_configured_exit_policy_and_reports_evaluation(
     tmp_path: Path, capsys
 ) -> None:
-    (tmp_path / ".depcheck.toml").write_text('fail-on = ["missing"]\n')
+    (tmp_path / ".depcheck.toml").write_text(
+        'fail-on = ["missing"]\n[import-map]\nrequests = "requests"\n'
+    )
     (tmp_path / "app.py").write_text("import requests\n")
     assert main(["scan", str(tmp_path), "--offline", "--format", "json"]) == 1
     payload = json.loads(capsys.readouterr().out)
@@ -137,6 +139,48 @@ def test_explain_matches_exact_package_before_applying_result_limit(
     service.index_repository()
     result = service.explain_dependency("requests")
     assert result["package"] == "requests"
+
+
+def test_query_paginates_all_matches_after_filtering(tmp_path: Path) -> None:
+    packages = [f"package-{index:03d}" for index in range(65)]
+    (tmp_path / "requirements.txt").write_text(
+        "\n".join(f"{package}==1.0" for package in packages)
+    )
+    service = DependencyAgentService(tmp_path, max_results=7)
+    service.index_repository()
+    collected = []
+    offset = 0
+    while True:
+        page = service.query_dependencies(limit=20, offset=offset)
+        assert page["offset"] == offset
+        assert page["count"] <= 7
+        collected.extend(item["package"] for item in page["dependencies"])
+        if not page["truncated"]:
+            assert page["next_offset"] is None
+            break
+        assert page["next_offset"] == offset + page["count"]
+        offset = page["next_offset"]
+    assert collected == packages
+    filtered = service.query_dependencies(
+        "package-05", ecosystem="PyPI", project_id="pypi:python:.", limit=3, offset=2
+    )
+    assert [item["package"] for item in filtered["dependencies"]] == packages[52:55]
+    assert filtered["next_offset"] == 5
+    assert service.query_dependencies(offset=100)["dependencies"] == []
+    with pytest.raises(ValueError, match="offset"):
+        service.query_dependencies(offset=-1)
+
+
+def test_cli_query_exposes_pagination(tmp_path: Path, capsys) -> None:
+    (tmp_path / "requirements.txt").write_text("alpha==1\nbeta==1\ngamma==1\n")
+    assert main(["index", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert main(["query", str(tmp_path), "--limit", "1", "--offset", "1"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [item["package"] for item in payload["dependencies"]] == ["beta"]
+    assert payload["next_offset"] == 2
+    assert main(["query", str(tmp_path), "--offset", "-1"]) == 2
+    assert "offset" in capsys.readouterr().err
 
 
 def test_unqualified_explain_preserves_non_python_package_names(tmp_path: Path) -> None:
@@ -217,3 +261,156 @@ def test_mcp_stdio_calls_all_tools_and_rejects_unapproved_root(tmp_path: Path) -
 
     asyncio.run(bounded_exercise())
     assert (tmp_path / "requirements.txt").read_text() == "requests==2.31.0\n"
+
+
+def test_context_runtime_capabilities_match_registered_packs(tmp_path: Path) -> None:
+    from depcheck.ecosystems import create_default_registry
+    from depcheck.indexing import RepositoryIndex
+
+    registry = create_default_registry()
+    missing = RepositoryIndex(tmp_path).context()
+    assert missing["runtime_capabilities"] == registry.runtime_capabilities()
+    make_python_project(tmp_path)
+    service = DependencyAgentService(tmp_path)
+    service.index_repository()
+    context = service.repository_context()
+    for project in context["projects"]:
+        assert (
+            set(project["supported_capabilities"])
+            == registry.get(project["ecosystem"]).capabilities
+        )
+    assert "update_preview" in context["runtime_capabilities"]["PyPI"]
+    assert "update_preview" not in context["runtime_capabilities"]["npm"]
+
+
+@pytest.mark.parametrize(
+    "manifest,content",
+    [
+        (
+            "pyproject.toml",
+            '[project]\nname="demo"\nversion="1"\ndependencies=["requests==2.31.0"]\n',
+        ),
+        ("package.json", '{"dependencies":{"requests":"1.0"}}'),
+        ("requirements.txt", "requests @ https://example.org/requests.whl\n"),
+    ],
+)
+def test_unsupported_update_target_has_diagnostic(
+    tmp_path: Path, manifest: str, content: str
+) -> None:
+    (tmp_path / manifest).write_text(content)
+    result = DependencyAgentService(tmp_path).plan_dependency_updates(
+        {"requests": "2.32.4"}
+    )
+    assert result["plans"] == []
+    assert any(d["code"] == "update.unsupported-target" for d in result["diagnostics"])
+    assert (tmp_path / manifest).read_text() == content
+
+
+def test_update_noop_and_partial_support_are_distinguished(tmp_path: Path) -> None:
+    make_python_project(tmp_path)
+    service = DependencyAgentService(tmp_path)
+    noop = service.plan_dependency_updates({"requests": "2.31.0"})
+    assert noop["plans"] == []
+    assert noop["diagnostics"] == []
+    partial = service.plan_dependency_updates({"requests": "2.32.4", "unknown": "1.0"})
+    assert len(partial["plans"]) == 1
+    assert len(partial["diagnostics"]) == 1
+    assert "unknown" in partial["diagnostics"][0]["message"]
+
+
+def test_precommit_scan_is_offline_with_compatibility_enabled(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import shlex
+    import requests
+
+    make_python_project(tmp_path)
+    (tmp_path / ".depcheck.toml").write_text("security=true\ncompatibility=true\n")
+
+    def reject_network(*args, **kwargs):
+        pytest.fail("offline hook attempted network access")
+
+    monkeypatch.setattr(requests.Session, "request", reject_network)
+    hook = json.loads(
+        (Path(__file__).resolve().parents[1] / ".pre-commit-hooks.yaml").read_text()
+    )[0]
+    command = shlex.split(hook["entry"])
+    assert "--offline" in command
+    assert main([*command[1:], str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert output
+    (tmp_path / "app.py").write_text("import (\n")
+    assert main([*command[1:], str(tmp_path)]) == 1
+
+
+def test_explicit_unsupported_ecosystem_reports_diagnostic(tmp_path: Path) -> None:
+    result = DependencyAgentService(tmp_path).plan_dependency_updates(
+        {"left-pad": "1.3.0"}, ecosystem="npm"
+    )
+    assert result["error"]["code"] == "capability.unsupported"
+    assert result["diagnostics"][0]["code"] == "capability.unsupported"
+
+
+def test_add_missing_still_produces_a_supported_preview(tmp_path: Path) -> None:
+    (tmp_path / "requirements.txt").write_text("")
+    result = DependencyAgentService(tmp_path).plan_dependency_updates(
+        {"requests": "2.32.4"}, add_missing=True
+    )
+    assert result["diagnostics"] == []
+    assert result["plans"][0]["added"] == {"requests": "==2.32.4"}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["update", "requests=2.32.4", "--ecosystem", "npm"],
+        ["update", "missing=1.0"],
+        ["explain", "missing"],
+        ["impact", "missing"],
+    ],
+)
+def test_cli_service_errors_return_failure(
+    tmp_path: Path, capsys, command: list[str]
+) -> None:
+    make_python_project(tmp_path)
+    DependencyAgentService(tmp_path).index_repository()
+    assert main([command[0], str(tmp_path), *command[1:]]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert "error" in payload or payload["diagnostics"]
+
+
+def test_stale_index_queries_require_refresh(tmp_path: Path) -> None:
+    make_python_project(tmp_path)
+    service = DependencyAgentService(tmp_path)
+    service.index_repository()
+    (tmp_path / "requirements.txt").write_text("requests==2.32.4\n")
+    for query in (
+        service.query_dependencies,
+        service.explain_dependency,
+        service.dependency_impact,
+    ):
+        with pytest.raises(RuntimeError, match="stale"):
+            query("requests")
+    service.index_repository()
+    assert service.explain_dependency("requests")["resolved_version"] == "2.32.4"
+
+
+def test_corrupt_index_is_a_cli_error_without_traceback(tmp_path: Path, capsys) -> None:
+    (tmp_path / ".depcheck").mkdir()
+    (tmp_path / ".depcheck" / "index.sqlite3").write_bytes(b"not a database")
+    assert main(["context", str(tmp_path)]) == 2
+    stderr = capsys.readouterr().err
+    assert "database" in stderr
+    assert "Traceback" not in stderr
+
+
+def test_mcp_missing_extra_has_an_actionable_cli_error(monkeypatch, capsys) -> None:
+    from depcheck.agent import mcp_server
+
+    monkeypatch.setattr(mcp_server, "FastMCP", None)
+    with pytest.raises(SystemExit) as exit_info:
+        mcp_server.cli([])
+    assert exit_info.value.code == 2
+    error = capsys.readouterr().err
+    assert "depcheck[agent]" in error
+    assert "Traceback" not in error
