@@ -578,7 +578,7 @@ class RepositoryIndex:
                 "incomplete_reasons": ["index-missing"],
                 "index": {"schema": INDEX_SCHEMA, "indexed": False},
             }
-        with IndexStore(self.project_root, self.index_path) as store:
+        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
             metadata = store.metadata()
             scope = _scope_from_metadata(metadata)
             current_digest: str | None
@@ -648,7 +648,7 @@ class RepositoryIndex:
         self, *, package: str | None = None, limit: int = 100
     ) -> list[dict[str, Any]]:
         self._require_index()
-        with IndexStore(self.project_root, self.index_path) as store:
+        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
             return store.findings(package=package, limit=limit)
 
     def dependencies(
@@ -662,7 +662,7 @@ class RepositoryIndex:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         self._require_index()
-        with IndexStore(self.project_root, self.index_path) as store:
+        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
             return store.dependency_inventory(
                 search=search,
                 package=package,
@@ -738,7 +738,7 @@ def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) ->
 def _config_digest(config: DepcheckConfig) -> str:
     payload = asdict(config)
     # 数据表结构未变时，也要使旧分析语义生成的缓存失效。
-    payload["analysis_revision"] = 3
+    payload["analysis_revision"] = 4
     payload["import_mapping"] = dict(sorted(config.import_mapping.items()))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

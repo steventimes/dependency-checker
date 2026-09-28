@@ -607,6 +607,23 @@ class RepositoryScanner:
                 batch[package] = version
             diagnostics = list(reports[index].diagnostics)
             findings = list(reports[index].findings)
+            incomplete_collection = [
+                item.name
+                for item in bundle.capabilities
+                if item.name in {"manifest", "resolution"} and not item.complete
+            ]
+            if incomplete_collection:
+                diagnostics.append(
+                    Diagnostic(
+                        code="security.collection-incomplete",
+                        severity="error",
+                        message=(
+                            f"Cannot establish complete security coverage for {bundle.project.project_id}: "
+                            f"{', '.join(incomplete_collection)} evidence is incomplete. "
+                            "Any known resolved versions are still checked."
+                        ),
+                    )
+                )
             if osv_ecosystem is None:
                 diagnostics.append(
                     Diagnostic(

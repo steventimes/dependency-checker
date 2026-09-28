@@ -12,6 +12,7 @@ from .service import DependencyAgentService
 
 try:
     from mcp.server.fastmcp import Context, FastMCP
+    from mcp.types import ToolAnnotations
 except ModuleNotFoundError:  # 普通 CLI 安装不强制携带 MCP 的 HTTP/ASGI 依赖。
     FastMCP = None  # type: ignore[assignment,misc]
     Context = Any  # type: ignore[assignment,misc]
@@ -68,6 +69,13 @@ def create_server(
             "or dependency manifests; update tools return previews only."
         ),
     )
+    read_only = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+    cache_refresh = ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,  # Replaces derived index data, never source files.
+        idempotentHint=True,
+        openWorldHint=False,
+    )
 
     async def service(
         project_root: str,
@@ -79,23 +87,23 @@ def create_server(
             max_results=max_results,
         )
 
-    @server.tool()
+    @server.tool(annotations=cache_refresh)
     async def index_repository(
         project_root: str = ".",
         context: Context = None,
     ) -> dict[str, Any]:
-        """Incrementally index dependency declarations, imports, and findings."""
+        """Refresh the local .depcheck cache; never modify source or manifests."""
         return (await service(project_root, context)).index_repository()
 
-    @server.tool()
+    @server.tool(annotations=cache_refresh)
     async def scan_repository(
         project_root: str = ".",
         context: Context = None,
     ) -> dict[str, Any]:
-        """Refresh offline dependency hygiene; security is explicitly skipped."""
+        """Scan offline hygiene and refresh .depcheck cache; security is skipped."""
         return (await service(project_root, context)).scan_repository()
 
-    @server.tool()
+    @server.tool(annotations=read_only)
     async def repository_context(
         project_root: str = ".",
         context: Context = None,
@@ -103,7 +111,7 @@ def create_server(
         """Return index freshness, completeness, Git HEAD, and evidence counts."""
         return (await service(project_root, context)).repository_context()
 
-    @server.tool()
+    @server.tool(annotations=read_only)
     async def query_dependencies(
         query: str | None = None,
         project_root: str = ".",
@@ -122,7 +130,7 @@ def create_server(
             offset=offset,
         )
 
-    @server.tool()
+    @server.tool(annotations=read_only)
     async def explain_dependency(
         package: str,
         project_root: str = ".",
@@ -137,7 +145,7 @@ def create_server(
             project_id=project_id,
         )
 
-    @server.tool()
+    @server.tool(annotations=read_only)
     async def dependency_impact(
         package: str,
         project_root: str = ".",
@@ -152,7 +160,7 @@ def create_server(
             project_id=project_id,
         )
 
-    @server.tool()
+    @server.tool(annotations=read_only)
     async def plan_dependency_updates(
         updates: dict[str, str],
         project_root: str = ".",

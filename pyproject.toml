@@ -32,7 +32,6 @@ agent = [
 ]
 test = [
     "build>=1.2,<2",
-    "hypothesis>=6.100,<7",
     "mcp>=1.28,<2",
     "mypy>=1.10,<2",
     "pytest>=8,<9",

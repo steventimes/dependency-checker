@@ -42,6 +42,14 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
             "one/package.json": '{"dependencies":{"shared":"1.0"}}',
             "two/package.json": '{"dependencies":{"shared":"2.0"}}',
         },
+        "dynamic": {
+            "requirements.txt": "requests==2.31.0\n",
+            "app.py": "import importlib\nimportlib.import_module(name)\n",
+        },
+        "alias": {
+            "package.json": '{"dependencies":{"lodash":"4.17.21"}}',
+            "app.js": "import lodash from '#lodash';\n",
+        },
     }
     for folder, files in fixtures.items():
         for name, content in files.items():
@@ -56,6 +64,19 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
+            definitions = await session.list_tools()
+            for tool in definitions.tools:
+                check(
+                    tool.annotations is not None, f"Missing annotations for {tool.name}"
+                )
+                check(
+                    tool.annotations.openWorldHint is False, "Unexpected network tool"
+                )
+                check(
+                    tool.annotations.readOnlyHint
+                    == (tool.name not in {"index_repository", "scan_repository"}),
+                    f"Incorrect side effects for {tool.name}",
+                )
 
             async def call(name: str, fixture: str, **arguments) -> dict:
                 arguments = {"project_root": str(root / fixture), **arguments}
@@ -83,6 +104,8 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
             passed.append("offline-freshness-vs-security")
 
             await call("index_repository", "npm")
+            cache = root / "npm" / ".depcheck" / "index.sqlite3"
+            cache_before = (cache.read_bytes(), cache.stat().st_mtime_ns)
             npm = await call("explain_dependency", "npm", package="lodash")
             impact = await call("dependency_impact", "npm", package="lodash")
             check(
@@ -93,6 +116,11 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
                 "Lost usage",
             )
             passed.append("default-npm-index-without-lock")
+            check(
+                (cache.read_bytes(), cache.stat().st_mtime_ns) == cache_before,
+                "Read-only MCP queries changed the index",
+            )
+            passed.append("read-only-tool-contracts")
 
             await call("index_repository", "pages")
             names = []
@@ -161,6 +189,25 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
             refreshed = await call("scan_repository", "python")
             check(not refreshed["context"]["stale"], "Scan did not refresh the index")
             passed.append("refresh-after-manifest-change")
+
+            for fixture in ("dynamic", "alias"):
+                partial = await call("scan_repository", fixture)
+                check(
+                    partial["capabilities"]["dependency_hygiene"]["state"]
+                    == "incomplete",
+                    f"{fixture} lost its coverage limitation",
+                )
+                check(
+                    not any(
+                        f["code"] == "dependency.unused" for f in partial["findings"]
+                    ),
+                    f"{fixture} asserted an unsupported unused dependency",
+                )
+                check(
+                    not partial["context"]["stale"],
+                    "Fresh partial evidence marked stale",
+                )
+                passed.append(f"{fixture}-usage-incomplete")
 
 
 def main() -> None:

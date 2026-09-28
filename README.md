@@ -166,8 +166,9 @@ must be relative paths inside the repository.
 - `vulnerabilities`: issues keyed by full package identity.
 - `metadata`: structured optional-stage results such as compatibility.
 
-An incompatible SQLite cache is discarded and rebuilt at its configured cache
-path. Source files and manifests are never changed by scanning or indexing.
+Index refresh discards and rebuilds incompatible SQLite caches. Queries open the
+cache read-only and report when a rebuild is needed. Source files and manifests
+are never changed by scanning or indexing.
 
 ## MCP and agent integration
 
@@ -186,6 +187,9 @@ The server authorizes only roots supplied by the MCP client or explicit
 qualifiers; ambiguous unqualified names return structured choices. Update
 planning is read-only. `scan_repository` runs offline and therefore reports
 security as skipped.
+
+MCP tool annotations distinguish read-only queries/previews from operations
+that replace the local `.depcheck` cache. All seven tools operate locally.
 
 Plugin descriptors are provided in `plugin.json`, `.codex-plugin/plugin.json`,
 `mcp.json`, and `.mcp.json`. The coding-agent workflow is in
@@ -207,6 +211,18 @@ both OSV and PyPI queries.
 Python import names without a configured or built-in distribution mapping remain
 `inferred`; they do not establish a missing dependency. Add a scoped mapping when
 you know the distribution name.
+
+Non-literal Python module loads produce `usage.dynamic` diagnostics and suppress
+unused-dependency conclusions. Literal `importlib` calls, including imported
+aliases, retain usage evidence. Local-module detection uses top-level names in
+the repository and its `src` directory; arbitrary Python path changes are not
+resolved.
+
+Unresolved npm `#` imports retain unknown usage evidence. Configure a scoped
+mapping when the alias points to a known dependency. Malformed dependency fields
+or lockfile structures make evidence incomplete. Security still checks known
+versions, but reports `security.collection-incomplete` if manifest or resolution
+coverage is incomplete.
 
 Compatibility analysis checks a selected candidate graph without full version
 backtracking. Conflicts involving unpinned candidates carry an incomplete

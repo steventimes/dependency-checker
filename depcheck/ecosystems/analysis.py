@@ -281,18 +281,23 @@ class EvidenceAnalyzer:
             package = direct[0].package
             details = {"project_id": key[0], "ecosystem": package.ecosystem}
             locations = tuple(item.source for item in direct)
-            findings.append(
-                Finding(
-                    code="declaration.duplicate",
-                    package=PackageIdentity(
-                        key[0], package.ecosystem, package.name, purl=package.purl
-                    ),
-                    severity="warning",
-                    message=f"Package '{package.name}' is declared multiple times.",
-                    locations=locations,
-                    details=details,
+            contexts = {
+                (item.scope, str(item.metadata.get("group", item.scope)), item.marker)
+                for item in direct
+            }
+            if len(contexts) < len(direct):
+                findings.append(
+                    Finding(
+                        code="declaration.duplicate",
+                        package=PackageIdentity(
+                            key[0], package.ecosystem, package.name, purl=package.purl
+                        ),
+                        severity="warning",
+                        message=f"Package '{package.name}' is declared multiple times.",
+                        locations=locations,
+                        details=details,
+                    )
                 )
-            )
             exact = {
                 version
                 for item in direct

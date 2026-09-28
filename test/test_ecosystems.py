@@ -36,6 +36,25 @@ def test_python_manifest_usage_and_resolution_share_one_identity(
     assert bundle.usages[0].mapped_package == bundle.resolved[0].package
 
 
+def test_same_dependency_in_different_python_extras_is_not_a_duplicate(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="demo"\nversion="1"\n'
+        '[project.optional-dependencies]\nagent=["mcp>=1.28,<2"]\ntest=["mcp>=1.28,<2"]\n'
+    )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not any(f.code.startswith("declaration.") for f in result.findings)
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\nrequests==2.32.4\n")
+    conflicts = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False)
+    )
+    assert {f.code for f in conflicts.findings if f.package.name == "requests"} >= {
+        "declaration.duplicate",
+        "declaration.conflict",
+    }
+
+
 def test_npm_lock_graph_and_lexer_are_fail_closed(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         json.dumps({"dependencies": {"left-pad": "1.3.0"}}),
@@ -241,6 +260,193 @@ def test_python_fallback_mapping_does_not_assert_a_distribution(tmp_path: Path) 
     )
     assert configured.bundles[0].usages[0].mapping_confidence.value == "configured"
     assert any(f.code == "dependency.missing" for f in configured.findings)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import importlib\nimportlib.import_module(name)\n",
+        "import importlib as loader\nloader.import_module(name)\n",
+        "from importlib import import_module as load\nload(name)\n",
+        "__import__(name)\n",
+    ],
+)
+def test_unresolved_python_dynamic_import_blocks_unused_claims(
+    tmp_path: Path, source: str
+) -> None:
+    from depcheck.agent import DependencyAgentService
+
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
+    (tmp_path / "app.py").write_text(source)
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert not any(f.code == "dependency.unused" for f in result.findings)
+    assert any(d.code == "usage.dynamic" and d.source.line for d in result.diagnostics)
+    service = DependencyAgentService(tmp_path)
+    service.index_repository()
+    assert service.repository_context()["complete"] is False
+    assert service.repository_context()["stale"] is False
+    assert not service.explain_dependency("requests")["findings"]
+
+
+def test_python_literal_dynamic_imports_and_relative_names(tmp_path: Path) -> None:
+    from depcheck.analyzer.import_scanner import ImportScanner
+
+    (tmp_path / "app.py").write_text(
+        "import importlib as loader\n"
+        "from importlib import import_module as load\n"
+        "loader.import_module('requests')\n"
+        "load(name='yaml')\n"
+        "load('.helper', package='app')\n"
+    )
+    result = ImportScanner().scan_detailed(tmp_path)
+    assert [item.module for item in result.imports] == ["requests", "yaml"]
+    assert all(item.kind == "dynamic" for item in result.imports)
+    assert result.diagnostics == ()
+
+
+def test_notebook_dynamic_import_aliases_cross_cell_boundaries(tmp_path: Path) -> None:
+    from depcheck.analyzer.import_scanner import ImportScanner
+
+    (tmp_path / "analysis.ipynb").write_text(
+        json.dumps(
+            {
+                "cells": [
+                    {
+                        "cell_type": "code",
+                        "source": "from importlib import import_module as load\n",
+                    },
+                    {"cell_type": "code", "source": "load('requests')\nload(name)\n"},
+                ]
+            }
+        )
+    )
+    result = ImportScanner().scan_detailed(tmp_path)
+    assert [item.module for item in result.imports] == ["requests"]
+    assert [item.code for item in result.diagnostics] == ["usage.dynamic"]
+    assert result.diagnostics[0].source.line > result.imports[0].source.line
+
+
+@pytest.mark.parametrize("layout", ["pkg", "src/pkg"])
+def test_nested_python_module_does_not_hide_external_import(
+    tmp_path: Path, layout: str
+) -> None:
+    from depcheck.analyzer.import_scanner import ImportScanner
+
+    package = tmp_path / layout
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "requests.py").write_text("")
+    (tmp_path / "local.py").write_text("")
+    (tmp_path / "app.py").write_text(
+        "import requests\nimport pkg.requests\nimport local\n"
+    )
+    result = ImportScanner().scan_detailed(tmp_path)
+    assert [item.module for item in result.imports] == ["requests"]
+
+
+@pytest.mark.parametrize(
+    "section",
+    ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"],
+)
+def test_malformed_npm_dependency_sections_are_incomplete(
+    tmp_path: Path, section: str
+) -> None:
+    (tmp_path / "package.json").write_text(json.dumps({section: ["lodash"]}))
+    (tmp_path / "app.js").write_text("import lodash from 'lodash';\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=True))
+    assert not result.capability("dependency_hygiene").complete
+    assert not result.capability("security").complete
+    assert {d.code for d in result.diagnostics} >= {
+        "manifest.invalid",
+        "security.collection-incomplete",
+    }
+    assert not any(f.code == "dependency.missing" for f in result.findings)
+
+
+@pytest.mark.parametrize("specifier", [42, False, None, {"version": "1"}])
+def test_npm_non_string_dependency_specifiers_are_incomplete(
+    tmp_path: Path, specifier
+) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"lodash": specifier}})
+    )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert any(d.code == "manifest.invalid" for d in result.diagnostics)
+
+
+def test_npm_empty_version_range_is_valid_but_unpinned(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"dependencies":{"lodash":""}}')
+    (tmp_path / "app.js").write_text("import lodash from 'lodash';\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert result.capability("dependency_hygiene").complete
+    assert [f.code for f in result.findings] == ["dependency.unpinned"]
+
+
+def test_npm_subpath_aliases_preserve_unknown_and_configured_usage(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text('{"dependencies":{"lodash":"4.17.21"}}')
+    (tmp_path / "app.js").write_text("import lodash from '#lodash';\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert not any(f.code == "dependency.unused" for f in result.findings)
+    assert result.bundles[0].usages[0].mapping_confidence.value == "unknown"
+    configured = RepositoryScanner().scan(
+        tmp_path,
+        RepositoryScanOptions(security=False, import_mapping={"#lodash": "lodash"}),
+    )
+    assert configured.capability("dependency_hygiene").complete
+    assert configured.bundles[0].usages[0].mapping_confidence.value == "configured"
+    assert not configured.findings
+
+
+def test_node_builtins_are_not_missing_npm_dependencies(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "app.js").write_text(
+        "import a from 'async_hooks'; import b from 'diagnostics_channel';\n"
+        "import c from 'http2'; import d from 'inspector/promises'; import e from 'node:test';\n"
+    )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert result.bundles[0].usages == ()
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [{"packages": 42}, {"dependencies": []}, {"packages": {"node_modules/lodash": []}}],
+)
+def test_invalid_lock_structure_never_reports_complete_security(
+    tmp_path: Path, document: dict
+) -> None:
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "package-lock.json").write_text(json.dumps(document))
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=True))
+    assert not result.capability("dependency_hygiene").complete
+    assert not result.capability("security").complete
+    assert {d.code for d in result.diagnostics} >= {
+        "lock.invalid",
+        "security.collection-incomplete",
+    }
+
+
+def test_incomplete_collection_still_checks_known_versions(tmp_path: Path) -> None:
+    class CapturingOSV:
+        calls = []
+
+        def scan_ecosystem(self, packages, ecosystem):
+            self.calls.append((ecosystem, dict(packages)))
+            return SimpleNamespace(vulnerabilities={}, diagnostics=(), queried=packages)
+
+    (tmp_path / "package.json").write_text('{"dependencies":false}')
+    (tmp_path / "package-lock.json").write_text(
+        '{"packages":{"node_modules/lodash":{"version":"4.17.21"}}}'
+    )
+    osv = CapturingOSV()
+    result = RepositoryScanner(osv_client=osv).scan(tmp_path)
+    assert osv.calls == [("npm", {"lodash": "4.17.21"})]
+    assert not result.capability("security").complete
 
 
 @pytest.mark.parametrize(

@@ -44,25 +44,32 @@ _DEPENDENCY_SECTIONS = (
 _NODE_BUILTINS = frozenset(
     {
         "assert",
+        "async_hooks",
         "buffer",
         "child_process",
         "cluster",
         "console",
         "crypto",
         "dgram",
+        "diagnostics_channel",
         "dns",
+        "domain",
         "events",
         "fs",
         "http",
+        "http2",
         "https",
+        "inspector",
         "module",
         "net",
         "os",
         "path",
         "perf_hooks",
         "process",
+        "punycode",
         "querystring",
         "readline",
+        "repl",
         "stream",
         "string_decoder",
         "timers",
@@ -72,6 +79,7 @@ _NODE_BUILTINS = frozenset(
         "util",
         "v8",
         "vm",
+        "wasi",
         "worker_threads",
         "zlib",
     }
@@ -237,12 +245,16 @@ class NpmEvidenceCollector:
         for section, scope in _DEPENDENCY_SECTIONS:
             values = document.get(section, {})
             if not isinstance(values, Mapping):
-                continue
+                raise StaticReadError(f"{section} must be a package-to-version object")
             for display_name, raw_constraint in sorted(values.items()):
-                if not isinstance(display_name, str) or not isinstance(
-                    raw_constraint, str
+                if (
+                    not isinstance(display_name, str)
+                    or not isinstance(raw_constraint, str)
+                    or not display_name.strip()
                 ):
-                    continue
+                    raise StaticReadError(
+                        f"{section} entries require non-empty names and string specifiers"
+                    )
                 name = display_name.lower()
                 key = (name, scope)
                 if key in seen:
@@ -272,12 +284,14 @@ class NpmEvidenceCollector:
         document = read_json(lock)
         direct = {item.package.name for item in declarations}
         packages = document.get("packages")
+        if "packages" in document and not isinstance(packages, Mapping):
+            raise StaticReadError("lockfile packages must be an object")
         resolved: list[ResolvedDependency] = []
         if isinstance(packages, Mapping):
             nodes: dict[str, tuple[str, str, Mapping[object, object]]] = {}
             for lock_path, raw in sorted(packages.items()):
                 if not isinstance(lock_path, str) or not isinstance(raw, Mapping):
-                    continue
+                    raise StaticReadError("lockfile package entries must be objects")
                 name = _lock_package_name(lock_path)
                 version = raw.get("version")
                 if name is None or not isinstance(version, str) or not version:
@@ -332,16 +346,17 @@ class NpmEvidenceCollector:
                 )
             return tuple(resolved)
         dependencies = document.get("dependencies", {})
-        if isinstance(dependencies, Mapping):
-            self._walk_legacy_lock(
-                project,
-                lock,
-                dependencies,
-                direct,
-                resolved,
-                parent_instance="",
-                top_level=True,
-            )
+        if not isinstance(dependencies, Mapping):
+            raise StaticReadError("lockfile dependencies must be an object")
+        self._walk_legacy_lock(
+            project,
+            lock,
+            dependencies,
+            direct,
+            resolved,
+            parent_instance="",
+            top_level=True,
+        )
         return tuple(resolved)
 
     def _walk_legacy_lock(
@@ -446,17 +461,32 @@ class NpmEvidenceCollector:
             loads, dynamic_count = _module_loads(tokens)
             for load in loads:
                 package_name = _import_package(load.reference)
-                if package_name is None:
-                    continue
                 mapped_name = self.mappings.get(
                     load.reference.lower()
-                ) or self.mappings.get(package_name)
+                ) or self.mappings.get(package_name or "")
+                if package_name is None and mapped_name is None:
+                    if load.reference.startswith("#"):
+                        complete = False
+                        usages.append(
+                            UsageEvidence(
+                                project_id=project.project_id,
+                                language=project.language,
+                                reference=load.reference,
+                                source=SourceLocation(path, load.line, load.column),
+                                scope=_source_scope(path, project_root),
+                                kind=load.kind,
+                                mapping_confidence=MappingConfidence.UNKNOWN,
+                                mapping_reason="package subpath import requires a configured mapping",
+                            )
+                        )
+                    continue
                 confidence = (
                     MappingConfidence.CONFIGURED
                     if mapped_name is not None
                     else MappingConfidence.EXACT
                 )
                 mapped_name = mapped_name or package_name
+                assert mapped_name is not None
                 usages.append(
                     UsageEvidence(
                         project_id=project.project_id,

@@ -11,6 +11,10 @@ If the tools are absent or the transport fails, use an installed `depcheck` CLI
 as described below. If neither is available, report that limitation. Do not
 silently install tools or repeatedly retry a stalled transport.
 
+MCP queries and update previews are read-only. `index_repository` and
+`scan_repository` create or replace the local `.depcheck` cache; they do not
+change source or manifests. The tool annotations describe these side effects.
+
 ## Workflow
 
 1. Call `repository_context` with the target `project_root`. If `indexed` is
@@ -20,6 +24,8 @@ silently install tools or repeatedly retry a stalled transport.
    discovered identities or coverage; the index response contains counters, not
    project details. A fresh index can remain incomplete; inspect the reasons
    instead of refreshing again without a relevant file or configuration change.
+   An incompatible-schema error needs `index_repository` to rebuild the cache;
+   querying it will not migrate or discard it.
 2. Check `projects`, `ecosystems`, and `scope` against the requested coverage.
    A filtered index has `incomplete_reasons: ["index-selection"]`; it can answer
    within that selection but cannot describe the whole repository. Refresh
@@ -98,6 +104,11 @@ Treat yarn/pnpm locks, dynamic Gradle or Conan expressions, and unknown
 Java/C++ namespace ownership as incomplete or low-confidence evidence. Do not
 turn those limitations into confident removal, upgrade, or safety claims.
 
+Non-literal Python module loads and unresolved npm `#` imports also leave
+usage incomplete. Use a scoped npm mapping only when the alias's dependency
+target is known; a `#` alias may point to a local file. Malformed manifests or
+locks leave security incomplete even when the known versions have no findings.
+
 All MCP update tools are read-only. Never claim `plan_dependency_updates`
 changed a manifest. Make edits only within the user's authorized scope; a
 preview-only request does not authorize applying the preview.
@@ -118,6 +129,10 @@ not install or run `npx` implicitly.
 - Preserve file and line locations and mapping-confidence reasons.
 - State when output is truncated, stale, incomplete, offline, ambiguous, or
   limited by a missing capability.
+- Tie conclusions to the detected projects, manifests, and resolved versions.
+  Empty findings with no collected dependencies do not establish an audit.
+  depcheck does not measure upstream maintenance, publisher access, or install
+  script risk; a broader supply-chain request needs separate evidence for those.
 - If scan findings are truncated, use CLI JSON for the full scan output or
   query/explain selected dependencies; inventory pagination is a separate limit.
 - Prefer `depcheck.scan.v1`, SARIF, or CycloneDX output when the result will feed

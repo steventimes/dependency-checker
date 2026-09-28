@@ -26,8 +26,15 @@ from depcheck.path_policy import require_within_project
 class IndexStore:
     """SQLite 证据仓库；所有批量更新都在同一事务内提交。"""
 
-    def __init__(self, project_root: Path, index_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        index_path: Path | None = None,
+        *,
+        read_only: bool = False,
+    ) -> None:
         self.project_root = Path(project_root).resolve()
+        self.read_only = read_only
         self._explicit_index_path = index_path is not None
         self.path = (
             Path(index_path).resolve()
@@ -35,16 +42,33 @@ class IndexStore:
             else require_within_project(
                 self.project_root,
                 self.project_root / ".depcheck" / "index.sqlite3",
-                operation="write dependency index",
+                operation="read dependency index"
+                if read_only
+                else "write dependency index",
             )
         )
         self.rebuilt = False
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = self._connect()
-        self._prepare_database()
+        try:
+            if read_only:
+                if self._existing_schema() != INDEX_SCHEMA:
+                    raise RuntimeError(
+                        "index schema is incompatible; run 'depcheck index' to rebuild it"
+                    )
+            else:
+                self._prepare_database()
+        except Exception:
+            self.connection.close()
+            raise
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=10)
+        connection = (
+            sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True, timeout=10)
+            if self.read_only
+            else sqlite3.connect(self.path, timeout=10)
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection

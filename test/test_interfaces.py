@@ -89,7 +89,14 @@ def test_mcp_server_exposes_the_dependency_capability_set(
     assert scanned["truncated"] is False
 
     server = create_server(allowed_roots=(tmp_path,))
-    tool_names = {tool.name for tool in asyncio.run(server.list_tools())}
+    tool_definitions = asyncio.run(server.list_tools())
+    tool_names = {tool.name for tool in tool_definitions}
+    for tool in tool_definitions:
+        assert tool.annotations is not None
+        assert tool.annotations.openWorldHint is False
+        assert tool.annotations.readOnlyHint is (
+            tool.name not in {"index_repository", "scan_repository"}
+        )
 
     assert tool_names == {
         "dependency_impact",

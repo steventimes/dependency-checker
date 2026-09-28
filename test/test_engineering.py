@@ -80,6 +80,37 @@ def test_incompatible_index_schema_is_rebuilt_as_a_cache(tmp_path: Path) -> None
     assert "legacy_marker" not in tables
 
 
+def test_query_connections_are_read_only_and_do_not_rebuild_old_caches(
+    tmp_path: Path,
+) -> None:
+    from depcheck.agent import DependencyAgentService
+
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
+    service = DependencyAgentService(tmp_path)
+    service.index_repository()
+    path = tmp_path / ".depcheck" / "index.sqlite3"
+    snapshot = path.read_bytes()
+    modified_at = path.stat().st_mtime_ns
+    service.repository_context()
+    service.query_dependencies()
+    service.explain_dependency("requests")
+    service.dependency_impact("requests")
+    assert path.read_bytes() == snapshot
+    assert path.stat().st_mtime_ns == modified_at
+    with IndexStore(tmp_path, read_only=True) as store:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            store.set_metadata({"unexpected": "mutation"})
+    with IndexStore(tmp_path) as store:
+        store.set_metadata({"schema": "depcheck.index.legacy"})
+        store.connection.commit()
+    legacy_snapshot = path.read_bytes()
+    with pytest.raises(RuntimeError, match="depcheck index"):
+        service.repository_context()
+    assert path.read_bytes() == legacy_snapshot
+    service.index_repository()
+    assert service.repository_context()["complete"]
+
+
 def test_release_and_plugin_metadata_share_one_version_and_entrypoint() -> None:
     package = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     version = package["project"]["version"]
@@ -211,6 +242,23 @@ def test_summary_counts_are_not_multiplied_by_other_evidence(tmp_path: Path) -> 
                 "source_file_count": 2,
             }
         }
+
+
+def test_python_source_discovery_does_not_read_symlink_targets(tmp_path: Path) -> None:
+    from depcheck.analyzer.import_scanner import ImportScanner
+    from depcheck.indexing import RepositoryIndex, RepositoryIndexer
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("import secret_external_module\n")
+    (root / "linked.py").symlink_to(outside)
+    scanner = ImportScanner()
+    assert scanner.scan_detailed(root).imports == ()
+    with pytest.raises(ProjectPathError):
+        scanner.scan_files(root, [outside])
+    RepositoryIndexer().refresh(root)
+    assert RepositoryIndex(root).dependencies() == []
 
 
 def test_release_license_and_http_identity_are_consistent() -> None:

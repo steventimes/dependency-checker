@@ -339,7 +339,9 @@ def adapt_python_bundle(
     )
 
     manifest_complete = _complete(manifest_result.diagnostics)
-    usage_complete = _complete(usage_result.diagnostics)
+    usage_complete = _complete(usage_result.diagnostics) and not any(
+        item.code == "usage.dynamic" for item in usage_result.diagnostics
+    )
     mapping_complete = usage_complete and all(
         item.mapping_confidence is not MappingConfidence.UNKNOWN for item in usages
     )
@@ -452,7 +454,7 @@ def _status(name: str, complete: bool) -> Capability:
     return Capability(
         name=name,
         state=CapabilityState.COMPLETE if complete else CapabilityState.INCOMPLETE,
-        reason=None if complete else f"{name} evidence contains errors",
+        reason=None if complete else f"{name} evidence is incomplete",
     )
 
 

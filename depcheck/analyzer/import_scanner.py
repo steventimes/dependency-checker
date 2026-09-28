@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from depcheck.model import Diagnostic, ImportEvidence, ImportScanResult, SourceLocation
+from depcheck.path_policy import require_within_project
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +24,24 @@ class _ImportVisitor(ast.NodeVisitor):
         self.scope = scope
         self.kind = "regular"
         self.imports: list[ImportEvidence] = []
+        self.diagnostics: list[Diagnostic] = []
+        self.import_modules = {"importlib"}
+        self.import_functions = {"__import__"}
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
+            if alias.name == "importlib":
+                self.import_modules.add(alias.asname or alias.name)
             self._record(alias.name, node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.level == 0 and node.module:
+            if node.module == "importlib":
+                self.import_functions.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name == "import_module"
+                )
             self._record(node.module, node)
 
     def visit_If(self, node: ast.If) -> None:
@@ -51,24 +63,38 @@ class _ImportVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
-        module: str | None = None
-        if (
-            node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
-        ) and (
+        is_import = (
             isinstance(node.func, ast.Name)
-            and node.func.id == "__import__"
+            and node.func.id in self.import_functions
             or (
                 isinstance(node.func, ast.Attribute)
                 and node.func.attr == "import_module"
                 and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "importlib"
+                and node.func.value.id in self.import_modules
             )
-        ):
-            module = node.args[0].value
-        if module:
-            self._record(module, node, kind="dynamic")
+        )
+        if is_import:
+            argument = (
+                node.args[0]
+                if node.args
+                else next(
+                    (item.value for item in node.keywords if item.arg == "name"), None
+                )
+            )
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                if argument.value and not argument.value.startswith("."):
+                    self._record(argument.value, node, kind="dynamic")
+            else:
+                self.diagnostics.append(
+                    Diagnostic(
+                        code="usage.dynamic",
+                        severity="warning",
+                        message="Non-literal Python module load could not be mapped statically.",
+                        source=SourceLocation(
+                            self.path, node.lineno, node.col_offset + 1
+                        ),
+                    )
+                )
         self.generic_visit(node)
 
     def _record(self, module: str, node: ast.AST, *, kind: str | None = None) -> None:
@@ -149,6 +175,9 @@ class ImportScanner:
 
         for raw_path in paths:
             file_path = Path(raw_path)
+            require_within_project(
+                project_root, file_path, operation="read Python source"
+            )
             if file_path in seen_files:
                 continue
             seen_files.add(file_path)
@@ -276,6 +305,15 @@ class ImportScanner:
     def _scan_file_detailed(
         self, path: Path, scope: str
     ) -> tuple[list[ImportEvidence], list[Diagnostic]]:
+        if path.is_symlink():
+            return [], [
+                Diagnostic(
+                    code="source.read-error",
+                    severity="error",
+                    message="Refusing to read symlinked Python source.",
+                    source=SourceLocation(path),
+                )
+            ]
         if path.suffix == ".ipynb":
             return self._scan_notebook_detailed(path, scope)
         try:
@@ -303,7 +341,7 @@ class ImportScanner:
 
         visitor = _ImportVisitor(path, scope)
         visitor.visit(tree)
-        return visitor.imports, []
+        return visitor.imports, visitor.diagnostics
 
     def _scan_notebook_detailed(
         self, path: Path, scope: str
@@ -330,8 +368,8 @@ class ImportScanner:
                 )
             ]
 
-        imports: list[ImportEvidence] = []
         diagnostics: list[Diagnostic] = []
+        visitor = _ImportVisitor(path, scope)
         line_offset = 0
         for cell_number, cell in enumerate(cells, start=1):
             if not isinstance(cell, Mapping) or cell.get("cell_type") != "code":
@@ -375,42 +413,23 @@ class ImportScanner:
                 )
             else:
                 ast.increment_lineno(tree, line_offset)
-                visitor = _ImportVisitor(path, scope)
                 visitor.visit(tree)
-                imports.extend(visitor.imports)
             line_offset += max(source.count("\n") + 1, 1) + 1
-        return imports, diagnostics
+        return visitor.imports, [*diagnostics, *visitor.diagnostics]
 
     def _get_local_modules(self, root: Path) -> set[str]:
         local_modules: set[str] = set()
-        if not root.exists():
-            return local_modules
-
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [
-                dirname
-                for dirname in dirnames
-                if not self._should_ignore_path(
-                    Path(dirpath) / dirname,
-                    root,
-                )
-            ]
-            current_dir = Path(dirpath)
-            if "__init__.py" in filenames or "__init__.pyi" in filenames:
-                local_modules.add(current_dir.name)
-            for filename in filenames:
-                suffix = Path(filename).suffix
-                if suffix not in {".py", ".pyi"} or filename.startswith("."):
-                    continue
-                module_name = Path(filename).stem
-                if module_name != "__init__":
-                    local_modules.add(module_name)
-
-            # src 布局允许无 __init__.py 的命名空间包。
-            if current_dir.name == "src":
-                local_modules.update(
-                    name for name in dirnames if not name.startswith(".")
-                )
+        for path in self._iter_python_files(root):
+            if path.suffix not in {".py", ".pyi"}:
+                continue
+            parts = path.relative_to(root).parts
+            # Only repository-root and src-root names are top-level imports.
+            # pkg/requests.py belongs to pkg; it does not shadow requests.
+            if parts[0] == "src" and len(parts) > 1:
+                parts = parts[1:]
+            name = parts[0] if len(parts) > 1 else Path(parts[0]).stem
+            if name != "__init__":
+                local_modules.add(name)
         return local_modules
 
     def _iter_python_files(self, root: Path):
@@ -431,13 +450,15 @@ class ImportScanner:
                     ".pyi",
                 }:
                     continue
-                yield current_dir / filename
+                candidate = current_dir / filename
+                if not candidate.is_symlink():
+                    yield candidate
 
     def _should_ignore_dir(self, name: str) -> bool:
         return name.startswith(".") or name in self.IGNORED_DIRECTORIES
 
     def _should_ignore_path(self, path: Path, root: Path) -> bool:
-        if self._should_ignore_dir(path.name):
+        if path.is_symlink() or self._should_ignore_dir(path.name):
             return True
         from depcheck.ecosystems.static import is_excluded
 

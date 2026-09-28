@@ -24,10 +24,6 @@
           "run": "uv sync --frozen --extra test"
         },
         {
-          "name": "Require property-test support",
-          "run": "uv run --frozen --extra test python -c \"import hypothesis\""
-        },
-        {
           "name": "Run tests",
           "run": "uv run --frozen --extra test python -m pytest test -q"
         }
