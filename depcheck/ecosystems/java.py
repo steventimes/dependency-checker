@@ -773,14 +773,8 @@ def _pom_properties(model: _EffectivePom | None) -> dict[str, str]:
             "parent.version": model.parent_version,
         }
     )
-    for _ in range(16):
-        updated = {
-            key: _substitute_properties(value, values) for key, value in values.items()
-        }
-        if updated == values:
-            break
-        values = updated
-    return values
+    resolver = _PropertyResolver(values)
+    return {key: resolver.substitute(value) for key, value in values.items()}
 
 
 def _valid_maven_coordinate(group: str, artifact: str) -> bool:
@@ -932,16 +926,39 @@ def _package_ref(coordinate: str) -> PackageRef:
 
 
 def _substitute_properties(value: str, properties: Mapping[str, str]) -> str:
-    result = value
-    for _ in range(8):
-        updated = _PROPERTY.sub(
-            lambda match: properties.get(match.group(1), match.group(0)),
-            result,
-        )
-        if updated == result:
-            break
-        result = updated
-    return result
+    return _PropertyResolver(properties).substitute(value)
+
+
+class _PropertyResolver:
+    def __init__(self, properties: Mapping[str, str]) -> None:
+        self.properties = properties
+        self.cache: dict[str, str] = {}
+        self.active: set[str] = set()
+        self.remaining = 1024 * 1024
+
+    def substitute(self, value: str) -> str:
+        parts: list[str] = []
+        offset = 0
+        for match in _PROPERTY.finditer(value):
+            name = match.group(1)
+            if name in self.active or len(self.active) >= 64:
+                raise StaticReadError("Maven property cycle or nesting limit exceeded")
+            if name in self.properties and name not in self.cache:
+                self.active.add(name)
+                self.cache[name] = self.substitute(self.properties[name])
+                self.active.remove(name)
+            literal = value[offset : match.start()]
+            replacement = self.cache.get(name, match.group(0))
+            self.remaining -= len(literal) + len(replacement)
+            if self.remaining < 0:
+                raise StaticReadError("Maven property expansion exceeds 1 MiB")
+            parts.extend((literal, replacement))
+            offset = match.end()
+        self.remaining -= len(value) - offset
+        if self.remaining < 0:
+            raise StaticReadError("Maven property expansion exceeds 1 MiB")
+        parts.append(value[offset:])
+        return "".join(parts)
 
 
 def _child_text(element: ET.Element, name: str) -> str | None:

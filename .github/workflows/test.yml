@@ -1,24 +1,48 @@
 {
   "name": "depcheck CI",
   "on": {
-    "push": {"branches": ["main"]},
-    "pull_request": {"branches": ["main"]}
+    "push": {
+      "branches": [
+        "main"
+      ]
+    },
+    "pull_request": {
+      "branches": [
+        "main"
+      ]
+    }
   },
   "jobs": {
     "test": {
       "runs-on": "ubuntu-latest",
       "strategy": {
         "fail-fast": false,
-        "matrix": {"python-version": ["3.11", "3.12"]}
+        "matrix": {
+          "python-version": [
+            "3.11",
+            "3.12"
+          ]
+        }
       },
       "steps": [
-        {"name": "Checkout repository", "uses": "actions/checkout@v4"},
+        {
+          "name": "Checkout repository",
+          "uses": "actions/checkout@v4"
+        },
         {
           "name": "Set up Python",
           "uses": "actions/setup-python@v5",
-          "with": {"python-version": "${{ matrix.python-version }}"}
+          "with": {
+            "python-version": "${{ matrix.python-version }}"
+          }
         },
-        {"name": "Set up uv", "uses": "astral-sh/setup-uv@v6", "with": {"version": "0.12.4"}},
+        {
+          "name": "Set up uv",
+          "uses": "astral-sh/setup-uv@v6",
+          "with": {
+            "version": "0.12.4"
+          }
+        },
         {
           "name": "Install declared test environment",
           "run": "uv sync --frozen --extra test"
@@ -32,42 +56,98 @@
     "quality": {
       "runs-on": "ubuntu-latest",
       "steps": [
-        {"name": "Checkout repository", "uses": "actions/checkout@v4"},
+        {
+          "name": "Checkout repository",
+          "uses": "actions/checkout@v4"
+        },
         {
           "name": "Set up Python",
           "uses": "actions/setup-python@v5",
-          "with": {"python-version": "3.12"}
+          "with": {
+            "python-version": "3.12"
+          }
         },
-        {"name": "Set up uv", "uses": "astral-sh/setup-uv@v6", "with": {"version": "0.12.4"}},
+        {
+          "name": "Set up uv",
+          "uses": "astral-sh/setup-uv@v6",
+          "with": {
+            "version": "0.12.4"
+          }
+        },
         {
           "name": "Install declared test environment",
           "run": "uv sync --frozen --extra test"
         },
-        {"name": "Lint", "run": "uv run --frozen --extra test python -m ruff check depcheck test"},
-        {"name": "Check formatting", "run": "uv run --frozen --extra test python -m ruff format --check depcheck test scripts/smoke_installed.py"},
-        {"name": "Check lockfile", "run": "uv lock --check --offline"},
-        {"name": "Type check typed core", "run": "uv run --frozen --extra test python -m mypy"},
-        {"name": "Check skill evaluation scripts", "run": "uv run --frozen --extra test python -m ruff check skills/check-dependencies/evals\nuv run --frozen --extra test python -m ruff format --check skills/check-dependencies/evals"},
-        {"name": "Exercise skill MCP contracts offline", "run": "uv run --frozen --extra test python skills/check-dependencies/evals/run_live.py"}
+        {
+          "name": "Lint",
+          "run": "uv run --frozen --extra test python -m ruff check depcheck test scripts/smoke_installed.py scripts/check_wheel_install.py"
+        },
+        {
+          "name": "Check formatting",
+          "run": "uv run --frozen --extra test python -m ruff format --check depcheck test scripts/smoke_installed.py scripts/check_wheel_install.py"
+        },
+        {
+          "name": "Check lockfile",
+          "run": "uv lock --check --offline"
+        },
+        {
+          "name": "Type check typed core",
+          "run": "uv run --frozen --extra test python -m mypy"
+        },
+        {
+          "name": "Check skill evaluation scripts",
+          "run": "uv run --frozen --extra test python -m ruff check skills/check-dependencies/evals\nuv run --frozen --extra test python -m ruff format --check skills/check-dependencies/evals"
+        },
+        {
+          "name": "Exercise skill MCP contracts offline",
+          "run": "uv run --frozen --extra test python skills/check-dependencies/evals/run_live.py"
+        }
       ]
     },
     "build": {
-      "runs-on": "ubuntu-latest",
+      "runs-on": "${{ matrix.os }}",
       "steps": [
-        {"name": "Checkout repository", "uses": "actions/checkout@v4"},
+        {
+          "name": "Checkout repository",
+          "uses": "actions/checkout@v4"
+        },
         {
           "name": "Set up Python",
           "uses": "actions/setup-python@v5",
-          "with": {"python-version": "3.12"}
+          "with": {
+            "python-version": "3.12"
+          }
         },
-        {"name": "Set up uv", "uses": "astral-sh/setup-uv@v6", "with": {"version": "0.12.4"}},
+        {
+          "name": "Set up uv",
+          "uses": "astral-sh/setup-uv@v6",
+          "with": {
+            "version": "0.12.4"
+          }
+        },
         {
           "name": "Install declared test environment",
           "run": "uv sync --frozen --extra test"
         },
-        {"name": "Build package", "run": "uv run --frozen --extra test python -m build"},
-        {"name": "Smoke test installed wheel without extras", "run": "uv venv /tmp/depcheck-wheel-venv\nuv pip install --python /tmp/depcheck-wheel-venv/bin/python dist/*.whl\n/tmp/depcheck-wheel-venv/bin/python scripts/smoke_installed.py"}
-      ]
+        {
+          "name": "Build package",
+          "run": "uv run --frozen --extra test python -m build --outdir \"${{ runner.temp }}/depcheck-dist\""
+        },
+        {
+          "name": "Smoke test installed wheel without extras",
+          "run": "uv run --frozen --extra test python -c \"from pathlib import Path; import subprocess, sys; wheels = list(Path(r'${{ runner.temp }}/depcheck-dist').glob('*.whl')); assert len(wheels) == 1, wheels; subprocess.run([sys.executable, 'scripts/check_wheel_install.py', '--wheel', str(wheels[0])], check=True)\""
+        }
+      ],
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {
+          "os": [
+            "ubuntu-latest",
+            "macos-latest",
+            "windows-latest"
+          ]
+        }
+      }
     }
   }
 }

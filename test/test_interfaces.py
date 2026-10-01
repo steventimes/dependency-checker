@@ -421,3 +421,185 @@ def test_mcp_missing_extra_has_an_actionable_cli_error(monkeypatch, capsys) -> N
     error = capsys.readouterr().err
     assert "depcheck[agent]" in error
     assert "Traceback" not in error
+
+
+def test_update_file_and_group_selection_share_service_semantics(tmp_path, capsys):
+    make_python_project(tmp_path)
+    manifest = tmp_path / "pyproject.toml"
+    manifest.write_text(
+        '[project]\ndependencies=["requests==2.30.0"]\n[project.optional-dependencies]\ntest=["requests==2.29.0"]\n'
+    )
+    original = {
+        p.name: p.read_bytes() for p in [manifest, tmp_path / "requirements.txt"]
+    }
+    service = DependencyAgentService(tmp_path)
+    result = service.plan_dependency_updates(
+        {"requests": "2.32.4"}, target_file="pyproject.toml", group="optional:test"
+    )
+    assert result["plans"][0]["groups"] == ["optional:test"]
+    assert "requests==2.30.0" in result["plans"][0]["preview"]
+    assert "requests==2.32.4" in result["plans"][0]["preview"]
+    assert (
+        main(
+            [
+                "update",
+                str(tmp_path),
+                "requests=2.32.4",
+                "--file",
+                "pyproject.toml",
+                "--group",
+                "optional:test",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out) == result
+    assert (
+        service.plan_dependency_updates({"requests": "2.32.4"})["plans"][0]["file"]
+        == "requirements.txt"
+    )
+    assert (
+        service.plan_dependency_updates(
+            {"requests": "2.32.4"}, target_file="requirements.txt"
+        )["plans"][0]["file"]
+        == "requirements.txt"
+    )
+    assert {
+        p.name: p.read_bytes() for p in [manifest, tmp_path / "requirements.txt"]
+    } == original
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["../outside.txt", "/tmp/outside.txt", "missing.txt", "excluded/requirements.txt"],
+)
+def test_explicit_update_target_respects_exclusions_and_root(tmp_path, target):
+    make_python_project(tmp_path)
+    (tmp_path / ".depcheck.toml").write_text('excluded-directories=["excluded"]\n')
+    (tmp_path / "excluded").mkdir()
+    (tmp_path / "excluded/requirements.txt").write_text("requests==1")
+    with pytest.raises((ValueError, PermissionError)):
+        DependencyAgentService(tmp_path).plan_dependency_updates(
+            {"requests": "2"}, target_file=target
+        )
+
+
+def test_explicit_update_rejects_symlink_and_arbitrary_file(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    make_python_project(root)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("requests==1")
+    (root / "requirements-link.txt").symlink_to(outside)
+    with pytest.raises(PermissionError):
+        DependencyAgentService(root).plan_dependency_updates(
+            {"requests": "2"}, target_file="requirements-link.txt"
+        )
+    (root / "notes.txt").write_text("requests==1")
+    result = DependencyAgentService(root).plan_dependency_updates(
+        {"requests": "2"}, target_file="notes.txt"
+    )
+    assert result["diagnostics"][0]["code"] == "update.unsupported-target"
+
+
+@pytest.mark.parametrize(
+    ("dependencies", "group", "version", "code"),
+    [
+        ('[project]\ndependencies=["requests==1"]', "project", "1", None),
+        (
+            '[project]\ndependencies=["requests @ https://example.org/r.whl"]',
+            "project",
+            "2",
+            "update.unsupported-target",
+        ),
+        (
+            '[project]\ndependencies=["requests==1"]\n[project.optional-dependencies]\ntest=["requests==1"]',
+            None,
+            "2",
+            "update.ambiguous-target",
+        ),
+    ],
+)
+def test_pyproject_update_cli_distinguishes_noop_unsupported_and_ambiguous(
+    tmp_path, capsys, dependencies, group, version, code
+):
+    (tmp_path / "pyproject.toml").write_text(dependencies)
+    args = ["update", str(tmp_path), f"requests={version}", "--file", "pyproject.toml"]
+    if group:
+        args += ["--group", group]
+    assert main(args) == (2 if code else 0)
+    result = json.loads(capsys.readouterr().out)
+    assert result["plans"] == []
+    assert (
+        ([d["code"] for d in result["diagnostics"]] == [code])
+        if code
+        else not result["diagnostics"]
+    )
+    assert (tmp_path / "pyproject.toml").read_text() == dependencies
+
+
+def test_pyproject_update_parameters_in_mcp_schema(tmp_path):
+    server = create_server()
+    tool = next(
+        t
+        for t in asyncio.run(server.list_tools())
+        if t.name == "plan_dependency_updates"
+    )
+    for name in ["target_file", "group"]:
+        assert tool.inputSchema["properties"][name]["default"] is None
+    assert tool.annotations.readOnlyHint is True
+    assert tool.annotations.openWorldHint is False
+
+
+def test_pyproject_preview_accepts_documented_double_equals_cli(tmp_path, capsys):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies=["requests==1"]\n'
+    )
+    assert (
+        main(
+            [
+                "update",
+                str(tmp_path),
+                "requests==2.32.4",
+                "--file",
+                "pyproject.toml",
+                "--group",
+                "project",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["plans"][0]["updated"] == {"requests": "==2.32.4"}
+
+
+def test_explicit_update_exclusion_cannot_be_bypassed_by_manifest_symlink(tmp_path):
+    (tmp_path / ".depcheck.toml").write_text('excluded-directories=["vendor"]\n')
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor/requirements.txt").write_text("requests==1\n")
+    (tmp_path / "requirements.txt").symlink_to("vendor/requirements.txt")
+    for target in ["vendor/requirements.txt", "requirements.txt"]:
+        with pytest.raises(ValueError, match="excluded"):
+            DependencyAgentService(tmp_path).plan_dependency_updates(
+                {"requests": "2"}, target_file=target
+            )
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("requests=2.32.4", "==2.32.4"),
+        ("requests==2.32.4", "==2.32.4"),
+        ("requests===2.32.4", "==2.32.4"),
+        ("requests====2.32.4", "===2.32.4"),
+    ],
+)
+def test_update_explicit_equality_specifiers_preserve_legacy_cli_semantics(
+    tmp_path, capsys, token, expected
+):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies=["requests==1"]\n'
+    )
+    assert main(["update", str(tmp_path), token, "--file", "pyproject.toml"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["plans"][0]["updated"] == {"requests": expected}

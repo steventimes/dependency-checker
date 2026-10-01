@@ -451,3 +451,214 @@ def test_greedy_compatibility_conflict_is_not_a_complete_resolution() -> None:
     pinned_conflict = checker.check({"alpha": "==2.0", "beta": "==1.0"})
     assert pinned_conflict.complete
     assert pinned_conflict.conflicts
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_pyproject_preview_preserves_comments_markers_and_newlines(
+    tmp_path, newline, quote
+):
+    from depcheck.compatibility.pyproject_updater import PyprojectUpdater
+
+    marker = "python_version >= '3.11'" if quote == '"' else 'python_version >= "3.11"'
+    original = (
+        (
+            f'[project]\nname="app-2.31.0"\nversion="2.31.0"\ndependencies = [\n  {quote}requests[socks]==2.31.0; {marker}{quote}, # retain\n]\n'
+        )
+        .replace("\n", newline)
+        .encode()
+    )
+    path = tmp_path / "pyproject.toml"
+    path.write_bytes(original)
+    result = PyprojectUpdater(tmp_path).plan(
+        path, {"requests": "==2.32.4"}, group="project"
+    )
+    assert result.diagnostics == ()
+    assert result.matched == ("requests",)
+    assert result.groups == ("project",)
+    assert result.plan.updated_content.encode() == original.replace(
+        b"==2.31.0", b"==2.32.4"
+    )
+    assert path.read_bytes() == original
+
+
+def test_pyproject_preview_requires_unambiguous_group(tmp_path):
+    from depcheck.compatibility.pyproject_updater import PyprojectUpdater
+
+    path = tmp_path / "pyproject.toml"
+    original = '[project]\ndependencies=["requests==1"]\n[project.optional-dependencies]\ntest=["requests==1; python_version < \'3.12\'", "requests==2; python_version >= \'3.12\'"]\ndocs=["requests==1"]\n'
+    path.write_text(original)
+    updater = PyprojectUpdater(tmp_path)
+    result = updater.plan(path, {"requests": "3"})
+    assert result.plan is None and result.matched == ()
+    assert result.diagnostics[0].code == "update.ambiguous-target"
+    result = updater.plan(path, {"requests": "3"}, group="optional:test")
+    assert result.groups == ("optional:test",)
+    assert result.plan.updated_content == original.replace(
+        "requests==1;", "requests==3;"
+    ).replace("requests==2;", "requests==3;")
+    assert path.read_text() == original
+
+
+@pytest.mark.parametrize(
+    ("content", "updates", "group", "code"),
+    [
+        (
+            '[project]\ndependencies=["requests @ https://example.org/a.whl"]',
+            {"requests": "2"},
+            None,
+            "update.unsupported-target",
+        ),
+        (
+            '[project]\ndynamic=["dependencies"]',
+            {"requests": "2"},
+            None,
+            "update.unsupported-target",
+        ),
+        (
+            '[project]\ndependencies=["""requests==1"""]',
+            {"requests": "2"},
+            None,
+            "update.unsupported-target",
+        ),
+        (
+            "[project]\ndependencies=[42]",
+            {"requests": "2"},
+            None,
+            "update.unsupported-target",
+        ),
+        (
+            '[project]\ndependencies=["bad !!!"]',
+            {"requests": "2"},
+            None,
+            "update.invalid-target",
+        ),
+        ("[project", {"requests": "2"}, None, "update.invalid-target"),
+        (
+            '[project]\ndependencies=["requests==1"]',
+            {"requests": "not-a-version"},
+            None,
+            "update.invalid-target",
+        ),
+        (
+            '[project]\ndependencies=["requests==1"]',
+            {"urllib3": "2"},
+            None,
+            "update.unsupported-target",
+        ),
+        (
+            '[project]\ndependencies=["requests==1"]',
+            {"requests": "2"},
+            "optional:missing",
+            "update.unsupported-target",
+        ),
+        (
+            '[tool.poetry.dependencies]\nrequests="1"',
+            {"requests": "2"},
+            None,
+            "update.unsupported-target",
+        ),
+    ],
+)
+def test_pyproject_preview_refuses_unsupported_targets(
+    tmp_path, content, updates, group, code
+):
+    from depcheck.compatibility.pyproject_updater import PyprojectUpdater
+
+    path = tmp_path / "pyproject.toml"
+    path.write_text(content)
+    result = PyprojectUpdater(tmp_path).plan(path, updates, group=group)
+    assert result.plan is None and result.matched == ()
+    assert result.diagnostics[0].code == code
+    assert result.diagnostics[0].severity == "error"
+    assert path.read_text() == content
+
+
+def test_pyproject_preview_noop_and_file_atomicity(tmp_path):
+    from depcheck.compatibility.pyproject_updater import PyprojectUpdater
+
+    path = tmp_path / "pyproject.toml"
+    original = '[project]\ndependencies=["requests>=1,<3", "urllib3 @ https://example.org/u.whl"]\n'
+    path.write_text(original)
+    updater = PyprojectUpdater(tmp_path)
+    result = updater.plan(path, {"requests": "<3,>=1"})
+    assert (
+        result.plan is None
+        and result.matched == ("requests",)
+        and not result.diagnostics
+    )
+    result = updater.plan(path, {"requests": "2", "urllib3": "2"})
+    assert result.plan is None and not result.matched and result.diagnostics
+    assert path.read_text() == original
+
+
+def test_pyproject_preview_rejects_external_symlink_before_read(tmp_path, monkeypatch):
+    from depcheck.compatibility.pyproject_updater import PyprojectUpdater
+    from depcheck.path_policy import ProjectPathError
+
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside.toml"
+    outside.write_text("[project]")
+    link = root / "pyproject.toml"
+    link.symlink_to(outside)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("read before path validation")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden)
+    with pytest.raises(ProjectPathError):
+        PyprojectUpdater(root).plan(link, {"requests": "2"})
+    with pytest.raises(ProjectPathError):
+        PyprojectUpdater(root).plan(root / "../outside.toml", {"requests": "2"})
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [r"requ\u0065sts==2.31.0", r"requests==2.31.0\u003b python_version < '3.12'"],
+)
+def test_pyproject_preview_refuses_escaped_tokens_without_corrupting_them(
+    tmp_path, entry
+):
+    from depcheck.compatibility.pyproject_updater import PyprojectUpdater
+
+    path = tmp_path / "pyproject.toml"
+    original = f'[project]\ndependencies=["{entry}"]\n'
+    path.write_text(original)
+    result = PyprojectUpdater(tmp_path).plan(path, {"requests": "2.32.4"})
+    assert result.plan is None
+    assert result.diagnostics[0].code == "update.unsupported-target"
+    assert path.read_text() == original
+
+
+def test_pyproject_preview_preserves_spaced_extras(tmp_path):
+    from depcheck.compatibility.pyproject_updater import PyprojectUpdater
+
+    path = tmp_path / "pyproject.toml"
+    original = "[project]\ndependencies=[\"requests [socks] ==2.31.0; python_version < '3.12'\"]\n"
+    path.write_text(original)
+    result = PyprojectUpdater(tmp_path).plan(path, {"requests": "2.32.4"})
+    assert result.plan.updated_content == original.replace("2.31.0", "2.32.4")
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        'dynamic=["optional-dependencies"]\n',
+        "[project.optional-dependencies]\ntest=[42]\n",
+        '[project.optional-dependencies]\ntest=["bad !!!"]\n',
+    ],
+)
+def test_pyproject_preview_ignores_unaffected_groups(tmp_path, suffix):
+    from depcheck.compatibility.pyproject_updater import PyprojectUpdater
+
+    path = tmp_path / "pyproject.toml"
+    original = '[project]\ndependencies=["requests==1"]\n' + suffix
+    path.write_text(original)
+    result = PyprojectUpdater(tmp_path).plan(
+        path,
+        {"requests": "2"},
+        group="project" if suffix.startswith("dynamic") else None,
+    )
+    assert not result.diagnostics
+    assert result.plan.updated_content == original.replace("requests==1", "requests==2")

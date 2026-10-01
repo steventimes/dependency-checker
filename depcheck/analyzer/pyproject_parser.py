@@ -98,6 +98,7 @@ class PyProjectParser(BaseDependencyParser):
 
         groups = data.get("dependency-groups")
         if isinstance(groups, dict):
+            budget = [20_000]
             for group in groups:
                 self._append_dependency_group(
                     str(group),
@@ -106,6 +107,8 @@ class PyProjectParser(BaseDependencyParser):
                     declarations=declarations,
                     diagnostics=diagnostics,
                     active=(),
+                    visited=set(),
+                    budget=budget,
                 )
 
     def _parse_poetry(
@@ -300,6 +303,8 @@ class PyProjectParser(BaseDependencyParser):
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
         active: tuple[str, ...],
+        visited: set[str],
+        budget: list[int],
     ) -> None:
         if group in active:
             diagnostics.append(
@@ -311,6 +316,19 @@ class PyProjectParser(BaseDependencyParser):
                 )
             )
             return
+        if group in visited or budget[0] < 0:
+            return
+        if len(active) >= 64:
+            diagnostics.append(
+                Diagnostic(
+                    code="manifest.group-limit",
+                    severity="error",
+                    message="dependency-groups nesting exceeds 64 levels",
+                    source=SourceLocation(self.path),
+                )
+            )
+            return
+        visited.add(group)
         values = groups.get(group)
         if not isinstance(values, list):
             diagnostics.append(
@@ -323,6 +341,17 @@ class PyProjectParser(BaseDependencyParser):
             )
             return
         for value in values:
+            budget[0] -= 1
+            if budget[0] < 0:
+                diagnostics.append(
+                    Diagnostic(
+                        code="manifest.group-limit",
+                        severity="error",
+                        message="dependency-groups expansion exceeds 20000 entries",
+                        source=SourceLocation(self.path),
+                    )
+                )
+                return
             if isinstance(value, str):
                 self._append_requirements(
                     [value], f"dev:{target_group}", declarations, diagnostics
@@ -337,6 +366,8 @@ class PyProjectParser(BaseDependencyParser):
                     declarations=declarations,
                     diagnostics=diagnostics,
                     active=(*active, group),
+                    visited=visited,
+                    budget=budget,
                 )
             else:
                 diagnostics.append(

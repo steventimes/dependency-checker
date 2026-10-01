@@ -1,0 +1,143 @@
+{
+  "schema": "depcheck.skill-eval.v2",
+  "cases": [
+    {
+      "case_id": "cli-tools",
+      "task": "Audit dependency hygiene offline in this Python project. Explain whether ruff is unused and whether dependencies are safe.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "current",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "requirements.txt": "ruff==0.11.0\nrequests==2.31.0\n",
+        "app.py": "import requests\n",
+        ".depcheck.toml": "[[tool-usage]]\necosystem=\"PyPI\"\nproject-id=\"pypi:python:.\"\npackage=\"ruff\"\nscope=\"test\"\nreason=\"Runs as the lint command in CI\"\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "ruff",
+        "configured",
+        "skipped"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe"
+      ],
+      "expected_claims": {
+        "security_safe": false,
+        "release_ready": false
+      },
+      "quality_rubric": "Audit dependency hygiene offline in this Python project. Explain whether ruff is unused and whether dependencies are safe. Verify actual CLI results and inspect calls manually.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "pages-identity",
+      "task": "Return the complete package-* inventory for npm:npm:one using pages of at most 20 entries, then explain shared specifically in npm:npm:two. Security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "current",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "one/package.json": "{\"dependencies\": {\"shared\": \"1.0.0\", \"package-000\": \"1.0.0\", \"package-001\": \"1.0.0\", \"package-002\": \"1.0.0\", \"package-003\": \"1.0.0\", \"package-004\": \"1.0.0\", \"package-005\": \"1.0.0\", \"package-006\": \"1.0.0\", \"package-007\": \"1.0.0\", \"package-008\": \"1.0.0\", \"package-009\": \"1.0.0\", \"package-010\": \"1.0.0\", \"package-011\": \"1.0.0\", \"package-012\": \"1.0.0\", \"package-013\": \"1.0.0\", \"package-014\": \"1.0.0\", \"package-015\": \"1.0.0\", \"package-016\": \"1.0.0\", \"package-017\": \"1.0.0\", \"package-018\": \"1.0.0\", \"package-019\": \"1.0.0\", \"package-020\": \"1.0.0\", \"package-021\": \"1.0.0\", \"package-022\": \"1.0.0\", \"package-023\": \"1.0.0\", \"package-024\": \"1.0.0\", \"package-025\": \"1.0.0\", \"package-026\": \"1.0.0\", \"package-027\": \"1.0.0\", \"package-028\": \"1.0.0\", \"package-029\": \"1.0.0\", \"package-030\": \"1.0.0\", \"package-031\": \"1.0.0\", \"package-032\": \"1.0.0\", \"package-033\": \"1.0.0\", \"package-034\": \"1.0.0\", \"package-035\": \"1.0.0\", \"package-036\": \"1.0.0\", \"package-037\": \"1.0.0\", \"package-038\": \"1.0.0\", \"package-039\": \"1.0.0\", \"package-040\": \"1.0.0\", \"package-041\": \"1.0.0\", \"package-042\": \"1.0.0\", \"package-043\": \"1.0.0\", \"package-044\": \"1.0.0\", \"package-045\": \"1.0.0\", \"package-046\": \"1.0.0\", \"package-047\": \"1.0.0\", \"package-048\": \"1.0.0\", \"package-049\": \"1.0.0\", \"package-050\": \"1.0.0\", \"package-051\": \"1.0.0\", \"package-052\": \"1.0.0\", \"package-053\": \"1.0.0\", \"package-054\": \"1.0.0\", \"package-055\": \"1.0.0\", \"package-056\": \"1.0.0\", \"package-057\": \"1.0.0\", \"package-058\": \"1.0.0\", \"package-059\": \"1.0.0\", \"package-060\": \"1.0.0\", \"package-061\": \"1.0.0\", \"package-062\": \"1.0.0\", \"package-063\": \"1.0.0\", \"package-064\": \"1.0.0\"}}",
+        "two/package.json": "{\"dependencies\":{\"shared\":\"2.0.0\"}}"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe"
+      ],
+      "expected_final_status": "pass",
+      "required_answer_terms": [
+        "65",
+        "npm:npm:two"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe"
+      ],
+      "expected_claims": {
+        "security_safe": false,
+        "release_ready": false
+      },
+      "quality_rubric": "Return the complete package-* inventory for npm:npm:one using pages of at most 20 entries, then explain shared specifically in npm:npm:two. Security was not requested. Verify actual CLI results and inspect calls manually.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "uncertain-update",
+      "task": "Audit this project offline. Decide whether requests can be removed, and preview an urllib3 upgrade to 2.2.3. Explain what can and cannot be concluded.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "requirements.txt": "requests==2.31.0\n",
+        "pyproject.toml": "[project]\nname=\"app\"\nversion=\"1\"\ndependencies=[\"urllib3==2.0.0\"]\n",
+        "app.py": "import importlib\nimportlib.import_module(name)\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "incomplete",
+        "update.unsupported-target"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe"
+      ],
+      "expected_claims": {
+        "security_safe": false,
+        "release_ready": false
+      },
+      "quality_rubric": "Audit this project offline. Decide whether requests can be removed, and preview an urllib3 upgrade to 2.2.3. Explain what can and cannot be concluded. Verify actual CLI results and inspect calls manually.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    }
+  ]
+}

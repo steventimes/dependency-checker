@@ -14,6 +14,8 @@ DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
         ".idea",
         ".mypy_cache",
         ".pytest_cache",
+        ".ruff_cache",
+        ".tmp",
         ".tox",
         ".venv",
         ".vscode",

@@ -275,7 +275,14 @@ class EvidenceAnalyzer:
     ) -> tuple[list[Finding], list[Diagnostic]]:
         findings: list[Finding] = []
         diagnostics: list[Diagnostic] = []
-        for key, direct in declarations.items():
+        installations: dict[tuple[DependencyKey, str], list[DependencyDeclaration]] = {}
+        for key, items in declarations.items():
+            for item in items:
+                installation = str(
+                    item.metadata.get("installation_name", item.package.name)
+                )
+                installations.setdefault((key, installation), []).append(item)
+        for (key, _), direct in installations.items():
             if len(direct) < 2:
                 continue
             package = direct[0].package
@@ -476,14 +483,19 @@ class EvidenceAnalyzer:
         ]
         if any(item is None for item in parsed):
             return None
-        candidates = list(parsed[0] or ())
+        candidates = set(parsed[0] or ())
+        remaining = 100_000
         for alternatives in parsed[1:]:
-            candidates = [
+            unique = set(alternatives or ())
+            remaining -= len(candidates) * len(unique)
+            if remaining < 0:
+                return None
+            candidates = {
                 intersection
                 for left in candidates
-                for right in alternatives or ()
+                for right in unique
                 if (intersection := cls._interval_intersection(left, right)) is not None
-            ]
+            }
             if not candidates:
                 return True
         return False
@@ -518,9 +530,10 @@ class EvidenceAnalyzer:
                     return None
                 intersected = cls._interval_intersection(interval, token_interval)
                 if intersected is None:
-                    return ()
+                    break
                 interval = intersected
-            alternatives.append(interval)
+            else:
+                alternatives.append(interval)
         return tuple(alternatives)
 
     @classmethod

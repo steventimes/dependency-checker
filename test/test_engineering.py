@@ -30,6 +30,48 @@ def test_configuration_rejects_unknown_or_unsafe_values(tmp_path: Path) -> None:
         load_project_config(tmp_path)
 
 
+def test_tool_usage_config_is_scoped_and_validated(tmp_path: Path) -> None:
+    from dataclasses import asdict
+
+    config_path = tmp_path / ".depcheck.toml"
+    valid = (
+        '[[tool-usage]]\necosystem="pYpI"\nproject-id="pypi:python:."\n'
+        'package="My_Tool"\nscope="test"\nreason="Runs in CI"\n'
+    )
+    config_path.write_text(valid)
+    config = load_project_config(tmp_path)
+    assert json.loads(json.dumps(asdict(config)))["tool_usage"] == [
+        {
+            "ecosystem": "PyPI",
+            "project_id": "pypi:python:.",
+            "package": "my-tool",
+            "scope": "test",
+            "reason": "Runs in CI",
+        }
+    ]
+    for invalid in (
+        valid + 'typo="unexpected"\n',
+        valid.replace('reason="Runs in CI"', 'reason=""'),
+        valid.replace('reason="Runs in CI"\n', ""),
+        valid.replace('scope="test"', 'scope="all"'),
+        valid.replace('package="My_Tool"', 'package="bad package"'),
+        valid.replace('ecosystem="pYpI"', 'ecosystem="unknown"'),
+        valid.replace('project-id="pypi:python:."', 'project-id="*"'),
+        valid + valid,
+        'tool-usage="ruff"\n',
+        'tool-usage=["ruff"]\n',
+        '[tool-usage]\npackage="ruff"\n',
+    ):
+        config_path.write_text(invalid)
+        with pytest.raises(ConfigurationError):
+            load_project_config(tmp_path)
+    config_path.unlink()
+    assert load_project_config(tmp_path).tool_usage == ()
+    (tmp_path / "pyproject.toml").write_text("[tool.depcheck]\ntool-usage=[]\n")
+    with pytest.raises(ConfigurationError, match="unknown key"):
+        load_project_config(tmp_path)
+
+
 def test_project_path_policy_rejects_parent_and_symlink_escape(
     tmp_path: Path,
 ) -> None:
@@ -133,6 +175,31 @@ def test_release_and_plugin_metadata_share_one_version_and_entrypoint() -> None:
     assert "ruff check depcheck test" in commands
     assert "python -m mypy" in commands
     assert "python -m build" in commands
+    assert set(workflow["jobs"]["build"]["strategy"]["matrix"]["os"]) == {
+        "ubuntu-latest",
+        "macos-latest",
+        "windows-latest",
+    }
+    assert "scripts/check_wheel_install.py" in commands
+
+
+def test_wheel_install_runner_rejects_missing_wheel(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/check_wheel_install.py"),
+            "--wheel",
+            str(tmp_path / "missing.whl"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert "Expected an existing .whl file" in result.stderr
 
 
 def test_suite_is_intentionally_bounded_to_five_files() -> None:
@@ -189,6 +256,58 @@ def test_new_exclusions_remove_previously_indexed_manifests(tmp_path: Path) -> N
     (generated / "requirements.txt").write_text("requests==2.32.4\n")
     assert RepositoryIndex(tmp_path).context()["stale"] is False
     assert RepositoryIndex(tmp_path).dependencies() == []
+
+
+@pytest.mark.parametrize("filtered", [False, True])
+def test_tool_usage_scan_and_index_agree_after_config_change(
+    tmp_path: Path, filtered: bool
+) -> None:
+    from depcheck.agent.service import DependencyAgentService
+    from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+    from depcheck.indexing import RepositoryIndex, RepositoryIndexer
+
+    (tmp_path / "requirements.txt").write_text("ruff==0.11.0\n")
+    config = tmp_path / ".depcheck.toml"
+    config.write_text(
+        '[[tool-usage]]\necosystem="PyPI"\nproject-id="pypi:python:."\n'
+        'package="ruff"\nscope="test"\nreason="Lint"\n'
+    )
+    indexer = RepositoryIndexer()
+    selection = {"ecosystems": ("PyPI",)} if filtered else {}
+    indexer.refresh(tmp_path, **selection)
+    assert indexer.refresh(tmp_path, **selection).status == "current"
+    service = DependencyAgentService(tmp_path)
+    explanation = service.explain_dependency("ruff")
+    assert explanation["usages"][0]["kind"] == "tool"
+    assert explanation["usages"][0]["mapping_confidence"] == "configured"
+    assert explanation["imports"] == []
+    assert explanation["imported"] is False
+    assert service.dependency_impact("ruff")["usage_count"] == 1
+    assert RepositoryIndex(tmp_path).context()["counts"]["import_location_count"] == 0
+    assert explanation["findings"] == []
+    assert (
+        RepositoryScanner()
+        .scan(tmp_path, RepositoryScanOptions(security=False))
+        .findings
+        == ()
+    )
+    config.unlink()
+    assert RepositoryIndex(tmp_path).context()["stale"]
+    with pytest.raises(RuntimeError, match="stale"):
+        service.query_dependencies()
+    indexer.refresh(tmp_path, **selection)
+    assert service.explain_dependency("ruff")["usages"] == []
+    assert [f["code"] for f in service.explain_dependency("ruff")["findings"]] == [
+        "dependency.unused"
+    ]
+    config.write_text('excluded-directories=["generated"]\n')
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    (generated / "requirements.txt").write_text("other==1.0\n")
+    indexer.refresh(tmp_path, **selection)
+    assert [r["package"] for r in service.query_dependencies()["dependencies"]] == [
+        "ruff"
+    ]
 
 
 def test_index_does_not_invent_a_python_project_from_cmake(tmp_path: Path) -> None:
@@ -337,3 +456,78 @@ def test_optimized_wheel_smoke_rejects_source_checkout(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "Expected an installed wheel" in result.stderr
     assert "exports passed" not in result.stdout
+
+
+@pytest.mark.parametrize("filtered", [False, True])
+@pytest.mark.parametrize("mutation", ["package", "delete", "condition", "local-delete"])
+def test_package_import_change_invalidates_full_and_filtered_indexes(
+    tmp_path, filtered, mutation
+):
+    import json
+    from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+    from depcheck.indexing import RepositoryIndex, RepositoryIndexer
+    from depcheck.agent.service import DependencyAgentService
+
+    manifest = tmp_path / "package.json"
+    document = {
+        "dependencies": {"lodash": "1.0.0", "other": "1.0.0"},
+        "imports": {"#alias": "./util.js" if mutation == "local-delete" else "lodash"},
+    }
+    manifest.write_text(json.dumps(document))
+    (tmp_path / "app.js").write_text("import a from '#alias';\n")
+    (tmp_path / "util.js").write_text("export default 1;\n")
+    selection = {"ecosystems": ("npm",)} if filtered else {}
+    indexer = RepositoryIndexer()
+    indexer.refresh(tmp_path, **selection)
+    if mutation == "package":
+        document["imports"]["#alias"] = "other"
+    if mutation == "delete":
+        document.pop("imports")
+    if mutation == "condition":
+        document["imports"]["#alias"] = {"default": "lodash"}
+    if mutation == "local-delete":
+        (tmp_path / "util.js").unlink()
+    else:
+        manifest.write_text(json.dumps(document))
+    assert RepositoryIndex(tmp_path).context()["stale"]
+    service = DependencyAgentService(tmp_path)
+    with pytest.raises(RuntimeError, match="stale"):
+        service.query_dependencies()
+    indexer.refresh(tmp_path, **selection)
+    context = RepositoryIndex(tmp_path).context()
+    assert not context["stale"]
+    scan = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, enabled_ecosystems=("npm",))
+    )
+    assert (
+        context["projects"][0]["capabilities"]["usage"]["complete"]
+        == scan.capability("dependency_hygiene").complete
+    )
+    assert context["projects"][0]["capabilities"]["usage"]["complete"] == (
+        mutation == "package"
+    )
+    assert not service.explain_dependency(
+        "lodash", ecosystem="npm", project_id="npm:npm:."
+    )["usages"]
+    explanation = service.explain_dependency(
+        "other", ecosystem="npm", project_id="npm:npm:."
+    )
+    assert bool(explanation["usages"]) == (mutation == "package")
+    assert {
+        (f["code"], f["package"]) for f in RepositoryIndex(tmp_path).findings()
+    } == {(f.code, f.package.name) for f in scan.findings}
+
+
+@pytest.mark.parametrize("ecosystem", ["PyPI", "npm"])
+def test_benchmark_mutation_preserves_rebuild_equivalence(tmp_path, ecosystem):
+    from scripts.benchmark_monorepo import build_fixture, measure_mutation
+
+    build_fixture(tmp_path, projects=1, files_per_project=2, seed=1729, depth=1)
+    result = measure_mutation(tmp_path, ecosystem)
+    assert result["rebuild_equivalent"] is True
+    assert result["ecosystem"] == ecosystem
+    assert result["status"] == "updated"
+    assert result["wall_seconds"] >= 0
+    assert result["changed_reference"] == "benchmarknewpackage"
+    assert result["changed_usage_detected"] is True
+    assert result["counters"]["npm_parse_reuse"] == "not available"

@@ -165,14 +165,18 @@ def create_server(
         updates: dict[str, str],
         project_root: str = ".",
         add_missing: bool = False,
+        target_file: str | None = None,
+        group: str | None = None,
         ecosystem: str | None = None,
         project_id: str | None = None,
         context: Context = None,
     ) -> dict[str, Any]:
-        """Generate requirements update previews without writing any manifest."""
+        """Preview requirements or explicit pyproject groups without writing manifests."""
         return (await service(project_root, context)).plan_dependency_updates(
             updates,
             add_missing=add_missing,
+            target_file=target_file,
+            group=group,
             ecosystem=ecosystem,
             project_id=project_id,
         )

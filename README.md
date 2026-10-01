@@ -16,7 +16,7 @@ project code or running package managers.
 - Text, `depcheck.scan.v1` JSON, SARIF 2.1.0, and CycloneDX 1.7 output.
 - A rebuildable `depcheck.index.v3` SQLite evidence index.
 - Qualified inventory queries, dependency explanations, impact analysis, and
-  read-only Python requirements update previews.
+  read-only update previews for Python requirements and static PEP 621 entries.
 - CLI and MCP interfaces over the same scanner, model, index, and service layer.
 
 Scan results separate dependency findings from analysis failures. Skipped,
@@ -27,7 +27,7 @@ unsupported, and failed stages keep the overall result incomplete.
 | Ecosystem | Evidence |
 | --- | --- |
 | Python / PyPI | `pyproject.toml`, requirements files, setup metadata, Pipfile, supported locks, Docker/Make install hints, Python and notebook imports |
-| JavaScript / npm | `package.json`, npm lockfiles, literal ESM/CommonJS/dynamic imports, resolved instance edges |
+| JavaScript / npm | `package.json`, npm and pnpm v9 locks, literal ESM/CommonJS/dynamic imports, resolved instance edges |
 | Go modules | `go.mod`, `go.sum`, replacements, exclusions, direct/indirect requirements, literal imports |
 | Java/Kotlin / Maven or Gradle | effective local POM evidence, properties and dependency management, literal Gradle declarations, lock evidence, imports |
 | C/C++ / Conan or vcpkg | supported manifests and JSON locks, includes, CMake `find_package` evidence |
@@ -35,6 +35,14 @@ unsupported, and failed stages keep the overall result incomplete.
 Dynamic or ambiguous syntax produces incomplete evidence. Security scanning for
 Conan and vcpkg returns `security.ecosystem-unsupported`: depcheck cannot map
 these packages to OSV coordinates, so their security results remain incomplete.
+
+For pnpm v9, each project reads its importer from the nearest `pnpm-lock.yaml`
+inside the repository. Registry versions, peer instances, and dependency edges
+(including optional dependencies) feed inventory, OSV queries, and CycloneDX.
+Local workspace links, file/Git/URL resolutions, other lock versions, and
+manifest/lock mismatches produce incomplete-resolution diagnostics. Yarn locks
+remain unsupported. Lockfiles are read as bounded YAML data; aliases, duplicate
+keys, and executable tags are rejected.
 
 ## Install
 
@@ -129,6 +137,21 @@ A JSON policy file can add expiring, qualified exemptions:
 Pass it with `--policy policy.json`. Invalid, expired, or unmatched exemptions
 remain observable; invalid and expired exemptions fail governance evaluation.
 
+Explicit pyproject previews select static PEP 621 dependency groups:
+
+```bash
+depcheck update . "requests==2.32.4" --file pyproject.toml --group project
+depcheck update . "requests==2.32.4" --file pyproject.toml --group optional:test
+```
+
+Without `--file`, updates continue to preview requirements files. With an
+explicit pyproject file, omit `--group` only when each requested package has
+one group; repeated packages across groups return `update.ambiguous-target`.
+Previews preserve supported single-line string formatting and do not write
+manifests or locks, apply upgrades, or establish compatibility. Dynamic
+requirements, URL/VCS entries, multiline strings, and other dependency tables
+remain unsupported. Invalid input returns `update.invalid-target`.
+
 ## Configuration
 
 Use `.depcheck.toml` at the repository root:
@@ -151,6 +174,32 @@ PIL = "pillow"
 
 Mappings are scoped by ecosystem and stable project ID. Excluded directories
 must be relative paths inside the repository.
+
+Declare a dependency's use as a CLI, build tool, or plugin in `.depcheck.toml`
+when source imports do not show that use:
+
+```toml
+[[tool-usage]]
+ecosystem = "PyPI"
+project-id = "pypi:python:."
+package = "ruff"
+scope = "test"
+reason = "Runs as the lint command in CI"
+```
+
+Each entry requires an ecosystem, exact project ID, package, scope, and reason.
+Scopes are `runtime`, `development`, `test`, or `build`. Tool usage is
+`configured` evidence: it records your declaration, not an observed command
+execution. Query explanations retain its `kind: "tool"`, confidence, reason,
+and configuration location in `usages`; `imports` lists source evidence.
+Impact includes both forms of usage. Tool declarations preserve dependency
+inventory, security coordinates, and SBOM components. Unmatched package entries
+produce `config.tool-usage-unmatched` warnings within the selected project.
+
+Use policy exemptions for temporary finding exceptions. An `unused` exemption
+changes policy evaluation while retaining raw findings and security evidence.
+`ignore-packages` removes the package's evidence, including resolved versions,
+so it also removes that package from security checks and SBOM output.
 
 ## Result model
 
@@ -182,14 +231,16 @@ The stdio server exports seven tools:
 - `dependency_impact`
 - `plan_dependency_updates`
 
-The server authorizes only roots supplied by the MCP client or explicit
-`--allow-root` arguments. Query tools accept `ecosystem` and `project_id`
+The server uses explicit `--allow-root` arguments first, then
+`DEPCHECK_ALLOWED_ROOTS` (separated by the platform's path separator), then
+the MCP client's local roots. Requested paths must stay inside those roots.
+Query tools accept `ecosystem` and `project_id`
 qualifiers; ambiguous unqualified names return structured choices. Update
 planning is read-only. `scan_repository` runs offline and therefore reports
 security as skipped.
 
 MCP tool annotations distinguish read-only queries/previews from operations
-that replace the local `.depcheck` cache. All seven tools operate locally.
+that replace the local `.depcheck` cache.
 
 Plugin descriptors are provided in `plugin.json`, `.codex-plugin/plugin.json`,
 `mcp.json`, and `.mcp.json`. The coding-agent workflow is in
@@ -199,12 +250,17 @@ Plugin descriptors are provided in `plugin.json`, `.codex-plugin/plugin.json`,
 
 Repository files are parsed as data. depcheck does not evaluate `setup.py`,
 load target modules, or invoke pip, npm, pnpm, yarn, Go, Maven, Gradle, Conan,
-vcpkg, or build scripts. Symlink and parent-directory escapes are rejected.
+vcpkg, or build scripts. Evidence discovery skips symlinked files and directories;
+repository reads and default cache paths enforce project containment.
 
 OSV is the only default network path and receives an ecosystem, package name,
 and exact version. Python compatibility analysis additionally accesses PyPI
 when enabled by `--compatibility` or configuration. Use `--offline` to disable
 both OSV and PyPI queries.
+
+Context checks can run installed Git and GitNexus executables. depcheck rejects
+executables inside the scanned repository and limits their runtime, but these
+helpers run with the host user's permissions and are not sandboxed by depcheck.
 
 ## Analysis limits
 
@@ -218,8 +274,19 @@ aliases, retain usage evidence. Local-module detection uses top-level names in
 the repository and its `src` directory; arbitrary Python path changes are not
 resolved.
 
-Unresolved npm `#` imports retain unknown usage evidence. Configure a scoped
-mapping when the alias points to a known dependency. Malformed dependency fields
+Exact `package.json` imports string keys support bare npm packages and subpaths,
+safely discovered local files, and bare Node builtins such as `"fs/promises"`.
+The target `"node:fs"` is invalid in that field, although source imports can use
+it directly. Conditions, arrays, nulls, wildcards, alias chains, and unsafe or
+absent local targets retain unknown usage with `mapping.alias-unsupported`.
+Scoped configured mappings take precedence. TypeScript paths and full Node
+resolution are not implemented.
+
+Installation aliases such as `"safe-name": "npm:lodash@4.17.20"` retain their
+local names for import matching and use the registry name for inventory,
+vulnerability queries, and SBOMs.
+
+Malformed dependency fields
 or lockfile structures make evidence incomplete. Security still checks known
 versions, but reports `security.collection-incomplete` if manifest or resolution
 coverage is incomplete.
@@ -232,11 +299,13 @@ selected evidence rather than reusing individual parsed files.
 Use `repository_context.runtime_capabilities` or a project's
 `supported_capabilities` to check which operations its ecosystem pack supports.
 The project's `capabilities` report the state of indexed evidence. Update previews
-support version entries in `requirements*.txt`; other targets return diagnostics.
+support version entries in `requirements*.txt` and explicitly selected static
+PEP 621 groups in `pyproject.toml`; other targets return diagnostics.
 
 ## Development
 
-Tests are grouped in five files under `test/`.
+Tests are grouped in five files under `test/`. Keep local reports, logs, and
+scratch fixtures under `.tmp/`; it is ignored by Git and dependency discovery.
 
 ```bash
 .venv/bin/pytest test -q
@@ -244,20 +313,30 @@ Tests are grouped in five files under `test/`.
 .venv/bin/ruff format --check depcheck test scripts/smoke_installed.py
 .venv/bin/mypy
 .venv/bin/python -m compileall -q depcheck test
-.venv/bin/python -m build
+.venv/bin/python -m build --outdir .tmp/dist
 .venv/bin/python -m pip check
 .venv/bin/uv lock --check
 ```
 
 CI also installs the built wheel without extras into a separate environment and
 runs `scripts/smoke_installed.py` to check the base CLI away from source imports.
+The wheel job covers Ubuntu, macOS, and Windows with Python 3.12. Run the same
+installation check locally with `python scripts/check_wheel_install.py --wheel <path-to-wheel>`.
 
 `skills/check-dependencies/evals/run_live.py` exercises the skill's MCP contracts
-offline using temporary repositories. Pass `--output /tmp/depcheck-live.json` to
+offline using temporary repositories. Pass `--output .tmp/depcheck-live.json` to
 record actual calls. CI runs it alongside the tests. The hand-authored
 `traces.example.json` checks the scorer's format and rules; it is not evidence
 that an agent followed the skill. Evaluate agent behavior separately with real
-tasks and recorded calls.
+tasks and recorded calls. `evals/cases.agent.json` defines three independent
+CLI tasks. `evals/record_cli.py` runs the installed CLI and records actual
+arguments, results, and exit codes. The recorder inserts `--root` as the CLI's
+repository argument: use `-- explain requests`, without repeating the path.
+Pair those records with the agent's answer
+and score them using `evals/score.py --cases evals/cases.agent.json`.
+Review pagination, qualified identities, uncertainty, and unchanged fixture
+files as well as the scorer result. Paths here are relative to
+`skills/check-dependencies/`.
 
 A repository benchmark fixture can be generated with
 `scripts/benchmark_monorepo.py`.

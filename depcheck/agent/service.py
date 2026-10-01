@@ -6,11 +6,17 @@ from typing import Any
 
 from packaging.utils import canonicalize_name
 
-from depcheck.compatibility.safe_updater import RequirementsUpdater
+from depcheck.compatibility.safe_updater import (
+    RequirementUpdatePlan,
+    RequirementsUpdater,
+)
+from depcheck.compatibility.pyproject_updater import PyprojectUpdater
+from depcheck.path_policy import require_within_project
 from depcheck.config import load_project_config
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
 from depcheck.indexing import RepositoryIndex, RepositoryIndexer
 from depcheck.ecosystems.python_manifest import PythonManifestCollector
+from depcheck.ecosystems.static import is_excluded
 
 from .gitnexus import GitNexusCompanion
 
@@ -156,10 +162,10 @@ class DependencyAgentService:
         )
         if "error" in explanation:
             return explanation
-        imports = explanation["imports"]
-        files = sorted({str(item["location"]["path"]) for item in imports})
+        usages = explanation["usages"]
+        files = sorted({str(item["location"]["path"]) for item in usages})
         scopes: dict[str, int] = {}
-        for item in imports:
+        for item in usages:
             scope = str(item["scope"])
             scopes[scope] = scopes.get(scope, 0) + 1
         return {
@@ -167,7 +173,7 @@ class DependencyAgentService:
             "project_id": explanation["project_id"],
             "ecosystem": explanation["ecosystem"],
             "package": explanation["package"],
-            "usage_count": len(imports),
+            "usage_count": len(usages),
             "files": files,
             "scopes": dict(sorted(scopes.items())),
             "finding_codes": sorted(
@@ -183,6 +189,8 @@ class DependencyAgentService:
         add_missing: bool = False,
         ecosystem: str | None = None,
         project_id: str | None = None,
+        target_file: str | None = None,
+        group: str | None = None,
     ) -> dict[str, Any]:
         if not updates:
             raise ValueError("updates must not be empty")
@@ -198,6 +206,8 @@ class DependencyAgentService:
         if len(normalized) != len(updates):
             raise ValueError("update names and specifiers must be non-empty")
 
+        if group is not None and target_file is None:
+            raise ValueError("group requires an explicit target_file")
         updater = RequirementsUpdater(self.project_root)
         plans: list[dict[str, Any]] = []
         supported_targets: set[str] = set()
@@ -205,7 +215,76 @@ class DependencyAgentService:
         reporter = PythonManifestCollector(
             self.project_root, config.excluded_directories
         )
-        for path in reporter.find_dependency_file():
+        discovered = tuple(reporter.find_dependency_file())
+        if target_file is not None:
+            requested = Path(target_file)
+            if requested.is_absolute():
+                raise ValueError("target_file must be relative to the repository")
+            target = require_within_project(
+                self.project_root,
+                self.project_root / requested,
+                operation="read explicit update target",
+            )
+            if is_excluded(requested, config.excluded_directories) or is_excluded(
+                target.relative_to(self.project_root), config.excluded_directories
+            ):
+                raise ValueError("target_file is excluded")
+            if not target.is_file():
+                raise ValueError("target_file must exist")
+            supported_name = target.name == "pyproject.toml" or (
+                target.name.startswith("requirements") and target.suffix == ".txt"
+            )
+            if not supported_name:
+                return self._update_result(
+                    ecosystem,
+                    project_id,
+                    diagnostics=[
+                        {
+                            "code": "update.unsupported-target",
+                            "severity": "error",
+                            "message": "Only pyproject.toml and requirements*.txt are preview targets",
+                        }
+                    ],
+                )
+            if target not in {path.resolve() for path in discovered}:
+                raise ValueError(
+                    "target_file is excluded or not a discovered Python manifest"
+                )
+            if target.name == "pyproject.toml":
+                if add_missing:
+                    return self._update_result(
+                        ecosystem,
+                        project_id,
+                        diagnostics=[
+                            {
+                                "code": "update.unsupported-target",
+                                "severity": "error",
+                                "message": "pyproject previews do not add missing dependencies",
+                            }
+                        ],
+                    )
+                preview = PyprojectUpdater(self.project_root).plan(
+                    target, normalized, group=group
+                )
+                if preview.plan is not None:
+                    plans.append(
+                        {
+                            **self._update_plan_payload(preview.plan),
+                            "groups": list(preview.groups),
+                        }
+                    )
+                return self._update_result(
+                    ecosystem,
+                    project_id,
+                    plans=plans,
+                    diagnostics=[
+                        item.to_dict(self.project_root) for item in preview.diagnostics
+                    ],
+                )
+            if group is not None:
+                raise ValueError("group is only supported for pyproject.toml")
+            discovered = (target,)
+        for path in discovered:
             if not path.name.startswith("requirements") or path.suffix != ".txt":
                 continue
             plan = updater.plan(path, normalized, add_missing=add_missing)
@@ -213,15 +292,7 @@ class DependencyAgentService:
             supported_targets.update(plan.added)
             if plan.updated_content == plan.original_content:
                 continue
-            plans.append(
-                {
-                    "file": self._relative(plan.file_path),
-                    "updated": plan.updated,
-                    "added": plan.added,
-                    "preview": plan.updated_content,
-                    "original_digest": plan.original_digest,
-                }
-            )
+            plans.append(self._update_plan_payload(plan))
         diagnostics = [
             item.to_dict(self.project_root) for item in reporter.discovery_diagnostics
         ]
@@ -236,13 +307,34 @@ class DependencyAgentService:
                     ),
                 }
             )
+        return self._update_result(
+            ecosystem, project_id, plans=plans, diagnostics=diagnostics
+        )
+
+    def _update_plan_payload(self, plan: RequirementUpdatePlan) -> dict[str, Any]:
+        return {
+            "file": self._relative(plan.file_path),
+            "updated": plan.updated,
+            "added": plan.added,
+            "preview": plan.updated_content,
+            "original_digest": plan.original_digest,
+        }
+
+    @staticmethod
+    def _update_result(
+        ecosystem: str | None,
+        project_id: str | None,
+        *,
+        plans: list[dict[str, Any]] | None = None,
+        diagnostics: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         return {
             "schema": "depcheck.agent.update-plan.v1",
             "read_only": True,
             "ecosystem": ecosystem or "PyPI",
             "project_id": project_id or "pypi:python:.",
-            "plans": plans,
-            "diagnostics": diagnostics,
+            "plans": plans if plans is not None else [],
+            "diagnostics": diagnostics if diagnostics is not None else [],
         }
 
     @staticmethod

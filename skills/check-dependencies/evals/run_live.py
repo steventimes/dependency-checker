@@ -1,7 +1,7 @@
 """Exercise real MCP contracts used by the skill; this does not grade agent prose.
 
 Run with a depcheck[agent] environment from the repository root:
-    python skills/check-dependencies/evals/run_live.py --output /tmp/depcheck-live.json
+    python skills/check-dependencies/evals/run_live.py --output .tmp/depcheck-live.json
 All fixtures are temporary, and every scan is offline.
 """
 
@@ -31,6 +31,12 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
             "pyproject.toml": '[project]\nname="app"\nversion="1"\n'
             'dependencies=["requests==2.31.0"]\n'
         },
+        "preview-ambiguous": {
+            "pyproject.toml": '[project]\ndependencies=["requests==1"]\n[project.optional-dependencies]\ntest=["requests==1"]\n'
+        },
+        "preview-url": {
+            "pyproject.toml": '[project]\ndependencies=["requests @ https://example.org/r.whl"]\n'
+        },
         "npm": {
             "package.json": '{"dependencies":{"lodash":"^4.17.0"}}',
             "app.js": "import lodash from 'lodash';\n",
@@ -49,6 +55,15 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
         "alias": {
             "package.json": '{"dependencies":{"lodash":"4.17.21"}}',
             "app.js": "import lodash from '#lodash';\n",
+        },
+        "alias-known": {
+            "package.json": '{"dependencies":{"lodash":"4.17.21","other":"1.0.0"},"imports":{"#alias":"lodash/fp"}}',
+            "app.js": "import a from '#alias';\n",
+        },
+        "tool": {
+            "requirements.txt": "ruff==0.11.0\n",
+            ".depcheck.toml": '[[tool-usage]]\necosystem="PyPI"\n'
+            'project-id="pypi:python:."\npackage="ruff"\nscope="test"\nreason="CI lint"\n',
         },
     }
     for folder, files in fixtures.items():
@@ -173,6 +188,52 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
                 "Preview changed the manifest",
             )
             passed.append("unsupported-preview-is-not-noop")
+            explicit = await call(
+                "plan_dependency_updates",
+                "preview",
+                updates={"requests": "2.32.4"},
+                target_file="pyproject.toml",
+                group="project",
+            )
+            check(explicit["plans"][0]["groups"] == ["project"], "Wrong explicit group")
+            check(
+                "2.32.4" in explicit["plans"][0]["preview"], "Missing pyproject preview"
+            )
+            passed.append("explicit-pyproject-preview")
+            explicit_noop = await call(
+                "plan_dependency_updates",
+                "preview",
+                updates={"requests": "2.31.0"},
+                target_file="pyproject.toml",
+                group="project",
+            )
+            check(
+                not explicit_noop["plans"] and not explicit_noop["diagnostics"],
+                "Pyproject noop failed",
+            )
+            passed.append("explicit-pyproject-noop")
+            for folder, code in [
+                ("preview-ambiguous", "update.ambiguous-target"),
+                ("preview-url", "update.unsupported-target"),
+            ]:
+                rejected = await call(
+                    "plan_dependency_updates",
+                    folder,
+                    updates={"requests": "2"},
+                    target_file="pyproject.toml",
+                )
+                check(
+                    not rejected["plans"]
+                    and rejected["diagnostics"][0]["code"] == code,
+                    "Incorrect pyproject rejection",
+                )
+                passed.append(folder)
+            for folder in ("preview", "preview-ambiguous", "preview-url"):
+                check(
+                    (root / folder / "pyproject.toml").read_bytes()
+                    == fixtures[folder]["pyproject.toml"].encode(),
+                    "Pyproject preview wrote target",
+                )
 
             noop = await call(
                 "plan_dependency_updates", "python", updates={"requests": "2.31.0"}
@@ -183,6 +244,21 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
             )
             passed.append("supported-preview-noop")
 
+            await call("scan_repository", "tool")
+            tool = await call("explain_dependency", "tool", package="ruff")
+            check(not tool["findings"], "Tool use reported as unused")
+            check(
+                not tool["imports"] and not tool["imported"],
+                "Tool use became an import",
+            )
+            check(
+                tool["usages"][0]["kind"] == "tool"
+                and tool["usages"][0]["mapping_confidence"] == "configured"
+                and tool["usages"][0]["mapping_reason"] == "CI lint",
+                "Tool explanation lost configured provenance",
+            )
+            passed.append("configured-tool-usage")
+
             (root / "python" / "requirements.txt").write_text("requests==2.32.4\n")
             stale = await call("repository_context", "python")
             check(stale["stale"], "Manifest edit did not stale the index")
@@ -190,6 +266,39 @@ async def exercise(root: Path, calls: list[dict], passed: list[str]) -> None:
             check(not refreshed["context"]["stale"], "Scan did not refresh the index")
             passed.append("refresh-after-manifest-change")
 
+            await call("scan_repository", "alias-known")
+            known = await call(
+                "explain_dependency",
+                "alias-known",
+                package="lodash",
+                ecosystem="npm",
+                project_id="npm:npm:.",
+            )
+            check(
+                known["usages"][0]["mapping_confidence"] == "exact",
+                "Known alias not exact",
+            )
+            original_alias = (root / "alias-known" / "package.json").read_text()
+            (root / "alias-known" / "package.json").write_text(
+                original_alias.replace("lodash/fp", "other")
+            )
+            check(
+                (await call("repository_context", "alias-known"))["stale"],
+                "Alias change did not invalidate index",
+            )
+            await call("index_repository", "alias-known")
+            changed_alias = await call(
+                "explain_dependency",
+                "alias-known",
+                package="other",
+                ecosystem="npm",
+                project_id="npm:npm:.",
+            )
+            check(
+                changed_alias["usages"][0]["reference"] == "#alias",
+                "Alias refresh lost usage",
+            )
+            passed.append("known-alias-and-refresh")
             for fixture in ("dynamic", "alias"):
                 partial = await call("scan_repository", fixture)
                 check(

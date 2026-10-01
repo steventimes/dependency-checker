@@ -1039,7 +1039,8 @@ class IndexStore:
                 "location": _row_location(row, "source_path"),
             }
             record["usages"].append(usage)
-            record["imports"].append(usage)
+            if usage["kind"] != "tool":
+                record["imports"].append(usage)
 
         findings_by_identity: dict[
             tuple[str, str, str],
@@ -1069,7 +1070,7 @@ class IndexStore:
             record["resolved_versions"] = versions
             record["resolved_version"] = versions[0] if len(versions) == 1 else None
             record["declared"] = bool(record["declarations"])
-            record["imported"] = bool(record["usages"])
+            record["imported"] = bool(record["imports"])
             record["findings"] = findings_by_identity.get(key, [])
             if not record["findings"] and record["ecosystem"].lower() == "pypi":
                 record["findings"] = legacy_python_findings.get(

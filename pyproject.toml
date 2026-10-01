@@ -23,7 +23,9 @@ classifiers = [
 ]
 dependencies = [
     "packaging>=23.2",
+    "PyYAML>=6.0.2,<7",
     "requests>=2.31",
+    "tomlkit>=0.13,<1",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +39,7 @@ test = [
     "pytest>=8,<9",
     "ruff>=0.6,<1",
     "setuptools==80.9.0",
+    "types-PyYAML>=6,<7",
     "uv==0.12.4",
 ]
 
@@ -56,12 +59,17 @@ exclude = ["test*"]
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+cache-dir = ".tmp/ruff-cache"
+
+[tool.pytest.ini_options]
+cache_dir = ".tmp/pytest-cache"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
 
 [tool.mypy]
 python_version = "3.11"
+cache_dir = ".tmp/mypy-cache"
 files = ["depcheck"]
 check_untyped_defs = true
 follow_imports = "skip"

@@ -1,5 +1,7 @@
+from depcheck.model import MappingConfidence
 import pytest
 import json
+import yaml
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,6 +9,212 @@ from depcheck.ecosystems.base import ProviderContext
 from depcheck.ecosystems.cpp import create_conan_pack, create_vcpkg_pack
 from depcheck.ecosystems.java import create_maven_pack
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+
+
+@pytest.mark.parametrize("fixture", [1, 2, 3])
+def test_pnpm_real_locks_preserve_project_versions_and_edges(tmp_path, fixture):
+    from depcheck.agent import DependencyAgentService
+    from depcheck.output import build_cyclonedx
+
+    text = (
+        Path(__file__).parent / "fixtures/pnpm" / f"pnpm-real-{fixture}.yaml"
+    ).read_text()
+    document = yaml.safe_load(text)
+    (tmp_path / "pnpm-lock.yaml").write_text(text)
+    for importer, entry in document["importers"].items():
+        project = tmp_path / importer
+        project.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            section: {name: value["specifier"] for name, value in entries.items()}
+            for section, entries in entry.items()
+        }
+        (project / "package.json").write_text(json.dumps(manifest))
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    bundles = {b.project.root.as_posix(): b for b in result.bundles}
+    if fixture == 1:
+        assert {r.package.name for r in bundles["app-a"].resolved} == {"is-positive"}
+        assert any(
+            d.code == "lock.unsupported" and "link:" in d.message
+            for d in result.diagnostics
+        )
+    elif fixture == 2:
+        assert len(bundles["."].resolved) == 7
+        peer = next(
+            r for r in bundles["."].resolved if r.package.name == "ajv-keywords"
+        )
+        assert peer.instance_id.endswith("(ajv@6.10.2)")
+        assert [(e.package.name, e.version) for e in peer.dependency_links] == [
+            ("ajv", "6.10.2")
+        ]
+    else:
+        for importer, version in [
+            ("packages/bar", "6.10.2"),
+            ("packages/foo", "6.12.6"),
+        ]:
+            assert {
+                r.version for r in bundles[importer].resolved if r.package.name == "ajv"
+            } == {version}
+    sbom = build_cyclonedx(result)
+    refs = {component["bom-ref"] for component in sbom["components"]}
+    assert all(
+        target in refs for edge in sbom["dependencies"] for target in edge["dependsOn"]
+    )
+    service = DependencyAgentService(tmp_path)
+    selected = next(b.project.project_id for b in result.bundles if b.resolved)
+    service.index_repository(project_ids=(selected,))
+    assert service.repository_context()["stale"] is False
+    (tmp_path / "pnpm-lock.yaml").write_text(text + "\n# changed\n")
+    assert service.repository_context()["stale"] is True
+
+
+@pytest.mark.parametrize("lock_kind", ["npm", "legacy", "pnpm"])
+def test_installation_alias_queries_real_package_and_maps_usage(tmp_path, lock_kind):
+    from depcheck.output import build_cyclonedx
+
+    class CapturingOSV:
+        def __init__(self):
+            self.calls = []
+
+        def scan_ecosystem(self, packages, ecosystem):
+            self.calls.append((ecosystem, dict(packages)))
+            return SimpleNamespace(
+                vulnerabilities={}, diagnostics=(), queried=dict(packages)
+            )
+
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"safe-name": "npm:lodash@4.17.20"}})
+    )
+    (tmp_path / "app.js").write_text("import a from 'safe-name/fp';\n")
+    if lock_kind == "npm":
+        (tmp_path / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "packages": {
+                        "node_modules/safe-name": {
+                            "name": "lodash",
+                            "version": "4.17.20",
+                        },
+                    }
+                }
+            )
+        )
+    elif lock_kind == "legacy":
+        (tmp_path / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "dependencies": {
+                        "safe-name": {"version": "npm:lodash@4.17.20"},
+                    }
+                }
+            )
+        )
+    else:
+        (tmp_path / "pnpm-lock.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "lockfileVersion": "9.0",
+                    "importers": {
+                        ".": {
+                            "dependencies": {
+                                "safe-name": {
+                                    "specifier": "npm:lodash@4.17.20",
+                                    "version": "lodash@4.17.20",
+                                }
+                            }
+                        }
+                    },
+                    "packages": {
+                        "lodash@4.17.20": {
+                            "resolution": {"integrity": "sha512-fixture"}
+                        },
+                        "on@1.0.0": {"resolution": {"integrity": "sha512-optional"}},
+                    },
+                    "snapshots": {
+                        "lodash@4.17.20": {"optionalDependencies": {"on": "1.0.0"}},
+                        "on@1.0.0": {},
+                    },
+                },
+                sort_keys=False,
+            )
+        )
+    osv = CapturingOSV()
+    result = RepositoryScanner(osv_client=osv).scan(tmp_path)
+    assert any(packages.get("lodash") == "4.17.20" for _, packages in osv.calls)
+    assert all("safe-name" not in packages for _, packages in osv.calls)
+    assert result.bundles[0].usages[0].mapped_package.name == "lodash"
+    assert result.capability("security").complete
+    assert not result.findings
+    assert any(c["name"] == "lodash" for c in build_cyclonedx(result)["components"])
+    if lock_kind == "pnpm":
+        parent = next(r for r in result.bundles[0].resolved if r.direct)
+        assert parent.dependency_links[0].package.name == "on"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "lockfileVersion: '6.0'\n",
+        "lockfileVersion: '9.0'\nlockfileVersion: '9.0'\n",
+        "x: &loop [*loop]\n",
+        "x: !!python/object/apply:os.system ['echo unexpected']\n",
+        "x: " + "[" * 70 + "0" + "]" * 70,
+    ],
+)
+def test_unsafe_or_unsupported_pnpm_is_incomplete(tmp_path, text):
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "pnpm-lock.yaml").write_text(text)
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert any(
+        d.code in {"lock.invalid", "lock.unsupported"} for d in result.diagnostics
+    )
+    assert not next(
+        c for c in result.bundles[0].capabilities if c.name == "resolution"
+    ).complete
+
+
+def test_small_manifest_expansion_is_bounded(tmp_path):
+    from depcheck.analyzer.pyproject_parser import PyProjectParser
+
+    (tmp_path / "pom.xml").write_text(
+        "<project><properties><a>${a}${a}</a></properties></project>"
+    )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert any(
+        d.code == "manifest.invalid" and "cycle" in d.message
+        for d in result.diagnostics
+    )
+
+    groups = ["[dependency-groups]", 'g0 = ["requests==2"]']
+    groups.extend(
+        f'g{i} = [{{include-group="g{i - 1}"}}, {{include-group="g{i - 1}"}}]'
+        for i in range(1, 40)
+    )
+    (tmp_path / "pyproject.toml").write_text("\n".join(groups))
+    parsed = PyProjectParser(tmp_path / "pyproject.toml").parse_detailed()
+    assert len(parsed.declarations) == 40
+    assert not parsed.diagnostics
+
+    repeated = " || ".join(["*"] * 100)
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                section: {"example": repeated}
+                for section in (
+                    "dependencies",
+                    "devDependencies",
+                    "optionalDependencies",
+                    "peerDependencies",
+                )
+            }
+        )
+    )
+    result = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, enabled_ecosystems=("npm",))
+    )
+    assert not any(f.code == "declaration.conflict" for f in result.findings)
+    assert not any(
+        d.code == "analysis.constraint-intersection-unknown" for d in result.diagnostics
+    )
 
 
 def test_python_manifest_usage_and_resolution_share_one_identity(
@@ -34,6 +242,83 @@ def test_python_manifest_usage_and_resolution_share_one_identity(
         None,
     )
     assert bundle.usages[0].mapped_package == bundle.resolved[0].package
+
+
+def test_tool_usage_preserves_inventory_and_unused_candidates(tmp_path: Path) -> None:
+    from depcheck.config import load_project_config
+    from depcheck.model import MappingConfidence
+
+    (tmp_path / "requirements.txt").write_text("ruff==0.11.0\nrequests==2.31.0\n")
+    (tmp_path / ".depcheck.toml").write_text(
+        '[[tool-usage]]\necosystem="PyPI"\nproject-id="pypi:python:."\n'
+        'package="ruff"\nscope="test"\nreason="CI lint command"\n'
+    )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert {
+        f.package.name for f in result.findings if f.code == "dependency.unused"
+    } == {"requests"}
+    bundle = result.bundles[0]
+    assert {d.package.name for d in bundle.declarations} == {"ruff", "requests"}
+    assert {d.package.name for d in bundle.resolved} == {"ruff", "requests"}
+    usage = bundle.usages[0]
+    assert usage.kind == "tool"
+    assert usage.mapping_confidence is MappingConfidence.CONFIGURED
+    assert usage.mapping_reason == "CI lint command"
+    assert usage.source.path == tmp_path / ".depcheck.toml"
+    from depcheck.ecosystems.tool_usage import apply_tool_usage
+
+    assert (
+        apply_tool_usage(bundle, load_project_config(tmp_path).tool_usage, tmp_path)
+        == bundle
+    )
+
+
+def test_tool_usage_does_not_cross_project_or_ecosystem(tmp_path: Path) -> None:
+    for directory in ("one", "two"):
+        project = tmp_path / directory
+        project.mkdir()
+        (project / "package.json").write_text('{"dependencies":{"shared":"1.0.0"}}')
+    (tmp_path / "requirements.txt").write_text("shared==1.0.0\n")
+    (tmp_path / ".depcheck.toml").write_text(
+        '[[tool-usage]]\necosystem="npm"\nproject-id="npm:npm:one"\n'
+        'package="shared"\nscope="runtime"\nreason="Entry point"\n'
+    )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    unused = {
+        f.package.project_id for f in result.findings if f.code == "dependency.unused"
+    }
+    assert unused == {"npm:npm:two", "pypi:python:."}
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_tool_usage_unmatched_build_and_incomplete_boundaries(
+    tmp_path: Path, dynamic: bool
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="demo"\nversion="1"\ndependencies=["requests==2.31.0"]\n'
+        '[build-system]\nrequires=["setuptools==80.9.0"]\n'
+    )
+    (tmp_path / ".depcheck.toml").write_text(
+        "".join(
+            '[[tool-usage]]\necosystem="PyPI"\nproject-id="pypi:python:."\n'
+            f'package="{package}"\nscope="test"\nreason="CI tool"\n'
+            for package in ("setuptools", "absent")
+        )
+    )
+    if dynamic:
+        (tmp_path / "app.py").write_text(
+            "import importlib\nimportlib.import_module(name)\n"
+        )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    unmatched = [
+        d for d in result.diagnostics if d.code == "config.tool-usage-unmatched"
+    ]
+    assert len(unmatched) == 1 and "absent" in unmatched[0].message
+    assert not any(f.code == "dependency.missing" for f in result.findings)
+    assert not result.bundles[0].usages
+    if dynamic:
+        assert result.capability("dependency_hygiene").state == "incomplete"
+        assert not any(f.code == "dependency.unused" for f in result.findings)
 
 
 def test_same_dependency_in_different_python_extras_is_not_a_duplicate(
@@ -482,3 +767,177 @@ def test_external_lock_symlink_is_incomplete(
     )
     assert not result.capability("dependency_hygiene").complete
     assert any("symlink" in d.message for d in result.diagnostics)
+
+
+def test_package_imports_map_external_and_local_targets(tmp_path):
+    import json
+
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "dependencies": {"lodash": "1.0.0", "@scope/pkg": "1.0.0"},
+                "imports": {
+                    "#format": "lodash/fp",
+                    "#scoped": "@scope/pkg/sub",
+                    "#util": "./util.js",
+                    "#fs": "fs",
+                },
+            }
+        )
+    )
+    (tmp_path / "app.js").write_text(
+        "import a from '#format';\nimport b from '#scoped';\nimport c from '#util';\nimport fs from '#fs';\n"
+    )
+    (tmp_path / "util.js").write_text("import a from 'lodash';\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert result.capability("dependency_hygiene").complete
+    usages = result.bundles[0].usages
+    assert {(u.reference, u.mapped_package.name) for u in usages} == {
+        ("#format", "lodash"),
+        ("#scoped", "@scope/pkg"),
+        ("lodash", "lodash"),
+    }
+    alias = next(u for u in usages if u.reference == "#format")
+    assert alias.mapping_confidence is MappingConfidence.EXACT
+    assert (
+        "package.json" in alias.mapping_reason and "lodash/fp" in alias.mapping_reason
+    )
+    assert alias.source.line == 1
+    assert not result.findings
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"default": "lodash"},
+        ["lodash"],
+        None,
+        "lodash/*",
+        "#other",
+        "./missing.js",
+        "https://example.org/a",
+        "../outside.js",
+        "/absolute.js",
+        "",
+        "lodash?x",
+        "./util.js?x",
+    ],
+)
+def test_package_imports_unknown_targets_keep_incomplete_evidence(tmp_path, target):
+    import json
+
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"lodash": "1"}, "imports": {"#alias": target}})
+    )
+    (tmp_path / "app.js").write_text("import a from '#alias';\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert result.bundles[0].usages[0].mapping_confidence is MappingConfidence.UNKNOWN
+    assert any(d.code == "mapping.alias-unsupported" for d in result.diagnostics)
+    assert not any(f.code == "dependency.unused" for f in result.findings)
+
+
+def test_package_imports_reject_symlink_and_child_project(tmp_path):
+    import json
+
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside.js"
+    outside.write_text("")
+    (root / "linked.js").symlink_to(outside)
+    (root / "loop.js").symlink_to("loop.js")
+    (root / "child").mkdir()
+    (root / "child/package.json").write_text("{}")
+    (root / "child/util.js").write_text("")
+    for target in ["./linked.js", "./child/util.js", "./loop.js"]:
+        (root / "package.json").write_text(json.dumps({"imports": {"#alias": target}}))
+        (root / "app.js").write_text("import a from '#alias';\n")
+        result = RepositoryScanner().scan(root, RepositoryScanOptions(security=False))
+        bundle = next(b for b in result.bundles if b.project.project_id == "npm:npm:.")
+        assert bundle.usages[0].mapping_confidence is MappingConfidence.UNKNOWN
+
+
+def test_scoped_mapping_overrides_package_imports(tmp_path):
+    (tmp_path / "package.json").write_text(
+        '{"dependencies":{"lodash":"1"},"imports":{"#alias":"other"}}'
+    )
+    (tmp_path / "app.js").write_text("import a from '#alias';\n")
+    result = RepositoryScanner().scan(
+        tmp_path,
+        RepositoryScanOptions(security=False, import_mapping={"#alias": "lodash"}),
+    )
+    usage = result.bundles[0].usages[0]
+    assert usage.mapped_package.name == "lodash"
+    assert usage.mapping_confidence is MappingConfidence.CONFIGURED
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "./src/../util.js",
+        "node:fs/../../lodash",
+        "@scope/../other",
+        "lodash/../other",
+        "lodash/node_modules/other",
+        "./node_modules/../util.js",
+        "./src/%2e%2e/util.js",
+    ],
+)
+def test_package_imports_invalid_path_segments_remain_unknown(tmp_path, target):
+    import json
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "util.js").write_text("")
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"lodash": "1.0.0"}, "imports": {"#alias": target}})
+    )
+    (tmp_path / "app.js").write_text("import a from '#alias';\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert any(d.code == "mapping.alias-unsupported" for d in result.diagnostics)
+    assert result.bundles[0].usages[0].mapping_confidence is MappingConfidence.UNKNOWN
+    assert not any(f.code == "dependency.unused" for f in result.findings)
+
+
+@pytest.mark.parametrize(
+    ("reference", "target"),
+    [
+        ("#", "./util.js"),
+        ("#util/", "./util.js"),
+        ("#util", "node:fs"),
+        ("#util", "./NODE_MODULES/util.js"),
+        ("#util", "./bad\x00.js"),
+    ],
+)
+def test_invalid_package_imports_never_report_complete(tmp_path, reference, target):
+    (tmp_path / "NODE_MODULES").mkdir()
+    for path in [tmp_path / "util.js", tmp_path / "NODE_MODULES/util.js"]:
+        path.write_text("")
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {"imports": {reference: target}, "dependencies": {"lodash": "1.0.0"}}
+        )
+    )
+    (tmp_path / "app.js").write_text(f"import {reference!r};\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert any(d.code == "mapping.alias-unsupported" for d in result.diagnostics)
+    assert result.bundles[0].usages[0].mapping_confidence is MappingConfidence.UNKNOWN
+    assert not any(f.code == "dependency.unused" for f in result.findings)
+
+
+@pytest.mark.parametrize("aliased", [False, True])
+def test_package_import_builtin_requires_an_exact_module_name(tmp_path, aliased):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"imports": {"#builtin": "fs/promises", "#package": "fs/extra"}})
+    )
+    builtin, external = (
+        ("#builtin", "#package") if aliased else ("fs/promises", "fs/extra")
+    )
+    (tmp_path / "app.js").write_text(f"import {builtin!r}; import {external!r};\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert result.capability("dependency_hygiene").complete
+    assert [(u.reference, u.mapped_package.name) for u in result.bundles[0].usages] == [
+        (external, "fs")
+    ]
+    assert [f.code for f in result.findings] == ["dependency.missing"]

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from collections import Counter
 import json
 import random
+import platform
+import subprocess
+import shutil
+import sys
 import resource
 import tempfile
 import time
@@ -11,7 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
-from depcheck.indexing import RepositoryIndexer
+from depcheck.indexing import RepositoryIndexer, RepositoryIndex
 from depcheck.security.osv_client import OSVScanResult
 
 
@@ -48,6 +53,84 @@ def build_fixture(
         _go_project(root / f"go-{index}", files_per_project, suffix)
         _maven_project(root / f"java-{index}", files_per_project, suffix)
         _conan_project(root / f"cpp-{index}", files_per_project)
+
+
+def _source_digest() -> str:
+    checkout = Path(__file__).resolve().parents[1]
+    paths = sorted(
+        [
+            path
+            for folder in ("depcheck", "scripts")
+            for path in (checkout / folder).rglob("*.py")
+        ]
+        + [checkout / "pyproject.toml", checkout / "uv.lock"]
+    )
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.relative_to(checkout).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _stable_index(root: Path) -> str:
+    index = RepositoryIndex(root)
+    payload = {
+        "dependencies": index.dependencies(limit=100000),
+        "findings": index.findings(limit=100000),
+        "projects": index.context()["projects"],
+    }
+    return json.dumps(payload, sort_keys=True).replace(
+        root.resolve().as_posix(), "<root>"
+    )
+
+
+def measure_mutation(root: Path, ecosystem: str) -> dict[str, Any]:
+    """Compare one incremental refresh against an independent full rebuild."""
+    indexer = RepositoryIndexer()
+    indexer.refresh(root)
+    if ecosystem == "PyPI":
+        source = root / "python-0" / "module_0.py"
+        content = "import benchmarknewpackage\n"
+    elif ecosystem == "npm":
+        source = root / "web-0" / "module_0.js"
+        content = "import value from 'benchmarknewpackage';\n"
+    else:
+        raise ValueError("mutation ecosystem must be PyPI or npm")
+    source.write_text(content, encoding="utf-8")
+    started = time.perf_counter()
+    result = indexer.refresh(root)
+    seconds = time.perf_counter() - started
+    stable = _stable_index(root)
+    with tempfile.TemporaryDirectory(prefix="depcheck-benchmark-rebuild-") as directory:
+        rebuilt_root = Path(directory) / "fixture"
+        shutil.copytree(root, rebuilt_root, ignore=shutil.ignore_patterns(".depcheck"))
+        indexer.refresh(rebuilt_root)
+        equivalent = stable == _stable_index(rebuilt_root)
+    if not equivalent:
+        raise RuntimeError(f"{ecosystem} mutation refresh differs from full rebuild")
+    changed_usage = any(
+        record["package"] == "benchmarknewpackage" and record["usages"]
+        for record in RepositoryIndex(root).dependencies(search="benchmarknewpackage")
+    )
+    if not changed_usage:
+        raise RuntimeError("mutation did not produce its expected new usage evidence")
+    return {
+        "ecosystem": ecosystem,
+        "wall_seconds": seconds,
+        "status": result.status,
+        "changed_reference": "benchmarknewpackage",
+        "changed_usage_detected": changed_usage,
+        "rebuild_equivalent": equivalent,
+        "counters": {
+            "scanned_python_files": result.scanned_python_files,
+            "reused_python_files": result.reused_python_files,
+            "parsed_manifest_files": result.parsed_manifest_files,
+            "reused_manifest_files": result.reused_manifest_files,
+            "npm_parse_reuse": "not available",
+        },
+    }
 
 
 def run_benchmark(
@@ -133,10 +216,36 @@ def run_benchmark(
         reuse_denominator = (
             hot_reused + hot.scanned_python_files + hot.parsed_manifest_files
         )
+        mutations = {}
+        for ecosystem in ("PyPI", "npm"):
+            with tempfile.TemporaryDirectory(
+                prefix="depcheck-benchmark-mutation-"
+            ) as mutation_dir:
+                mutation_root = Path(mutation_dir)
+                build_fixture(
+                    mutation_root,
+                    projects=projects,
+                    files_per_project=files_per_project,
+                    seed=seed,
+                    depth=depth,
+                )
+                mutations[ecosystem] = measure_mutation(mutation_root, ecosystem)
         peak_rss_kb, peak_rss_source = _peak_rss()
 
         return {
             "schema": "depcheck.benchmark.v1",
+            "environment": {
+                "source_digest": _source_digest(),
+                "machine": platform.machine(),
+                "os": platform.platform(),
+                "python": sys.version.split()[0],
+                "head": subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=Path(__file__).resolve().parents[1],
+                    text=True,
+                ).strip(),
+            },
+            "mutation_refresh": mutations,
             "config": {
                 "seed": seed,
                 "depth": depth,
@@ -160,18 +269,24 @@ def run_benchmark(
                 "process_peak_rss_kb": peak_rss_kb,
                 "process_peak_rss_source": peak_rss_source,
                 "osv_batches": len(osv.calls),
+                "osv_measurement": "offline simulated request count; no service latency",
                 "npm_duplicate_version_packages": npm_duplicate_versions,
                 "npm_dependency_edges": npm_dependency_edges,
             },
             "index": {
+                "counter_scope": "Python source/manifests only; other ecosystem parse reuse counts not available",
                 "cold": {
                     "wall_seconds": cold_seconds,
                     "scanned_files": cold_scanned,
+                    "python_source_files": cold.scanned_python_files,
+                    "python_manifest_files": cold.parsed_manifest_files,
                     "status": cold.status,
                 },
                 "hot": {
                     "wall_seconds": hot_seconds,
                     "reused_files": hot_reused,
+                    "python_source_files_reused": hot.reused_python_files,
+                    "python_manifest_files_reused": hot.reused_manifest_files,
                     "status": hot.status,
                 },
                 "reuse_ratio": (

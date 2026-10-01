@@ -164,6 +164,81 @@ def test_policy_exemptions_apply_to_qualified_findings() -> None:
     assert evaluation.should_fail() is False
 
 
+@pytest.mark.parametrize(
+    "override,remaining",
+    [
+        ({}, 1),
+        ({"expires_at": "2026-08-16"}, 2),
+        ({"project_id": "npm:npm:other"}, 2),
+        ({"ecosystem": "PyPI"}, 2),
+        ({"risk": "missing"}, 2),
+    ],
+)
+def test_unused_exemption_keeps_raw_finding_and_security_evidence(
+    override: dict, remaining: int
+) -> None:
+    result = sample_result()
+    vulnerability = replace(
+        result.findings[0], code="security.vulnerability", severity="error"
+    )
+    result = replace(result, findings=(*result.findings, vulnerability))
+    sbom_before = build_cyclonedx(result)
+    exemption = {
+        "risk": "unused",
+        "package": "app-lib",
+        "ecosystem": "npm",
+        "project_id": "npm:npm:.",
+        "reason": "Entry point migration",
+        "owner": "platform",
+        "expires_at": "2026-09-01",
+        **override,
+    }
+    evaluated = evaluate_policy(
+        result,
+        {"fail_on": ["vuln"], "exemptions": [exemption]},
+        today=date(2026, 8, 17),
+    )
+    assert len(evaluated.effective_findings) == remaining
+    assert vulnerability in evaluated.effective_findings
+    assert evaluated.should_fail()
+    assert [f.code for f in result.findings] == [
+        "dependency.unused",
+        "security.vulnerability",
+    ]
+    sbom_after = build_cyclonedx(evaluated.result)
+    assert sbom_before["components"] == sbom_after["components"]
+    assert sbom_before["dependencies"] == sbom_after["dependencies"]
+    assert evaluated.result.capability("security").complete
+
+
+def test_tool_usage_preserves_security_coordinates_and_sbom(tmp_path: Path) -> None:
+    from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+    from depcheck.security.osv_client import OSVScanResult
+
+    class OfflineOSV:
+        def scan(self, packages):
+            return self.scan_ecosystem(packages, "PyPI")
+
+        def scan_ecosystem(self, packages, ecosystem):
+            assert (ecosystem, packages) == ("PyPI", {"ruff": "0.11.0"})
+            return OSVScanResult({}, (), dict(packages))
+
+    (tmp_path / "requirements.txt").write_text("ruff==0.11.0\n")
+    scanner = RepositoryScanner(osv_client=OfflineOSV())
+    before = scanner.scan(tmp_path, RepositoryScanOptions(security=True))
+    (tmp_path / ".depcheck.toml").write_text(
+        '[[tool-usage]]\necosystem="PyPI"\nproject-id="pypi:python:."\n'
+        'package="ruff"\nscope="test"\nreason="Lint"\n'
+    )
+    after = scanner.scan(tmp_path, RepositoryScanOptions(security=True))
+    assert any(f.code == "dependency.unused" for f in before.findings)
+    assert not any(f.code == "dependency.unused" for f in after.findings)
+    first, second = build_cyclonedx(before), build_cyclonedx(after)
+    assert first["components"] == second["components"]
+    assert first["dependencies"] == second["dependencies"]
+    assert after.capability("security").state == "complete"
+
+
 def test_sbom_references_are_unique_across_projects() -> None:
     first = sample_result()
     bundle = first.bundles[0]

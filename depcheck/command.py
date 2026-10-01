@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     update = commands.add_parser(
         "update",
-        help="Preview Python requirements updates without writing",
+        help="Preview Python dependency updates without writing",
     )
     _root_argument(update)
     update.add_argument(
@@ -102,6 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PACKAGE=SPECIFIER",
     )
     update.add_argument("--add-missing", action="store_true")
+    update.add_argument("--file", dest="target_file")
+    update.add_argument("--group")
     _identity_options(update)
 
     doctor = commands.add_parser("doctor", help="Inspect local integration state")
@@ -243,6 +245,8 @@ def _service_command(
         return service.plan_dependency_updates(
             _parse_updates(arguments.updates, option="update"),
             add_missing=arguments.add_missing,
+            target_file=arguments.target_file,
+            group=arguments.group,
             ecosystem=arguments.ecosystem,
             project_id=arguments.project_id,
         )
@@ -269,6 +273,12 @@ def _parse_updates(
         name, separator, specifier = value.partition("=")
         if not separator or not name.strip() or not specifier.strip():
             raise ValueError(f"{option} values must use PACKAGE=SPECIFIER")
+        if (
+            option == "update"
+            and specifier.startswith("=")
+            and not specifier.startswith("==")
+        ):
+            specifier = "=" + specifier
         parsed[name.strip()] = specifier.strip()
     return parsed
 

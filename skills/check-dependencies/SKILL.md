@@ -54,12 +54,21 @@ change source or manifests. The tool annotations describe these side effects.
    `explain_dependency` for usage locations and mapping confidence. No observed
    imports is a removal candidate, not proof of non-use: entry points, plugins,
    dynamic imports, and deployment configuration may need inspection.
-7. `plan_dependency_updates` previews Python `requirements*.txt` version entries
-   only. The `update_preview` capability does not promise support for every
-   Python manifest. `capability.unsupported` or `update.unsupported-target`
-   means that target was not planned; report partial success per target. Empty
-   `plans` with no diagnostics means no changes were needed. Previews neither
-   edit files nor verify that an upgrade is compatible.
+   Read `usages` as well as `imports`: a `kind: "tool"` entry with
+   `mapping_confidence: "configured"` records a scoped user declaration in
+   `.depcheck.toml`. Preserve its reason and location when explaining use;
+   do not describe it as an observed import or command execution. Impact counts
+   both source and tool usages. Use existing policy exemptions for temporary
+   finding exceptions; `ignore-packages` removes dependency evidence from
+   inventory, security checks, and SBOMs.
+7. `plan_dependency_updates` defaults to Python `requirements*.txt` version
+   entries. For static PEP 621 dependencies, specify `target_file` and determine
+   `group` first: `project` or `optional:NAME`. Omit group only when each requested
+   package has one group. Report `update.ambiguous-target` rather than guessing.
+   Unsupported targets return `update.unsupported-target`; invalid targets
+   return `update.invalid-target`. Read both plans and diagnostics for partial
+   results. Empty plans without diagnostics means no changes were needed.
+   Previews never edit manifests/locks, apply upgrades, or establish compatibility.
 
 ## CLI fallback
 
@@ -76,6 +85,15 @@ explain, impact, and update print JSON without a format flag.
 | `explain_dependency` | `depcheck explain "<root>" requests --ecosystem PyPI --project 'pypi:python:.'` |
 | `dependency_impact` | `depcheck impact "<root>" requests --ecosystem PyPI --project 'pypi:python:.'` |
 | `plan_dependency_updates` | `depcheck update "<root>" 'requests=2.32.4' --ecosystem PyPI --project 'pypi:python:.'` |
+
+For an explicit pyproject preview, use
+`depcheck update "<root>" 'requests==2.32.4' --file pyproject.toml --group project`;
+optional groups use
+`--group optional:NAME`. Without `--file`, keep the default requirements route.
+
+CLI query text is an optional positional argument, not a `--package` flag.
+It uses substring matching, not glob patterns: to list `package-*`, use
+`depcheck query "<root>" package- --limit 20 --offset 0` and follow pagination.
 
 CLI `scan` does not refresh the index. Add `--ecosystem`/`--project` to queries
 when the identity is known; filter index/scan only when the task asks for that
@@ -100,9 +118,27 @@ and never describe a skipped or incomplete security capability as safe.
 PyPI, npm, Go, and Maven have OSV coordinate support. Conan and vcpkg currently
 return an explicit unsupported-security diagnostic.
 
-Treat yarn/pnpm locks, dynamic Gradle or Conan expressions, and unknown
-Java/C++ namespace ownership as incomplete or low-confidence evidence. Do not
+Treat yarn locks, unsupported pnpm resolutions, dynamic Gradle or Conan
+expressions, and unknown Java/C++ namespace ownership as incomplete or
+low-confidence evidence. Do not
 turn those limitations into confident removal, upgrade, or safety claims.
+
+Exact `package.json` imports string keys can map to bare npm package targets,
+explicit safely discovered local files, or bare Node builtins such as `"fs"`
+and `"fs/promises"`. An imports target of `"node:fs"` is invalid; direct source
+imports using that specifier are valid. Package targets have
+exact confidence and retain their package.json reason; local/builtin aliases
+are not external dependencies. Conditions, arrays, nulls, wildcard patterns,
+alias chains, missing/unsafe local files and unsupported targets produce
+`mapping.alias-unsupported` and leave usage incomplete. Scoped configured
+mappings take precedence. TypeScript paths and full Node resolution are not implemented.
+
+pnpm v9 locks provide registry versions and instance edges per workspace importer,
+including optional dependencies and peer instances. Other lock versions and
+local, file, Git, or URL resolutions leave resolution incomplete. Check lock
+diagnostics before claiming full coverage. npm installation aliases retain
+their local import names but use the real registry identity for inventory,
+OSV, and SBOMs; do not suggest installing the alias name as a separate package.
 
 Non-literal Python module loads and unresolved npm `#` imports also leave
 usage incomplete. Use a scoped npm mapping only when the alias's dependency
@@ -121,6 +157,11 @@ Continue with depcheck's dependency evidence when GitNexus is unavailable. Do
 not install or run `npx` implicitly.
 
 ## Reporting
+
+Report task completion separately from individual capability results. If the
+user asks whether dependencies are safe and security was skipped, the overall
+answer is incomplete even when hygiene and policy pass. An inventory-only task
+can be complete without a security scan.
 
 - Preserve the stable identity `(project_id, ecosystem, package)` and PURL when
   present.

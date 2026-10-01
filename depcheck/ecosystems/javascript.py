@@ -3,9 +3,18 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote
 
 from depcheck.model import Diagnostic, SourceLocation
+from depcheck.ecosystems.javascript_aliases import (
+    AliasResolution,
+    resolve_package_import,
+)
+from depcheck.ecosystems.javascript_packages import (
+    dependency_identity,
+    package_ref as _package_ref,
+    registry_name,
+)
+from depcheck.ecosystems.javascript_pnpm import collect_pnpm_lock
 from depcheck.ecosystems.base import EcosystemPack, ProviderContext
 from depcheck.model import (
     Capability,
@@ -13,7 +22,6 @@ from depcheck.model import (
     DependencyDeclaration,
     EvidenceBundle,
     MappingConfidence,
-    PackageRef,
     ProjectUnit,
     ResolvedDependency,
     ResolvedDependencyLink,
@@ -44,6 +52,7 @@ _DEPENDENCY_SECTIONS = (
 _NODE_BUILTINS = frozenset(
     {
         "assert",
+        "assert/strict",
         "async_hooks",
         "buffer",
         "child_process",
@@ -53,30 +62,41 @@ _NODE_BUILTINS = frozenset(
         "dgram",
         "diagnostics_channel",
         "dns",
+        "dns/promises",
         "domain",
         "events",
         "fs",
+        "fs/promises",
         "http",
         "http2",
         "https",
         "inspector",
+        "inspector/promises",
         "module",
         "net",
         "os",
         "path",
+        "path/posix",
+        "path/win32",
         "perf_hooks",
         "process",
         "punycode",
         "querystring",
         "readline",
+        "readline/promises",
         "repl",
         "stream",
+        "stream/consumers",
+        "stream/promises",
+        "stream/web",
         "string_decoder",
         "timers",
+        "timers/promises",
         "tls",
         "tty",
         "url",
         "util",
+        "util/types",
         "v8",
         "vm",
         "wasi",
@@ -120,6 +140,14 @@ class NpmProjectDetector:
                 for name in _LOCK_NAMES
                 if (project_root / name).is_file()
             )
+            if not any(path.name == "pnpm-lock.yaml" for path in locks):
+                for parent in project_root.parents:
+                    if parent != root and root not in parent.parents:
+                        break
+                    candidate = parent / "pnpm-lock.yaml"
+                    if candidate.is_file():
+                        locks = (*locks, candidate.relative_to(root))
+                        break
             relative_manifest = (
                 relative_root / "package.json"
                 if relative_root != Path(".")
@@ -168,6 +196,7 @@ class NpmEvidenceCollector:
         manifest = project_root / "package.json"
         diagnostics: list[Diagnostic] = []
         declarations: tuple[DependencyDeclaration, ...] = ()
+        document: Mapping[str, object] = {}
         manifest_complete = True
         try:
             document = read_json(manifest)
@@ -178,6 +207,10 @@ class NpmEvidenceCollector:
 
         resolved: tuple[ResolvedDependency, ...] = ()
         resolution_complete = True
+        pnpm_lock = next(
+            (root / path for path in project.locks if path.name == "pnpm-lock.yaml"),
+            None,
+        )
         supported_lock = next(
             (
                 project_root / name
@@ -194,15 +227,18 @@ class NpmEvidenceCollector:
                 diagnostics.append(
                     _diagnostic("lock.invalid", str(exc), supported_lock)
                 )
-        elif any(
-            (project_root / name).is_file() for name in ("yarn.lock", "pnpm-lock.yaml")
-        ):
+        elif pnpm_lock is not None:
+            try:
+                evidence = collect_pnpm_lock(pnpm_lock, project, declarations, root)
+                resolved = evidence.resolved
+                diagnostics.extend(evidence.diagnostics)
+                resolution_complete = not evidence.diagnostics
+            except StaticReadError as exc:
+                resolution_complete = False
+                diagnostics.append(_diagnostic("lock.invalid", str(exc), pnpm_lock))
+        elif (project_root / "yarn.lock").is_file():
             resolution_complete = False
-            lock = next(
-                project_root / name
-                for name in ("yarn.lock", "pnpm-lock.yaml")
-                if (project_root / name).is_file()
-            )
+            lock = project_root / "yarn.lock"
             diagnostics.append(
                 _diagnostic(
                     "lock.unsupported",
@@ -216,6 +252,11 @@ class NpmEvidenceCollector:
             project,
             project_root,
             exclusions_for(context.settings, project.root),
+            document.get("imports"),
+            {
+                str(item.metadata["installation_name"]): item.package.name
+                for item in declarations
+            },
         )
         diagnostics.extend(usage_diagnostics)
         capabilities = (
@@ -242,6 +283,7 @@ class NpmEvidenceCollector:
     ) -> tuple[DependencyDeclaration, ...]:
         declarations: list[DependencyDeclaration] = []
         seen: set[tuple[str, str]] = set()
+        identities: dict[str, str] = {}
         for section, scope in _DEPENDENCY_SECTIONS:
             values = document.get(section, {})
             if not isinstance(values, Mapping):
@@ -255,8 +297,13 @@ class NpmEvidenceCollector:
                     raise StaticReadError(
                         f"{section} entries require non-empty names and string specifiers"
                     )
-                name = display_name.lower()
-                key = (name, scope)
+                installed_name = display_name.lower()
+                name, constraint = dependency_identity(installed_name, raw_constraint)
+                if identities.setdefault(installed_name, name) != name:
+                    raise StaticReadError(
+                        f"Conflicting registry identities for npm alias {installed_name}"
+                    )
+                key = (installed_name, scope)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -265,12 +312,15 @@ class NpmEvidenceCollector:
                         project_id=project.project_id,
                         package=_package_ref(name),
                         constraint=VersionConstraint(
-                            raw_constraint, "semver", raw_constraint
+                            raw_constraint, "semver", constraint
                         ),
                         source=SourceLocation(manifest, 1, 1),
                         scope=scope,
                         kind="direct",
-                        metadata={"section": section},
+                        metadata={
+                            "section": section,
+                            "installation_name": installed_name,
+                        },
                     )
                 )
         return tuple(declarations)
@@ -282,7 +332,11 @@ class NpmEvidenceCollector:
         declarations: Sequence[DependencyDeclaration],
     ) -> tuple[ResolvedDependency, ...]:
         document = read_json(lock)
-        direct = {item.package.name for item in declarations}
+        direct = {
+            str(item.metadata["installation_name"]): item.package.name
+            for item in declarations
+        }
+        direct_paths = {f"node_modules/{alias}" for alias in direct}
         packages = document.get("packages")
         if "packages" in document and not isinstance(packages, Mapping):
             raise StaticReadError("lockfile packages must be an object")
@@ -296,18 +350,20 @@ class NpmEvidenceCollector:
                 version = raw.get("version")
                 if name is None or not isinstance(version, str) or not version:
                     continue
+                expected = (
+                    direct.get(name) if lock_path == f"node_modules/{name}" else None
+                )
+                identity = raw.get("name", expected or name)
+                if not isinstance(identity, str):
+                    raise StaticReadError("lockfile package name must be a string")
+                name = registry_name(identity)
+                if expected is not None and name != expected:
+                    raise StaticReadError(
+                        f"lockfile registry identity disagrees at {lock_path}"
+                    )
                 nodes[lock_path] = (name, version, raw)
             for lock_path, (name, version, raw) in sorted(nodes.items()):
                 dependencies = raw.get("dependencies", {})
-                children = (
-                    tuple(
-                        _package_ref(str(child).lower())
-                        for child in sorted(dependencies)
-                        if isinstance(child, str)
-                    )
-                    if isinstance(dependencies, Mapping)
-                    else ()
-                )
                 links: list[ResolvedDependencyLink] = []
                 if isinstance(dependencies, Mapping):
                     for child in sorted(dependencies):
@@ -320,6 +376,8 @@ class NpmEvidenceCollector:
                         child_version = (
                             nodes[child_path][1] if child_path is not None else None
                         )
+                        if child_path is not None:
+                            child_name = nodes[child_path][0]
                         links.append(
                             ResolvedDependencyLink(
                                 package=_package_ref(child_name),
@@ -333,13 +391,13 @@ class NpmEvidenceCollector:
                         package=_package_ref(name),
                         version=version,
                         source=SourceLocation(lock, 1, 1),
-                        direct=(name in direct and lock_path == f"node_modules/{name}"),
+                        direct=lock_path in direct_paths,
                         integrity=(
                             str(raw["integrity"])
                             if isinstance(raw.get("integrity"), str)
                             else None
                         ),
-                        dependencies=children,
+                        dependencies=tuple(link.package for link in links),
                         instance_id=lock_path,
                         dependency_links=tuple(links),
                     )
@@ -364,7 +422,7 @@ class NpmEvidenceCollector:
         project: ProjectUnit,
         lock: Path,
         dependencies: Mapping[object, object],
-        direct: set[str],
+        direct: Mapping[str, str],
         resolved: list[ResolvedDependency],
         *,
         parent_instance: str,
@@ -375,39 +433,67 @@ class NpmEvidenceCollector:
         ):
             if not isinstance(raw_name, str) or not isinstance(raw, Mapping):
                 continue
-            name = raw_name.lower()
+            installed_name = raw_name.lower()
             version = raw.get("version")
+            name, version = (
+                dependency_identity(installed_name, version)
+                if isinstance(version, str)
+                else (installed_name, version)
+            )
+            if (
+                top_level
+                and installed_name in direct
+                and isinstance(raw.get("version"), str)
+                and str(raw["version"]).startswith("npm:")
+                and name != direct[installed_name]
+            ):
+                raise StaticReadError(
+                    f"lockfile registry identity disagrees for {installed_name}"
+                )
+            identity = raw.get(
+                "name", direct.get(installed_name, name) if top_level else name
+            )
+            if not isinstance(identity, str):
+                raise StaticReadError("lockfile package name must be a string")
+            name = registry_name(identity)
+            if (
+                top_level
+                and installed_name in direct
+                and name != direct[installed_name]
+            ):
+                raise StaticReadError(
+                    f"lockfile registry identity disagrees for {installed_name}"
+                )
             children = raw.get("dependencies", {})
             instance_id = (
-                f"{parent_instance}/node_modules/{name}"
+                f"{parent_instance}/node_modules/{installed_name}"
                 if parent_instance
-                else f"node_modules/{name}"
+                else f"node_modules/{installed_name}"
             )
-            child_refs = (
-                tuple(_package_ref(str(child).lower()) for child in sorted(children))
-                if isinstance(children, Mapping)
-                else ()
-            )
-            child_links = (
-                tuple(
-                    ResolvedDependencyLink(
-                        package=_package_ref(str(child).lower()),
-                        version=(
-                            str(child_raw["version"])
-                            if isinstance(child_raw, Mapping)
-                            and isinstance(child_raw.get("version"), str)
-                            else None
-                        ),
-                        instance_id=f"{instance_id}/node_modules/{str(child).lower()}",
+            child_links: list[ResolvedDependencyLink] = []
+            if isinstance(children, Mapping):
+                for child, child_raw in sorted(children.items()):
+                    if not isinstance(child, str) or not isinstance(child_raw, Mapping):
+                        continue
+                    child_version = child_raw.get("version")
+                    child_name = child.lower()
+                    if isinstance(child_version, str):
+                        child_name, child_version = dependency_identity(
+                            child_name, child_version
+                        )
+                    identity = child_raw.get("name", child_name)
+                    if not isinstance(identity, str):
+                        raise StaticReadError("lockfile package name must be a string")
+                    child_name = registry_name(identity)
+                    child_links.append(
+                        ResolvedDependencyLink(
+                            package=_package_ref(child_name),
+                            version=child_version
+                            if isinstance(child_version, str)
+                            else None,
+                            instance_id=f"{instance_id}/node_modules/{child.lower()}",
+                        )
                     )
-                    for child, child_raw in sorted(
-                        children.items(), key=lambda item: str(item[0])
-                    )
-                    if isinstance(child, str)
-                )
-                if isinstance(children, Mapping)
-                else ()
-            )
             if isinstance(version, str) and version:
                 resolved.append(
                     ResolvedDependency(
@@ -415,10 +501,10 @@ class NpmEvidenceCollector:
                         _package_ref(name),
                         version,
                         SourceLocation(lock, 1, 1),
-                        direct=top_level and name in direct,
-                        dependencies=child_refs,
+                        direct=top_level and installed_name in direct,
+                        dependencies=tuple(link.package for link in child_links),
                         instance_id=instance_id,
-                        dependency_links=child_links,
+                        dependency_links=tuple(child_links),
                     )
                 )
             if isinstance(children, Mapping):
@@ -437,6 +523,8 @@ class NpmEvidenceCollector:
         project: ProjectUnit,
         project_root: Path,
         excluded_directories: Sequence[str] = (),
+        imports: object = None,
+        installation_names: Mapping[str, str] | None = None,
     ) -> tuple[tuple[UsageEvidence, ...], tuple[Path, ...], list[Diagnostic], bool]:
         usages: list[UsageEvidence] = []
         diagnostics: list[Diagnostic] = []
@@ -450,6 +538,8 @@ class NpmEvidenceCollector:
             )
             if _nearest_package_root(path.parent, project_root) == project_root
         )
+        source_paths = frozenset(source_files)
+        alias_resolutions: dict[str, AliasResolution] = {}
         for path in source_files:
             try:
                 text = read_text(path)
@@ -464,28 +554,62 @@ class NpmEvidenceCollector:
                 mapped_name = self.mappings.get(
                     load.reference.lower()
                 ) or self.mappings.get(package_name or "")
-                if package_name is None and mapped_name is None:
-                    if load.reference.startswith("#"):
-                        complete = False
-                        usages.append(
-                            UsageEvidence(
-                                project_id=project.project_id,
-                                language=project.language,
-                                reference=load.reference,
-                                source=SourceLocation(path, load.line, load.column),
-                                scope=_source_scope(path, project_root),
-                                kind=load.kind,
-                                mapping_confidence=MappingConfidence.UNKNOWN,
-                                mapping_reason="package subpath import requires a configured mapping",
-                            )
-                        )
-                    continue
                 confidence = (
                     MappingConfidence.CONFIGURED
                     if mapped_name is not None
                     else MappingConfidence.EXACT
                 )
-                mapped_name = mapped_name or package_name
+                reason = (
+                    "project import mapping"
+                    if mapped_name is not None
+                    else "literal npm package specifier"
+                )
+                if load.reference.startswith("#") and mapped_name is None:
+                    if load.reference not in alias_resolutions:
+                        alias_resolutions[load.reference] = resolve_package_import(
+                            load.reference,
+                            imports,
+                            project_root,
+                            source_paths,
+                            builtin_names=_NODE_BUILTINS,
+                        )
+                    alias = alias_resolutions[load.reference]
+                    if alias.kind in {"local", "builtin"}:
+                        continue
+                    if alias.kind == "package":
+                        package_name = alias.target
+                        reason = alias.reason
+                    else:
+                        complete = False
+                        source = SourceLocation(path, load.line, load.column)
+                        usages.append(
+                            UsageEvidence(
+                                project_id=project.project_id,
+                                language=project.language,
+                                reference=load.reference,
+                                source=source,
+                                scope=_source_scope(path, project_root),
+                                kind=load.kind,
+                                mapping_confidence=MappingConfidence.UNKNOWN,
+                                mapping_reason=alias.reason,
+                            )
+                        )
+                        diagnostics.append(
+                            Diagnostic(
+                                "mapping.alias-unsupported",
+                                "warning",
+                                alias.reason,
+                                source,
+                            )
+                        )
+                        continue
+                if package_name is None and mapped_name is None:
+                    continue
+                mapped_name = (
+                    mapped_name
+                    or (installation_names or {}).get(package_name or "")
+                    or package_name
+                )
                 assert mapped_name is not None
                 usages.append(
                     UsageEvidence(
@@ -497,11 +621,7 @@ class NpmEvidenceCollector:
                         kind=load.kind,
                         mapped_package=_package_ref(mapped_name),
                         mapping_confidence=confidence,
-                        mapping_reason=(
-                            "project import mapping"
-                            if confidence is MappingConfidence.CONFIGURED
-                            else "literal npm package specifier"
-                        ),
+                        mapping_reason=reason,
                     )
                 )
             if dynamic_count:
@@ -541,16 +661,6 @@ def create_npm_pack(
     )
 
 
-def _package_ref(name: str) -> PackageRef:
-    canonical = name.lower()
-    return PackageRef(
-        ecosystem="npm",
-        name=canonical,
-        display_name=name,
-        purl=f"pkg:npm/{quote(canonical, safe='/')}",
-    )
-
-
 def _lock_package_name(lock_path: str) -> str | None:
     marker = "node_modules/"
     if marker not in lock_path:
@@ -565,7 +675,7 @@ def _import_package(reference: str) -> str | None:
         return None
     if value.startswith("node:"):
         return None
-    if value.split("/", 1)[0] in _NODE_BUILTINS:
+    if value in _NODE_BUILTINS:
         return None
     if value.startswith("@"):
         parts = value.split("/")

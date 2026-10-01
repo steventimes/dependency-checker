@@ -14,6 +14,7 @@ from depcheck.analyzer.import_scanner import ImportScanner
 from depcheck.config import DepcheckConfig, load_project_config
 from depcheck.ecosystems import create_default_registry
 from depcheck.ecosystems.analysis import EvidenceAnalyzer
+from depcheck.ecosystems.tool_usage import apply_tool_usage
 from depcheck.model import EvidenceBundle, ProjectUnit
 from depcheck.ecosystems.python import (
     adapt_python_bundle,
@@ -258,6 +259,7 @@ class RepositoryIndexer:
                 bundle = RepositoryScanner._without_ignored(
                     bundle, config.ignored_packages
                 )
+                bundle = apply_tool_usage(bundle, config.tool_usage, root)
                 python_enabled = any(
                     item.lower() == "pypi" for item in config.enabled_ecosystems
                 )
@@ -369,7 +371,11 @@ class RepositoryIndexer:
                             )
                         ),
                         "import_location_count": str(
-                            sum(len(item.usages) for item in repository_bundles)
+                            sum(
+                                usage.kind != "tool"
+                                for item in repository_bundles
+                                for usage in item.usages
+                            )
                         ),
                         "declaration_count": str(
                             sum(len(item.declarations) for item in repository_bundles)
@@ -497,7 +503,11 @@ class RepositoryIndexer:
                         "python_file_count": str(len(python_files)),
                         "manifest_file_count": str(len(manifest_files)),
                         "import_location_count": str(
-                            sum(len(bundle.usages) for bundle in bundles)
+                            sum(
+                                usage.kind != "tool"
+                                for bundle in bundles
+                                for usage in bundle.usages
+                            )
                         ),
                         "declaration_count": str(
                             sum(len(bundle.declarations) for bundle in bundles)
@@ -738,7 +748,7 @@ def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) ->
 def _config_digest(config: DepcheckConfig) -> str:
     payload = asdict(config)
     # 数据表结构未变时，也要使旧分析语义生成的缓存失效。
-    payload["analysis_revision"] = 4
+    payload["analysis_revision"] = 8
     payload["import_mapping"] = dict(sorted(config.import_mapping.items()))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

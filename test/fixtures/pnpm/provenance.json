@@ -1,0 +1,29 @@
+{
+  "repository": "pnpm/pnpm",
+  "commit": "a04402ff6060f3d4a07e8dcbd39c5d65c1fdb030",
+  "license_header": "The MIT License (MIT)",
+  "license_url": "https://github.com/pnpm/pnpm/blob/a04402ff6060f3d4a07e8dcbd39c5d65c1fdb030/LICENSE",
+  "lock_url": "https://github.com/pnpm/pnpm/blob/a04402ff6060f3d4a07e8dcbd39c5d65c1fdb030/pnpm-lock.yaml",
+  "retained": "Exact public v9 fixture bytes and MIT license; source URLs and SHA256 recorded",
+  "lockfile_version": "'9.0'",
+  "retained_fixtures": [
+    {
+      "path": "pnpm-real-1.yaml",
+      "source": "https://github.com/pnpm/pnpm/blob/a04402ff6060f3d4a07e8dcbd39c5d65c1fdb030/pnpm/crates/cli/tests/fixtures/workspace-sbom-populated/pnpm-lock.yaml",
+      "sha256": "5c2a2cbc208724fc460b05822b798c3c67324e308aeefaab815981e47ebeb7fa",
+      "bytes": 1363
+    },
+    {
+      "path": "pnpm-real-2.yaml",
+      "source": "https://github.com/pnpm/pnpm/blob/a04402ff6060f3d4a07e8dcbd39c5d65c1fdb030/pnpm11/__fixtures__/with-peer/pnpm-lock.yaml",
+      "sha256": "6a9ed3c6a6e17cf4b2313561f37849be3af32ec19230f4212a007f9248e73a41",
+      "bytes": 1814
+    },
+    {
+      "path": "pnpm-real-3.yaml",
+      "source": "https://github.com/pnpm/pnpm/blob/a04402ff6060f3d4a07e8dcbd39c5d65c1fdb030/pnpm11/__fixtures__/workspace-with-lockfile-dupes/pnpm-lock.yaml",
+      "sha256": "0932b4e5e00dc0366c7e0a13fa8ea3961974789c53deb53bd965c77e3b933d28",
+      "bytes": 2661
+    }
+  ]
+}

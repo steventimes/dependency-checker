@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from packaging.utils import canonicalize_name
+
 from depcheck.policy_codes import VALID_FAIL_ON
 from depcheck.path_policy import require_within_project
 
@@ -26,8 +28,18 @@ _NEUTRAL_ALLOWED_KEYS = _LEGACY_ALLOWED_KEYS | {
     "enabled-ecosystems",
     "excluded-directories",
     "mappings",
+    "tool-usage",
 }
 DEFAULT_ECOSYSTEMS = ("PyPI", "npm", "Go", "Maven", "Conan", "vcpkg")
+
+
+@dataclass(frozen=True, slots=True)
+class ToolUsageDefinition:
+    ecosystem: str
+    project_id: str
+    package: str
+    scope: str
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +58,7 @@ class DepcheckConfig:
         str,
         Mapping[str, Mapping[str, str]],
     ] = field(default_factory=dict)
+    tool_usage: tuple[ToolUsageDefinition, ...] = field(default_factory=tuple)
 
     def mapping_for(self, ecosystem: str, project_id: str) -> dict[str, str]:
         result: dict[str, str] = {}
@@ -166,7 +179,52 @@ def _parse_config(
         enabled_ecosystems=_unique_case_insensitive(enabled),
         excluded_directories=excluded,
         scoped_mappings=scoped_mappings,
+        tool_usage=_tool_usage(raw, source),
     )
+
+
+def _tool_usage(raw: Mapping[str, Any], source: str) -> tuple[ToolUsageDefinition, ...]:
+    values = raw.get("tool-usage", ())
+    if isinstance(values, str) or not isinstance(values, Sequence):
+        raise ConfigurationError(f"{source}.tool-usage must be an array of tables")
+    allowed = {"ecosystem", "project-id", "package", "scope", "reason"}
+    ecosystems = {item.lower(): item for item in DEFAULT_ECOSYSTEMS}
+    seen: set[tuple[str, str, str, str]] = set()
+    result: list[ToolUsageDefinition] = []
+    for index, value in enumerate(values):
+        label = f"{source}.tool-usage[{index}]"
+        if not isinstance(value, Mapping) or set(value) != allowed:
+            raise ConfigurationError(f"{label} requires exactly {sorted(allowed)}")
+        fields = {key: _optional_string(value, key, label) for key in allowed}
+        if any(item is None for item in fields.values()):
+            raise ConfigurationError(f"{label} requires non-empty values")
+        ecosystem = ecosystems.get(str(fields["ecosystem"]).lower())
+        if ecosystem is None:
+            raise ConfigurationError(f"{label}.ecosystem is unsupported")
+        project_id = str(fields["project-id"])
+        if any(character in project_id for character in "*?["):
+            raise ConfigurationError(f"{label}.project-id must not contain wildcards")
+        scope = str(fields["scope"])
+        if scope not in {"runtime", "development", "test", "build"}:
+            raise ConfigurationError(f"{label}.scope is unsupported")
+        package = str(fields["package"])
+        if ecosystem == "PyPI":
+            try:
+                package = str(canonicalize_name(package, validate=True))
+            except ValueError as exc:
+                raise ConfigurationError(f"{label}.package is invalid") from exc
+        elif ecosystem == "npm":
+            package = package.lower()
+        key = (ecosystem, project_id, package, scope)
+        if key in seen:
+            raise ConfigurationError(f"{label} duplicates a tool usage")
+        seen.add(key)
+        result.append(
+            ToolUsageDefinition(
+                ecosystem, project_id, package, scope, str(fields["reason"])
+            )
+        )
+    return tuple(result)
 
 
 def _boolean(

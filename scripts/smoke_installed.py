@@ -72,6 +72,29 @@ def main() -> None:
             "Update preview changed a manifest",
         )
         run("update", ".", "missing=1.0", expected=2)
+        original = b'[project]\ndependencies=["requests==2.31.0"]\n'
+        (root / "pyproject.toml").write_bytes(original)
+        explicit = json.loads(
+            run(
+                "update",
+                ".",
+                "requests==2.32.4",
+                "--file",
+                "pyproject.toml",
+                "--group",
+                "project",
+            )
+        )
+        check(explicit["plans"][0]["groups"] == ["project"], "Pyproject group missing")
+        check(
+            explicit["plans"][0]["preview"].encode()
+            == original.replace(b"2.31.0", b"2.32.4"),
+            "Pyproject preview wrong",
+        )
+        check(
+            (root / "pyproject.toml").read_bytes() == original,
+            "Pyproject preview wrote manifest",
+        )
         check(
             not json.loads(run("doctor", "."))["mcp"]["installed"],
             "Doctor incorrectly detected MCP",
@@ -81,6 +104,18 @@ def main() -> None:
                 json.loads(run("scan", ".", "--offline", "--format", format_name)),
                 f"Empty {format_name} export",
             )
+        (root / "pyproject.toml").unlink()
+        (root / "requirements.txt").write_text("requests==2.31.0\nruff==0.11.0\n")
+        (root / ".depcheck.toml").write_text(
+            '[[tool-usage]]\necosystem="PyPI"\nproject-id="pypi:python:."\n'
+            'package="ruff"\nscope="test"\nreason="CI lint"\n'
+        )
+        tools = json.loads(run("scan", ".", "--offline", "--format", "json"))
+        check(not tools["findings"], "Configured tool reported as unused")
+        run("index", ".")
+        explanation = json.loads(run("explain", ".", "ruff"))
+        check(explanation["usages"][0]["kind"] == "tool", "Tool usage missing")
+        check(not explanation["imports"], "Tool use misreported as source import")
 
     print(
         "Installed wheel: base CLI, offline scan, index, query, update, and exports passed"

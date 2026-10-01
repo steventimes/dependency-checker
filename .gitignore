@@ -6,3 +6,6 @@ __pycache__/
 build/
 dist/
 .depcheck/
+/.tmp/
+.mypy_cache/
+.ruff_cache/

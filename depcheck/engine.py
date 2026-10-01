@@ -29,6 +29,7 @@ from depcheck.ecosystems import (
     create_default_registry,
 )
 from depcheck.ecosystems.analysis import EvidenceAnalyzer
+from depcheck.ecosystems.tool_usage import apply_tool_usage
 
 
 _OSV_ECOSYSTEMS = {
@@ -111,6 +112,7 @@ class RepositoryScanner:
             bundle = self._without_ignored(
                 bundle, (*config.ignored_packages, *active.ignored_packages)
             )
+            bundle = apply_tool_usage(bundle, config.tool_usage, root)
             report = EvidenceAnalyzer().analyze(bundle)
             bundles.append(bundle)
             reports.append(report)
