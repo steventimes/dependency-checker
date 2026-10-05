@@ -44,9 +44,11 @@ _ECOSYSTEM_MANIFEST_NAMES = frozenset(
         "npm-shrinkwrap.json",
         "package-lock.json",
         "package.json",
+        "pnpm-lock.yaml",
         "pom.xml",
         "vcpkg-lock.json",
         "vcpkg.json",
+        "yarn.lock",
     }
 )
 _ECOSYSTEM_SOURCE_SUFFIXES = frozenset(
@@ -748,7 +750,7 @@ def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) ->
 def _config_digest(config: DepcheckConfig) -> str:
     payload = asdict(config)
     # 数据表结构未变时，也要使旧分析语义生成的缓存失效。
-    payload["analysis_revision"] = 8
+    payload["analysis_revision"] = 9
     payload["import_mapping"] = dict(sorted(config.import_mapping.items()))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

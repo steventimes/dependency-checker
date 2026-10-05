@@ -207,10 +207,13 @@ def build_cyclonedx(
 ) -> dict[str, Any]:
     component_by_identity: dict[PackageIdentity, dict[str, Any]] = {}
     reference_by_identity: dict[PackageIdentity, str] = {}
+    direct_identities: set[PackageIdentity] = set()
     for bundle in result.bundles:
         resolved_names = {item.package.name for item in bundle.resolved}
         for resolution in bundle.resolved:
             identity = resolution.identity
+            if resolution.direct:
+                direct_identities.add(identity)
             reference = _component_reference(identity)
             reference_by_identity[identity] = reference
             component_by_identity[identity] = _component(
@@ -219,7 +222,9 @@ def build_cyclonedx(
                 direct=resolution.direct,
             )
         for declaration in bundle.declarations:
-            if declaration.package.name in resolved_names:
+            if declaration.kind in {"constraint", "hint"} or (
+                declaration.package.name in resolved_names
+            ):
                 continue
             identity = PackageIdentity(
                 declaration.project_id,
@@ -228,25 +233,16 @@ def build_cyclonedx(
                 purl=declaration.package.purl,
             )
             reference = _component_reference(identity)
+            if declaration.kind in {"direct", "local"}:
+                direct_identities.add(identity)
             reference_by_identity.setdefault(identity, reference)
-            component_by_identity.setdefault(
-                identity,
-                _component(identity, reference, direct=True),
+            component_by_identity[identity] = _component(
+                identity, reference, direct=identity in direct_identities
             )
 
     project_ref = "application:" + quote(result.root.name or "repository", safe="-._~")
     direct_refs = sorted(
-        {
-            reference_by_identity[resolution.identity]
-            for bundle in result.bundles
-            for resolution in bundle.resolved
-            if resolution.direct
-        }
-        | {
-            reference_by_identity[identity]
-            for identity in component_by_identity
-            if identity.version is None
-        }
+        {reference_by_identity[identity] for identity in direct_identities}
     )
     dependency_entries = [{"ref": project_ref, "dependsOn": direct_refs}]
     for bundle in result.bundles:

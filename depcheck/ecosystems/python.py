@@ -439,7 +439,7 @@ def _package_ref(name: str, display_name: str) -> PackageRef:
 
 
 def _scope(group: str) -> str:
-    if group == "dev" or group.startswith("development"):
+    if group == "dev" or group.startswith(("dev:", "development")):
         return "development"
     if group.startswith("optional:"):
         return "optional"

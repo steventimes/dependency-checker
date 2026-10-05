@@ -208,6 +208,70 @@ def test_security_findings_keep_the_queried_version(tmp_path: Path) -> None:
     assert result.capability("security").state is CapabilityState.COMPLETE
 
 
+@pytest.mark.parametrize("options", [("-c", "-r"), ("-r", "-c")])
+def test_requirements_include_keeps_direct_and_constraint_contexts(
+    tmp_path: Path, options
+) -> None:
+    from depcheck.analyzer.requirement_parser import RequirementParser
+
+    manifest = tmp_path / "requirements.txt"
+    manifest.write_text("".join(f"{option} shared.txt\n" for option in options))
+    (tmp_path / "shared.txt").write_text("requests==2.31.0\n")
+
+    parsed = RequirementParser(manifest, project_root=tmp_path).parse_detailed()
+    assert not parsed.diagnostics
+    assert {item.kind for item in parsed.declarations} == {"direct", "constraint"}
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert {item.kind for item in result.bundles[0].declarations} == {
+        "direct",
+        "constraint",
+    }
+    assert result.bundles[0].resolved[0].direct
+
+
+def test_security_preserves_every_affected_installation_instance(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    class FakeOSV:
+        def __init__(self):
+            self.calls = []
+
+        def scan_ecosystem(self, packages, ecosystem):
+            self.calls.append((ecosystem, dict(packages)))
+            return SimpleNamespace(
+                vulnerabilities={"dep": [{"id": "OSV-1", "summary": "affected"}]},
+                diagnostics=(),
+                queried=dict(packages),
+            )
+
+    (tmp_path / "package.json").write_text('{"dependencies":{"dep":"1.0.0"}}')
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "packages": {
+                    "node_modules/dep": {"version": "1.0.0"},
+                    "node_modules/a/node_modules/dep": {"version": "1.0.0"},
+                    "node_modules/b/node_modules/dep": {"version": "1.1.0"},
+                }
+            }
+        )
+    )
+    osv = FakeOSV()
+    result = RepositoryScanner(osv_client=osv).scan(tmp_path)
+    identities = {item.identity for item in result.bundles[0].resolved}
+
+    assert set(result.vulnerabilities) == identities
+    assert {
+        finding.package
+        for finding in result.findings
+        if finding.code == "security.vulnerability"
+    } == identities
+    assert osv.calls == [("npm", {"dep": "1.0.0"}), ("npm", {"dep": "1.1.0"})]
+    assert len(result.to_dict()["vulnerabilities"]) == 3
+
+
 def test_compatibility_is_a_stage_of_the_repository_scan(tmp_path: Path) -> None:
     class FakeCompatibility:
         def check_detailed(self, manifest, *, python_version=None):
@@ -404,6 +468,28 @@ def test_invalid_compatibility_metadata_is_incomplete(
         tmp_path, RepositoryScanOptions(security=False, compatibility=True)
     )
     assert not result.capability("compatibility").complete
+
+
+@pytest.mark.parametrize("requires_python", ["broken", ">=>3.12", True])
+def test_invalid_requires_python_cannot_establish_compatibility(
+    tmp_path: Path, requires_python
+) -> None:
+    from depcheck.compatibility.checker import CompatibilityChecker
+    from depcheck.compatibility.pypi_client import PyPIFetchResult
+
+    class Client:
+        def fetch_metadata(self, package, version=None):
+            return PyPIFetchResult(
+                {"info": {"requires_dist": [], "requires_python": requires_python}}
+            )
+
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
+    result = RepositoryScanner(
+        compatibility_checker=CompatibilityChecker(client=Client())
+    ).scan(tmp_path, RepositoryScanOptions(security=False, compatibility=True))
+    assert not result.capability("compatibility").complete
+    assert any(d.code == "pypi.invalid-requires-python" for d in result.diagnostics)
+    assert result.metadata["compatibility"]["pypi:python:."]["complete"] is False
 
 
 def test_python_full_version_marker_uses_requested_target() -> None:

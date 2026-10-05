@@ -531,3 +531,62 @@ def test_benchmark_mutation_preserves_rebuild_equivalence(tmp_path, ecosystem):
     assert result["changed_reference"] == "benchmarknewpackage"
     assert result["changed_usage_detected"] is True
     assert result["counters"]["npm_parse_reuse"] == "not available"
+
+
+@pytest.mark.parametrize("filtered", [False, True])
+def test_pnpm_lock_changes_invalidate_index_and_refresh_versions(tmp_path, filtered):
+    import yaml
+
+    from depcheck.agent import DependencyAgentService
+
+    (tmp_path / "package.json").write_text('{"dependencies":{"dep":"^1.0.0"}}')
+    lock = tmp_path / "pnpm-lock.yaml"
+
+    def write_lock(version):
+        lock.write_text(
+            yaml.safe_dump(
+                {
+                    "lockfileVersion": "9.0",
+                    "importers": {
+                        ".": {
+                            "dependencies": {
+                                "dep": {"specifier": "^1.0.0", "version": version}
+                            }
+                        }
+                    },
+                    "packages": {
+                        f"dep@{version}": {"resolution": {"integrity": "sha512-test"}}
+                    },
+                    "snapshots": {f"dep@{version}": {}},
+                }
+            )
+        )
+
+    write_lock("1.0.0")
+    service = DependencyAgentService(tmp_path)
+    selection = {"ecosystems": ("npm",)} if filtered else {}
+    service.index_repository(**selection)
+    assert not service.repository_context()["stale"]
+    write_lock("1.1.0")
+    assert service.repository_context()["stale"]
+    with pytest.raises(RuntimeError, match="stale"):
+        service.query_dependencies("dep")
+    assert service.index_repository(**selection)["status"] == "updated"
+    assert service.query_dependencies("dep")["dependencies"][0][
+        "resolved_versions"
+    ] == ["1.1.0"]
+    assert not service.repository_context()["stale"]
+
+
+def test_unsupported_yarn_lock_addition_invalidates_full_index(tmp_path):
+    from depcheck.agent import DependencyAgentService
+
+    (tmp_path / "package.json").write_text("{}")
+    service = DependencyAgentService(tmp_path)
+    service.index_repository()
+    (tmp_path / "yarn.lock").write_text("# yarn lock\n")
+    assert service.repository_context()["stale"]
+    assert service.index_repository()["status"] == "updated"
+    assert not service.repository_context()["stale"]
+    project = service.repository_context()["projects"][0]
+    assert not project["capabilities"]["resolution"]["complete"]

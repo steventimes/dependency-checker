@@ -45,7 +45,7 @@ class RequirementParser(BaseDependencyParser):
         declarations: list[PythonRequirement] = []
         diagnostics: list[Diagnostic] = []
         files: list[Path] = []
-        visited: set[Path] = set()
+        visited: set[tuple[Path, str, str]] = set()
         active: set[Path] = set()
 
         self._parse_file(
@@ -72,7 +72,7 @@ class RequirementParser(BaseDependencyParser):
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
         files: list[Path],
-        visited: set[Path],
+        visited: set[tuple[Path, str, str]],
         active: set[Path],
         include_source: SourceLocation | None,
     ) -> None:
@@ -106,7 +106,8 @@ class RequirementParser(BaseDependencyParser):
                 )
             )
             return
-        if resolved in visited:
+        context = (resolved, group, kind)
+        if context in visited:
             return
         if not path.is_file():
             diagnostics.append(
@@ -119,9 +120,10 @@ class RequirementParser(BaseDependencyParser):
             )
             return
 
-        visited.add(resolved)
+        visited.add(context)
         active.add(resolved)
-        files.append(path)
+        if path not in files:
+            files.append(path)
         try:
             content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:

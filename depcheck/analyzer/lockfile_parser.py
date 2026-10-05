@@ -145,7 +145,7 @@ class LockfileParser(BaseDependencyParser):
     def _invalid(self, message: str) -> Diagnostic:
         return Diagnostic(
             code="manifest.invalid-lock-entry",
-            severity="warning",
+            severity="error",
             message=message,
             source=SourceLocation(self.path),
         )

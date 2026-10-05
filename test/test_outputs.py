@@ -353,3 +353,40 @@ def test_offline_hygiene_policy_preserves_strict_incomplete_policy() -> None:
 def test_invalid_policy_fail_on_is_rejected(invalid) -> None:
     with pytest.raises(ValueError, match="fail_on"):
         evaluate_policy(sample_result(), {"fail_on": invalid})
+
+
+def test_cyclonedx_omits_constraints_and_install_hints(tmp_path: Path) -> None:
+    from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+
+    (tmp_path / "requirements.txt").write_text("app-lib>=1\n-c constraints.txt\n")
+    (tmp_path / "constraints.txt").write_text("requests==2.31.0\n")
+    (tmp_path / "Dockerfile").write_text("RUN pip install hinted==1.0\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    bom = build_cyclonedx(result)
+
+    assert [component["name"] for component in bom["components"]] == ["app-lib"]
+    assert bom["dependencies"][0]["dependsOn"] == [bom["components"][0]["bom-ref"]]
+
+
+def test_cyclonedx_unresolved_transitive_is_not_a_direct_dependency() -> None:
+    result = sample_result()
+    bundle = result.bundles[0]
+    transitive = replace(
+        bundle.declarations[0],
+        package=bundle.resolved[1].package,
+        kind="transitive",
+    )
+    result = replace(
+        result,
+        bundles=(
+            replace(
+                bundle, resolved=(), declarations=(*bundle.declarations, transitive)
+            ),
+        ),
+    )
+    bom = build_cyclonedx(result)
+    components = {component["name"]: component for component in bom["components"]}
+    assert bom["dependencies"][0]["dependsOn"] == [components["app-lib"]["bom-ref"]]
+    assert {p["name"]: p["value"] for p in components["child-lib"]["properties"]}[
+        "depcheck:dependency:direct"
+    ] == "false"

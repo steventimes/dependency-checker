@@ -120,10 +120,7 @@ class RepositoryScanner:
         security_enabled = (
             config.security if active.security is None else active.security
         )
-        vulnerabilities: dict[
-            tuple[str, str, str, str],
-            list[dict[str, Any]],
-        ] = {}
+        vulnerabilities: dict[PackageIdentity, list[dict[str, Any]]] = {}
         if security_enabled:
             vulnerabilities, reports = self._security(
                 tuple(bundles),
@@ -209,37 +206,15 @@ class RepositoryScanner:
         )
         if compatibility_capability is not None:
             capabilities = (*capabilities, compatibility_capability)
-        vulnerability_map: dict[PackageIdentity, tuple[Mapping[str, Any], ...]] = {}
-        for key, issues in vulnerabilities.items():
-            project_id, ecosystem, package, version = key
-            resolved = next(
-                (
-                    item
-                    for bundle in bundles
-                    for item in bundle.resolved
-                    if item.project_id == project_id
-                    and item.package.ecosystem.lower() == ecosystem
-                    and item.package.name == package
-                    and item.version == version
-                ),
-                None,
-            )
-            identity = PackageIdentity(
-                project_id,
-                resolved.package.ecosystem if resolved else ecosystem,
-                package,
-                version,
-                resolved.instance_id if resolved else None,
-                resolved.package.purl if resolved else None,
-            )
-            vulnerability_map[identity] = tuple(issues)
         return ScanResult(
             root=root,
             capabilities=capabilities,
             findings=findings,
             diagnostics=diagnostics,
             bundles=tuple(bundles),
-            vulnerabilities=vulnerability_map,
+            vulnerabilities={
+                identity: tuple(issues) for identity, issues in vulnerabilities.items()
+            },
             metadata={"compatibility": compatibility_metadata},
         )
 
@@ -576,10 +551,10 @@ class RepositoryScanner:
         bundles: tuple[EvidenceBundle, ...],
         reports: list[AnalysisReport],
     ) -> tuple[
-        dict[tuple[str, str, str, str], list[dict[str, Any]]],
+        dict[PackageIdentity, list[dict[str, Any]]],
         list[AnalysisReport],
     ]:
-        result: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+        result: dict[PackageIdentity, list[dict[str, Any]]] = {}
         for index, bundle in enumerate(bundles):
             osv_ecosystem = _OSV_ECOSYSTEMS.get(bundle.project.ecosystem.lower())
             coordinates = sorted(
@@ -674,54 +649,48 @@ class RepositoryScanner:
                     queried_version = scan.queried.get(package, exact.get(package))
                     if queried_version is None:
                         continue
-                    key = (
-                        bundle.project.project_id,
-                        bundle.project.ecosystem.lower(),
-                        package,
-                        queried_version,
-                    )
                     versioned_issues = [
                         {**dict(issue), "version": queried_version} for issue in issues
                     ]
-                    result.setdefault(key, []).extend(versioned_issues)
-                    resolved_identity = next(
-                        (
-                            item.identity
-                            for item in bundle.resolved
-                            if item.project_id == bundle.project.project_id
-                            and item.package.name == package
-                            and item.version == queried_version
-                        ),
+                    identities = {
+                        item.identity
+                        for item in bundle.resolved
+                        if item.project_id == bundle.project.project_id
+                        and item.package.name == package
+                        and item.version == queried_version
+                    } or {
                         PackageIdentity(
                             bundle.project.project_id,
                             bundle.project.ecosystem,
                             package,
                             queried_version,
-                        ),
-                    )
+                        )
+                    }
                     locations = tuple(
                         item.source for item in direct if item.package.name == package
                     )
-                    findings.extend(
-                        Finding(
-                            code="security.vulnerability",
-                            package=resolved_identity,
-                            severity="error",
-                            message=(
-                                f"{package}@{queried_version} is affected by "
-                                f"{issue.get('id', 'unknown')}: "
-                                f"{issue.get('summary', '')}"
-                            ),
-                            locations=locations,
-                            details={
-                                **dict(issue),
-                                "project_id": bundle.project.project_id,
-                                "ecosystem": bundle.project.ecosystem,
-                                "version": queried_version,
-                            },
+                    for identity in sorted(identities, key=lambda item: item.sort_key):
+                        result.setdefault(identity, []).extend(versioned_issues)
+                        findings.extend(
+                            Finding(
+                                code="security.vulnerability",
+                                package=identity,
+                                severity="error",
+                                message=(
+                                    f"{package}@{queried_version} is affected by "
+                                    f"{issue.get('id', 'unknown')}: "
+                                    f"{issue.get('summary', '')}"
+                                ),
+                                locations=locations,
+                                details={
+                                    **dict(issue),
+                                    "project_id": bundle.project.project_id,
+                                    "ecosystem": bundle.project.ecosystem,
+                                    "version": queried_version,
+                                },
+                            )
+                            for issue in versioned_issues
                         )
-                        for issue in versioned_issues
-                    )
             reports[index] = AnalysisReport(
                 findings=tuple(
                     sorted(

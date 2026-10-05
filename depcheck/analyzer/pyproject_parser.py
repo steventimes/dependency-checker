@@ -75,8 +75,31 @@ class PyProjectParser(BaseDependencyParser):
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
     ) -> None:
-        project = data.get("project")
+        project = data.get("project", {})
         if isinstance(project, dict):
+            dynamic = project.get("dynamic", [])
+            if not isinstance(dynamic, list) or not all(
+                isinstance(item, str) for item in dynamic
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        code="manifest.invalid-dynamic-fields",
+                        severity="error",
+                        message="project.dynamic 必须是字符串数组",
+                        source=SourceLocation(self.path),
+                    )
+                )
+            else:
+                for field in ("dependencies", "optional-dependencies"):
+                    if field in dynamic:
+                        diagnostics.append(
+                            Diagnostic(
+                                code="manifest.dynamic-pyproject",
+                                severity="error",
+                                message=f"project.{field} 是动态依赖，无法静态解析",
+                                source=SourceLocation(self.path),
+                            )
+                        )
             self._append_requirements(
                 project.get("dependencies", []), "runtime", declarations, diagnostics
             )
@@ -89,14 +112,20 @@ class PyProjectParser(BaseDependencyParser):
                         declarations,
                         diagnostics,
                     )
+            else:
+                diagnostics.append(self._invalid_table("project.optional-dependencies"))
+        else:
+            diagnostics.append(self._invalid_table("project"))
 
-        build_system = data.get("build-system")
+        build_system = data.get("build-system", {})
         if isinstance(build_system, dict):
             self._append_requirements(
                 build_system.get("requires", []), "build", declarations, diagnostics
             )
+        else:
+            diagnostics.append(self._invalid_table("build-system"))
 
-        groups = data.get("dependency-groups")
+        groups = data.get("dependency-groups", {})
         if isinstance(groups, dict):
             budget = [20_000]
             for group in groups:
@@ -110,6 +139,8 @@ class PyProjectParser(BaseDependencyParser):
                     visited=set(),
                     budget=budget,
                 )
+        else:
+            diagnostics.append(self._invalid_table("dependency-groups"))
 
     def _parse_poetry(
         self,
@@ -424,5 +455,13 @@ class PyProjectParser(BaseDependencyParser):
             code="manifest.invalid-requirement",
             severity="error",
             message=f"依赖组 {group} 的声明 {value!r} 无效：{reason}",
+            source=SourceLocation(self.path),
+        )
+
+    def _invalid_table(self, field: str) -> Diagnostic:
+        return Diagnostic(
+            code="manifest.invalid-dependency-table",
+            severity="error",
+            message=f"{field} 必须是表",
             source=SourceLocation(self.path),
         )

@@ -417,8 +417,8 @@ def _parse_go_mod(
     excluded_versions: dict[str, list[str]] = {}
     block: str | None = None
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
-        stripped = raw_line.strip()
-        if not stripped or stripped.startswith("//"):
+        stripped = raw_line.split("//", 1)[0].strip()
+        if not stripped:
             continue
         if stripped.endswith("("):
             directive = stripped[:-1].strip()
@@ -432,14 +432,15 @@ def _parse_go_mod(
         content = stripped
         active_directive = block
         if active_directive is None:
-            head, separator, tail = stripped.partition(" ")
-            if not separator:
+            directive_parts = stripped.split(maxsplit=1)
+            head = directive_parts[0]
+            if len(directive_parts) == 1:
                 if head in {"module", "require", "replace", "exclude"}:
                     raise StaticReadError(
                         f"malformed {head} directive at line {line_number}"
                     )
                 continue
-            active_directive, content = head, tail.strip()
+            active_directive, content = directive_parts
         if active_directive == "module":
             tokens = content.split()
             if len(tokens) != 1:
@@ -448,8 +449,8 @@ def _parse_go_mod(
                 )
             module_path = tokens[0]
         elif active_directive == "require":
-            indirect = "// indirect" in content
-            tokens = content.split("//", 1)[0].split()
+            indirect = "// indirect" in raw_line
+            tokens = content.split()
             if len(tokens) != 2:
                 raise StaticReadError(
                     f"malformed require directive at line {line_number}"
@@ -458,7 +459,6 @@ def _parse_go_mod(
                 _Requirement(tokens[0], tokens[1], indirect, line_number)
             )
         elif active_directive == "replace":
-            content = content.split("//", 1)[0].strip()
             if "=>" not in content:
                 raise StaticReadError(
                     f"malformed replace directive at line {line_number}"
@@ -490,12 +490,14 @@ def _parse_go_mod(
                 line=line_number,
             )
         elif active_directive == "exclude":
-            tokens = content.split("//", 1)[0].split()
+            tokens = content.split()
             if len(tokens) != 2:
                 raise StaticReadError(
                     f"malformed exclude directive at line {line_number}"
                 )
             excluded_versions.setdefault(tokens[0], []).append(tokens[1])
+    if block is not None:
+        raise StaticReadError(f"unterminated {block} directive block")
     return module_path, tuple(requirements), replacements, excluded_versions
 
 

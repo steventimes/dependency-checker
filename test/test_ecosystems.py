@@ -172,6 +172,158 @@ def test_unsafe_or_unsupported_pnpm_is_incomplete(tmp_path, text):
     ).complete
 
 
+@pytest.mark.parametrize(
+    "lock_name,content",
+    [
+        (
+            name,
+            '[[package]]\nname="known"\nversion="1.0.0"\n'
+            '[[package]]\nname="hidden"\nversion="not-a-version"\n',
+        )
+        for name in ("uv.lock", "poetry.lock", "pdm.lock")
+    ]
+    + [
+        (
+            "Pipfile.lock",
+            '{"default":{"known":{"version":"==1.0.0"},'
+            '"hidden":{"version":"invalid"}}}',
+        )
+    ],
+)
+def test_invalid_python_lock_entries_keep_security_incomplete(
+    tmp_path: Path, lock_name, content
+) -> None:
+    from depcheck.agent import DependencyAgentService
+
+    class FakeOSV:
+        def scan(self, packages):
+            return SimpleNamespace(
+                vulnerabilities={}, diagnostics=(), queried=dict(packages)
+            )
+
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
+    (tmp_path / lock_name).write_text(content)
+    result = RepositoryScanner(osv_client=FakeOSV()).scan(tmp_path)
+    assert not result.capability("security").complete
+    assert not result.capability("dependency_hygiene").complete
+    assert any(d.code == "security.collection-incomplete" for d in result.diagnostics)
+    assert {r.package.name for r in result.bundles[0].resolved} == {"requests", "known"}
+    assert not DependencyAgentService(tmp_path).index_repository()["complete"]
+
+
+@pytest.mark.parametrize(
+    "group_table",
+    [
+        '[dependency-groups]\ntest=["pyyaml==6.0.2"]\n',
+        '[tool.poetry.group.test.dependencies]\npyyaml="==6.0.2"\n',
+        '[tool.poetry.dev-dependencies]\npyyaml="==6.0.2"\n',
+        '[tool.pdm.dev-dependencies]\ntest=["pyyaml==6.0.2"]\n',
+    ],
+)
+def test_python_development_groups_accept_test_usage(
+    tmp_path: Path, group_table
+) -> None:
+    from depcheck.agent import DependencyAgentService
+
+    (tmp_path / "pyproject.toml").write_text(group_table)
+    source = tmp_path / "test_app.py"
+    source.write_text("import yaml\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.findings
+    declaration = result.bundles[0].declarations[0]
+    assert declaration.scope == "development"
+    assert declaration.metadata["group"].startswith("dev:")
+    service = DependencyAgentService(tmp_path)
+    service.index_repository()
+    assert not service.explain_dependency("pyyaml")["findings"]
+
+    source.rename(tmp_path / "app.py")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert any(f.code == "dependency.scope-mismatch" for f in result.findings)
+
+
+@pytest.mark.parametrize("field", ["dependencies", "optional-dependencies"])
+def test_dynamic_pyproject_dependencies_do_not_establish_missing_packages(
+    tmp_path: Path, field
+) -> None:
+    from depcheck.agent import DependencyAgentService
+
+    (tmp_path / "pyproject.toml").write_text(
+        f'[project]\nname="sample"\ndynamic=["{field}"]\n'
+    )
+    (tmp_path / "app.py").write_text("import yaml\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert any(d.code == "manifest.dynamic-pyproject" for d in result.diagnostics)
+    assert not any(f.code == "dependency.missing" for f in result.findings)
+    service = DependencyAgentService(tmp_path)
+    assert not service.index_repository()["complete"]
+    assert not service.explain_dependency("pyyaml")["findings"]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "project=[]\n",
+        "build-system=[]\n",
+        "dependency-groups=[]\n",
+        "[project]\noptional-dependencies=[]\n",
+        '[project]\ndynamic="dependencies"\n',
+    ],
+)
+def test_malformed_pyproject_dependency_tables_are_incomplete(tmp_path, content):
+    (tmp_path / "pyproject.toml").write_text(content)
+    (tmp_path / "app.py").write_text("import yaml\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert any(d.severity == "error" for d in result.diagnostics)
+    assert not any(f.code == "dependency.missing" for f in result.findings)
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        "module\texample.com/app\nrequire\texample.com/dep v1.0.0\n",
+        "module example.com/app // app module\n"
+        "require ( // required modules\n\texample.com/dep v1.0.0\n) // end\n",
+    ],
+)
+def test_go_mod_accepts_whitespace_and_directive_comments(tmp_path, manifest):
+    (tmp_path / "go.mod").write_text(manifest)
+    (tmp_path / "main.go").write_text('package main\nimport "example.com/dep"\n')
+    result = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, enabled_ecosystems=("Go",))
+    )
+    assert result.capability("dependency_hygiene").complete
+    assert not result.findings
+    assert result.bundles[0].resolved[0].version == "v1.0.0"
+    assert result.bundles[0].declarations[0].kind == "direct"
+
+
+def test_go_mod_retains_indirect_flag_after_comment_parsing(tmp_path):
+    (tmp_path / "go.mod").write_text(
+        "module\texample.com/app // app\n"
+        "require ( // dependencies\n\texample.com/dep v1.0.0 // indirect\n)\n"
+    )
+    result = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, enabled_ecosystems=("Go",))
+    )
+    assert result.capability("dependency_hygiene").complete
+    assert result.bundles[0].declarations[0].kind == "transitive"
+    assert not result.bundles[0].resolved[0].direct
+
+
+def test_go_mod_unterminated_dependency_block_is_incomplete(tmp_path):
+    (tmp_path / "go.mod").write_text(
+        "module example.com/app\nrequire (\nexample.com/dep v1.0.0\n"
+    )
+    result = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, enabled_ecosystems=("Go",))
+    )
+    assert not result.capability("dependency_hygiene").complete
+    assert any(d.code == "manifest.invalid" for d in result.diagnostics)
+
+
 def test_small_manifest_expansion_is_bounded(tmp_path):
     from depcheck.analyzer.pyproject_parser import PyProjectParser
 

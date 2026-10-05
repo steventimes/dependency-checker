@@ -558,7 +558,7 @@ class CompatibilityChecker:
                     diagnostics,
                     Diagnostic(
                         code="pypi.invalid-requires-python",
-                        severity="warning",
+                        severity="error",
                         message=f"无法解析 {package} 的 requires_python：{exc}",
                     ),
                 )
