@@ -121,6 +121,7 @@ class GitNexusCompanion:
             [*command, *arguments],
             cwd=root,
             check=False,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=self.timeout,
@@ -293,6 +294,7 @@ def _git_head(
         result = subprocess.run(
             [executable, "-C", str(root), "rev-parse", "HEAD"],
             check=False,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=timeout,

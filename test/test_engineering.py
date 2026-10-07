@@ -456,6 +456,57 @@ def test_python_source_discovery_does_not_read_symlink_targets(tmp_path: Path) -
     assert RepositoryIndex(root).dependencies() == []
 
 
+@pytest.mark.parametrize("probe", ["index", "companion-head", "companion-status"])
+def test_metadata_commands_finish_while_caller_stdin_remains_open(tmp_path, probe):
+    import subprocess
+    import sys
+
+    command = tmp_path / "metadata.py"
+    command.write_text(
+        "import sys\nsys.stdin.read()\n"
+        "print('1234567890abcdef1234567890abcdef12345678')\n"
+    )
+    driver = """
+import subprocess
+import sys
+from pathlib import Path
+from depcheck.indexing import indexer
+from depcheck.agent import gitnexus
+
+root, command, probe = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+run = subprocess.run
+def metadata_run(args, **kwargs):
+    return run([sys.executable, command], **kwargs)
+subprocess.run = metadata_run
+indexer.external_path_executable = lambda *args: sys.executable
+try:
+    if probe == 'index':
+        result = indexer._git_head(root)
+    elif probe == 'companion-head':
+        result = gitnexus._git_head(root, 2, executable=sys.executable)
+    else:
+        result = gitnexus.GitNexusCompanion(timeout=2)._run(
+            (sys.executable, command), root, 'status'
+        ).stdout.strip()
+except subprocess.TimeoutExpired:
+    result = None
+print(result)
+"""
+    with subprocess.Popen(
+        [sys.executable, "-c", driver, str(tmp_path), str(command), probe],
+        cwd=ROOT,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as process:
+        # Wait before communicate() so the caller's input stays open during the probe.
+        process.wait(timeout=5)
+        stdout, stderr = process.communicate(timeout=2)
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "1234567890abcdef1234567890abcdef12345678"
+
+
 def test_release_license_and_http_identity_are_consistent() -> None:
     from depcheck import __version__
     from depcheck.compatibility.pypi_client import PyPIClient

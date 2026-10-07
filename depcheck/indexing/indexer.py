@@ -960,6 +960,7 @@ def _git_head(root: Path) -> str | None:
         completed = subprocess.run(
             [executable, "-C", str(root), "rev-parse", "HEAD"],
             check=False,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
