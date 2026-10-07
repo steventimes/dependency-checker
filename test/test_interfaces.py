@@ -17,6 +17,16 @@ def make_python_project(root: Path) -> None:
     (root / "app.py").write_text("import requests\n", encoding="utf-8")
 
 
+def mcp_stdio_arguments(*arguments: str) -> list[str]:
+    return [
+        "-c",
+        "import faulthandler, runpy; "
+        "faulthandler.dump_traceback_later(10); "
+        "runpy.run_module('depcheck.agent.mcp_server', run_name='__main__')",
+        *arguments,
+    ]
+
+
 def test_explanations_and_impacts_retain_incomplete_usage_coverage(tmp_path):
     (tmp_path / "package.json").write_text('{"dependencies":{"component-lib":"1.0.0"}}')
     (tmp_path / "App.astro").write_text("<div>component</div>\n")
@@ -255,7 +265,7 @@ def test_mcp_stdio_calls_all_tools_and_rejects_unapproved_root(tmp_path: Path) -
     async def exercise():
         server = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "depcheck.agent.mcp_server", "--allow-root", str(tmp_path)],
+            args=mcp_stdio_arguments("--allow-root", str(tmp_path)),
         )
         async with stdio_client(server) as (read, write):
             async with ClientSession(read, write) as session:
@@ -347,7 +357,7 @@ def test_mcp_stdio_uses_client_roots_without_fixed_allowlist(tmp_path: Path) -> 
 
         server = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "depcheck.agent.mcp_server"],
+            args=mcp_stdio_arguments(),
             env={"DEPCHECK_ALLOWED_ROOTS": ""},
         )
         async with stdio_client(server) as (read, write):
