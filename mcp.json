@@ -13,7 +13,7 @@
         "--frozen",
         "depcheck-mcp"
       ],
-      "cwd": "."
+      "cwd": "./"
     }
   }
 }

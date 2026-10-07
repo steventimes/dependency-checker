@@ -130,6 +130,10 @@
           "run": "uv sync --frozen --extra test"
         },
         {
+          "name": "Check MCP stdio and client roots",
+          "run": "uv run --frozen --extra test python -m pytest test/test_interfaces.py -q -k 'mcp_stdio or client_roots'"
+        },
+        {
           "name": "Build package",
           "run": "uv run --frozen --extra test python -m build --outdir \"${{ runner.temp }}/depcheck-dist\""
         },

@@ -35,7 +35,9 @@ IGNORED_DIRECTORIES = {
     "__pycache__",
     "build",
     "dist",
+    "dist-packages",
     "node_modules",
+    "site-packages",
     "venv",
 }
 
@@ -55,6 +57,14 @@ parser_map: dict[str, type[BaseDependencyParser]] = {
     "makefile": PipInstallParser,
     "CMakeLists.txt": PipInstallParser,
 }
+
+
+def is_requirements_file(path: Path) -> bool:
+    candidate = Path(path)
+    stem = candidate.stem.lower()
+    return candidate.suffix.lower() in {".txt", ".lock"} and (
+        stem.startswith("requirements") or stem.endswith("-requirements")
+    )
 
 
 class PythonManifestCollector:
@@ -91,9 +101,7 @@ class PythonManifestCollector:
                     )
 
             for filename in sorted(
-                name
-                for name in filename_set
-                if name.startswith("requirements") and name.endswith(".txt")
+                name for name in filename_set if is_requirements_file(Path(name))
             ):
                 self._append_dependency_file(current_dir / filename, found_files, seen)
 
@@ -174,7 +182,7 @@ class PythonManifestCollector:
     def _get_parser(self, file_path: Path) -> type[BaseDependencyParser]:
         if file_path.name in parser_map:
             return parser_map[file_path.name]
-        if file_path.name.startswith("requirements") and file_path.suffix == ".txt":
+        if is_requirements_file(file_path):
             return RequirementParser
         raise KeyError(f"Unsupported dependency file: {file_path}")
 

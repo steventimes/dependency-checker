@@ -24,7 +24,10 @@ from depcheck.ecosystems.python import (
 from depcheck.ecosystems.static import discover_files, is_excluded
 from depcheck.path_policy import external_path_executable, require_within_project
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
-from depcheck.ecosystems.python_manifest import PythonManifestCollector
+from depcheck.ecosystems.python_manifest import (
+    PythonManifestCollector,
+    is_requirements_file,
+)
 
 from .models import INDEX_SCHEMA, IndexRefreshResult
 from .store import IndexStore
@@ -53,6 +56,7 @@ _ECOSYSTEM_MANIFEST_NAMES = frozenset(
 )
 _ECOSYSTEM_SOURCE_SUFFIXES = frozenset(
     {
+        ".astro",
         ".c",
         ".cc",
         ".cpp",
@@ -71,6 +75,8 @@ _ECOSYSTEM_SOURCE_SUFFIXES = frozenset(
         ".cjs",
         ".ts",
         ".tsx",
+        ".vue",
+        ".svelte",
     }
 )
 
@@ -143,7 +149,9 @@ class RepositoryIndexer:
             changed_python = {
                 path
                 for path, digest in python_digests.items()
-                if topology_changed or previous_python.get(path) != digest
+                if topology_changed
+                or metadata.get("config_digest") != config_digest
+                or previous_python.get(path) != digest
             }
             removed_python = set(previous_python) - set(python_digests)
 
@@ -246,6 +254,10 @@ class RepositoryIndexer:
                         for path in relative_manifests
                         if path.name
                         in {"Pipfile.lock", "pdm.lock", "poetry.lock", "uv.lock"}
+                        or (
+                            path.suffix.lower() == ".lock"
+                            and is_requirements_file(path)
+                        )
                     ),
                 )
                 pack = create_python_pack(
@@ -750,7 +762,7 @@ def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) ->
 def _config_digest(config: DepcheckConfig) -> str:
     payload = asdict(config)
     # 数据表结构未变时，也要使旧分析语义生成的缓存失效。
-    payload["analysis_revision"] = 9
+    payload["analysis_revision"] = 11
     payload["import_mapping"] = dict(sorted(config.import_mapping.items()))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

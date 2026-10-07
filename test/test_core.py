@@ -29,6 +29,71 @@ from depcheck.model import (
 )
 
 
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        (
+            "RUN pip install requests==2.31.0 && groupadd --gid 10001 worker",
+            {"requests"},
+        ),
+        (
+            "RUN pip install --require-hashes -r requirements.lock && rm -rf /build && useradd --uid 10001 worker",
+            set(),
+        ),
+        ("RUN pip install requests==2.31.0; rm -rf /wheels", {"requests"}),
+        (
+            "RUN pip install --target staging requests==2.31.0 | tee install.log",
+            {"requests"},
+        ),
+    ],
+)
+def test_pip_install_hints_stop_before_shell_commands(tmp_path, command, expected):
+    from depcheck.analyzer.pip_install_parser import PipInstallParser
+
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(command + "\n")
+    parser = PipInstallParser(dockerfile)
+    assert set(parser.parse()) == expected
+    assert {d.name for d in parser.parse_detailed().declarations} == expected
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "requirements.lock",
+        "requirements-dev.lock",
+        "runtime-requirements.lock",
+        "build-requirements.lock",
+    ],
+)
+def test_compiled_requirements_locks_keep_pins_hashes_and_markers(tmp_path, filename):
+    from depcheck.ecosystems.python_manifest import PythonManifestCollector
+
+    path = tmp_path / filename
+    path.write_text(
+        'urllib3==2.8.0; python_version >= "3.11" \\\n'
+        "    --hash=sha256:" + "a" * 64 + " \\\n"
+        "    --hash=sha256:" + "b" * 64 + "\n"
+    )
+    parsed = PythonManifestCollector(tmp_path).collect()
+    assert not parsed.diagnostics
+    assert len(parsed.declarations) == 1
+    declaration = parsed.declarations[0]
+    assert declaration.kind == "locked"
+    assert declaration.pinned_version == "2.8.0"
+    assert declaration.marker is not None
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert result.bundles[0].resolved[0].version == "2.8.0"
+    assert result.bundles[0].project.locks == (Path(filename),)
+
+
+def test_compiled_requirements_lock_ranges_remain_incomplete(tmp_path):
+    (tmp_path / "requirements.lock").write_text("urllib3>=2\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert any(d.code == "manifest.invalid-lock-entry" for d in result.diagnostics)
+
+
 def test_package_identity_preserves_resolved_instances() -> None:
     first = PackageIdentity("npm:app:.", "npm", "react", "18.3.1", "node_modules/react")
     second = PackageIdentity(

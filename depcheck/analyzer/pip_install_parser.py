@@ -32,6 +32,21 @@ class PipInstallParser(BaseDependencyParser):
         "--constraint",
         "-e",
         "--editable",
+        "-i",
+        "--index-url",
+        "--extra-index-url",
+        "-f",
+        "--find-links",
+        "-t",
+        "--target",
+        "--prefix",
+        "--root",
+        "--platform",
+        "--python-version",
+        "--implementation",
+        "--abi",
+        "--config-settings",
+        "-C",
     }
 
     def parse(self) -> dict[str, str | None]:
@@ -149,13 +164,17 @@ class PipInstallParser(BaseDependencyParser):
 
     def _requirement_tokens(self, args: str) -> list[str]:
         try:
-            tokens = shlex.split(args, posix=True)
+            lexer = shlex.shlex(args, posix=True, punctuation_chars=";&|")
+            lexer.whitespace_split = True
+            tokens = list(lexer)
         except ValueError:
             tokens = args.split()
 
         results: list[str] = []
         skip_next = False
         for token in tokens:
+            if token and all(character in ";&|" for character in token):
+                break
             if skip_next:
                 skip_next = False
                 continue

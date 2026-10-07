@@ -11,6 +11,12 @@ If the tools are absent or the transport fails, use an installed `depcheck` CLI
 as described below. If neither is available, report that limitation. Do not
 silently install tools or repeatedly retry a stalled transport.
 
+An MCP allowlist can exclude another repository the user explicitly asked you
+to inspect. Use the CLI when direct filesystem access to that requested root is
+authorized; keep the server allowlist intact. CLI scans are read-only, while
+indexing writes a cache. For read-only trials, scan the original and use an
+isolated source snapshot for indexed queries, stating the snapshot's coverage.
+
 MCP queries and update previews are read-only. `index_repository` and
 `scan_repository` create or replace the local `.depcheck` cache; they do not
 change source or manifests. The tool annotations describe these side effects.
@@ -54,6 +60,10 @@ change source or manifests. The tool annotations describe these side effects.
    `explain_dependency` for usage locations and mapping confidence. No observed
    imports is a removal candidate, not proof of non-use: entry points, plugins,
    dynamic imports, and deployment configuration may need inspection.
+   Check `usage_complete` and `evidence_complete` in query, explain, and impact
+   results. Zero observed usages with incomplete coverage means unknown impact.
+   These flags describe the collected static evidence; even `true` does not
+   establish coverage of every command, entry point, or plugin.
    Read `usages` as well as `imports`: a `kind: "tool"` entry with
    `mapping_confidence: "configured"` records a scoped user declaration in
    `.depcheck.toml`. Preserve its reason and location when explaining use;
@@ -100,6 +110,36 @@ when the identity is known; filter index/scan only when the task asks for that
 scope. Respect configured exclusions. CLI exit 1 is a policy failure, exit 2 an
 operation error; exit 0 alone does not establish complete coverage.
 
+Before acting on findings, compare collected files with the project's manifests,
+ignored/generated directories, package scripts, and build/test configuration.
+Discovery excludes installed `site-packages`/`dist-packages` trees but does not
+interpret `.gitignore`. Use existing configured exclusions or an explicitly
+scoped snapshot to keep unrelated artifacts out; do not edit the audited
+project's configuration just to improve a trial result.
+
+Compare raw dependency-bearing manifests with the registered packs. Cargo/Rust
+and browser/CDN dependencies are not covered by the current scanners, even when
+`scope.repository_complete` is true. Python manifests currently share a
+repository-level project ID; inspect declaration locations before treating
+repetition across independent Python components as duplication. For component
+decisions, scan the component root separately and retain that narrower scope.
+
+For a requested tool-usage configuration, use a scoped entry with a reason
+supported by the project's build, test, or deployment files:
+
+```toml
+[[tool-usage]]
+ecosystem = "PyPI"
+project-id = "pypi:python:."
+package = "ruff"
+scope = "test"
+reason = "Runs as the lint command in CI"
+```
+
+Confirm the exact project ID and direct declaration first. This records a user
+configuration claim, not command execution; do not add it solely to silence a
+warning or change the audited project's configuration during a read-only trial.
+
 ## Static and network boundary
 
 The normal scan is data-only: it must not execute repository code, import the
@@ -122,6 +162,18 @@ Treat yarn locks, unsupported pnpm resolutions, dynamic Gradle or Conan
 expressions, and unknown Java/C++ namespace ownership as incomplete or
 low-confidence evidence. Do not
 turn those limitations into confident removal, upgrade, or safety claims.
+
+Maven versions inherited from unavailable parents/BOMs remain unresolved;
+absence of a literal version is not proof that an installed dependency is
+unpinned. Local reactor SNAPSHOT references also need build-context review.
+Astro, Vue, and Svelte components produce `usage.unsupported-source`; stylesheet
+and command-only uses may also be absent from import evidence. Check frontend
+scripts and test/build configuration before suggesting removal or scope moves.
+
+Compiled `requirements*.lock` and `*-requirements.lock` files provide exact
+Python version evidence, including multiline hash options and markers. These
+locks are read-only evidence sources; update previews still target supported
+requirements text entries or explicit static PEP 621 groups.
 
 Exact `package.json` imports string keys can map to bare npm package targets,
 explicit safely discovered local files, or bare Node builtins such as `"fs"`

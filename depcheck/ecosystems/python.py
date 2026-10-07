@@ -34,6 +34,7 @@ from depcheck.ecosystems.static import exclusions_for
 from depcheck.ecosystems.python_manifest import (
     PythonManifestCollector,
     IGNORED_DIRECTORIES,
+    is_requirements_file,
     parser_map,
 )
 
@@ -82,7 +83,12 @@ class PythonProjectDetector:
 
         relative_root = Path(".")
         relative_manifests = tuple(_relative(path, root) for path in manifests)
-        locks = tuple(path for path in relative_manifests if path.name in _LOCK_NAMES)
+        locks = tuple(
+            path
+            for path in relative_manifests
+            if path.name in _LOCK_NAMES
+            or (path.suffix.lower() == ".lock" and is_requirements_file(path))
+        )
         return (
             ProjectUnit(
                 project_id=ProjectUnit.stable_id(
@@ -338,7 +344,27 @@ def adapt_python_bundle(
         else raw_usages
     )
 
-    manifest_complete = _complete(manifest_result.diagnostics)
+    component_roots: dict[str, set[Path]] = {}
+    for item in declarations:
+        if item.kind == "direct" and item.source.path.name == "pyproject.toml":
+            component_roots.setdefault(item.package.name, set()).add(
+                item.source.path.parent
+            )
+    component_diagnostics = tuple(
+        Diagnostic(
+            code="analysis.python-component-scope-ambiguous",
+            severity="error",
+            message=(
+                f"{package} is declared in independent Python component manifests; "
+                "their installation scopes cannot be compared as one project."
+            ),
+        )
+        for package, roots in sorted(component_roots.items())
+        if len(roots) > 1
+    )
+    manifest_complete = _complete(
+        (*manifest_result.diagnostics, *component_diagnostics)
+    )
     usage_complete = _complete(usage_result.diagnostics) and not any(
         item.code == "usage.dynamic" for item in usage_result.diagnostics
     )
@@ -356,7 +382,11 @@ def adapt_python_bundle(
         declarations=declarations,
         resolved=resolved,
         usages=usages,
-        diagnostics=(*manifest_result.diagnostics, *usage_result.diagnostics),
+        diagnostics=(
+            *manifest_result.diagnostics,
+            *component_diagnostics,
+            *usage_result.diagnostics,
+        ),
         capabilities=capabilities,
         source_files=usage_result.files,
         evidence_files=manifest_result.files,
@@ -495,8 +525,7 @@ def _has_manifest_candidate(
                 name in parser_map
                 and (include_install_hints or name not in install_hint_names)
             )
-            or name.startswith("requirements")
-            and name.endswith(".txt")
+            or is_requirements_file(Path(name))
             for name in filenames
         ):
             return True

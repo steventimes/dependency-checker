@@ -23,6 +23,7 @@ class _ImportVisitor(ast.NodeVisitor):
         self.path = path
         self.scope = scope
         self.kind = "regular"
+        self.script_context = False
         self.imports: list[ImportEvidence] = []
         self.diagnostics: list[Diagnostic] = []
         self.import_modules = {"importlib"}
@@ -45,6 +46,15 @@ class _ImportVisitor(ast.NodeVisitor):
             self._record(node.module, node)
 
     def visit_If(self, node: ast.If) -> None:
+        if isinstance(node.test, ast.Name) and node.test.id == "__package__":
+            for child in node.body:
+                self.visit(child)
+            previous = self.script_context
+            self.script_context = True
+            for child in node.orelse:
+                self.visit(child)
+            self.script_context = previous
+            return
         if self._is_type_checking(node.test):
             self._visit_with_kind(node.body, "typing")
             for child in node.orelse:
@@ -99,6 +109,8 @@ class _ImportVisitor(ast.NodeVisitor):
 
     def _record(self, module: str, node: ast.AST, *, kind: str | None = None) -> None:
         top_level = module.split(".", 1)[0]
+        if self.script_context and self._is_script_local_module(top_level):
+            return
         self.imports.append(
             ImportEvidence(
                 module=top_level,
@@ -111,6 +123,15 @@ class _ImportVisitor(ast.NodeVisitor):
                 kind=self.kind if self.kind != "regular" else (kind or "regular"),
             )
         )
+
+    def _is_script_local_module(self, name: str) -> bool:
+        if not name.isidentifier():
+            return False
+        for suffix in (".py", ".pyi"):
+            candidate = self.path.parent / (name + suffix)
+            if not candidate.is_symlink() and candidate.is_file():
+                return True
+        return False
 
     def _visit_with_kind(self, nodes: list[ast.stmt], kind: str) -> None:
         previous = self.kind
@@ -149,7 +170,9 @@ class ImportScanner:
         "__pycache__",
         "build",
         "dist",
+        "dist-packages",
         "node_modules",
+        "site-packages",
         "venv",
     }
 

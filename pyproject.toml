@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==80.9.0"]
+requires = ["setuptools==83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -36,16 +36,17 @@ test = [
     "build>=1.2,<2",
     "mcp>=1.28,<2",
     "mypy>=1.10,<2",
-    "pytest>=8,<9",
+    "pytest>=9.0.3,<10",
     "ruff>=0.6,<1",
-    "setuptools==80.9.0",
+    "setuptools==83.0.0",
     "types-PyYAML>=6,<7",
     "uv==0.12.4",
 ]
 
 [tool.uv]
 required-version = "==0.12.4"
-build-constraint-dependencies = ["setuptools==80.9.0"]
+build-constraint-dependencies = ["setuptools==83.0.0"]
+constraint-dependencies = ["PyJWT>=2.15.0", "urllib3>=2.8.0"]
 
 [project.scripts]
 depcheck = "depcheck.command:cli"

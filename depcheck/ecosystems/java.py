@@ -671,7 +671,7 @@ def _load_effective_pom(
                             manifest,
                         )
                     )
-                    return None
+                    parent_model = None
 
     parent_properties = _pom_properties(parent_model) if parent_model else {}
     inherited_properties = dict(parent_model.properties) if parent_model else {}

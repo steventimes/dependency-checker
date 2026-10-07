@@ -150,6 +150,106 @@ def test_installation_alias_queries_real_package_and_maps_usage(tmp_path, lock_k
         assert parent.dependency_links[0].package.name == "on"
 
 
+@pytest.mark.parametrize("directory", ["site-packages", "dist-packages"])
+def test_installed_libraries_do_not_become_repository_evidence(tmp_path, directory):
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
+    (tmp_path / "app.py").write_text("import requests\n")
+    (tmp_path / "package.json").write_text("{}")
+    installed = tmp_path / "artifacts/environment/lib/python3.12" / directory
+    installed.mkdir(parents=True)
+    (installed / "pyproject.toml").write_text('[project]\ndependencies=["bogus==1"]\n')
+    (installed / "library.py").write_text("import yaml\n")
+    (installed / "package.json").write_text('{"dependencies":{"bogus":"1.0.0"}}')
+    (installed / "library.js").write_text("import bogus from 'bogus';\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.findings
+    assert {d.package.name for b in result.bundles for d in b.declarations} == {
+        "requests"
+    }
+    assert {p for b in result.bundles for p in b.source_files} == {tmp_path / "app.py"}
+
+
+def test_independent_python_components_do_not_establish_duplicate_installations(
+    tmp_path,
+):
+    for name in ("gateway", "security"):
+        component = tmp_path / name
+        component.mkdir()
+        (component / "pyproject.toml").write_text(
+            '[project]\ndependencies=["cryptography>=45"]\n'
+        )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not any(
+        f.code in {"declaration.duplicate", "declaration.conflict"}
+        for f in result.findings
+    )
+    assert any(
+        d.code == "analysis.python-component-scope-ambiguous"
+        for d in result.diagnostics
+    )
+    assert not result.capability("dependency_hygiene").complete
+
+
+@pytest.mark.parametrize(
+    "filename,scope",
+    [
+        ("src/site.test.ts", "test"),
+        ("src/site.spec.mjs", "test"),
+        ("playwright.config.ts", "test"),
+        ("vitest.config.ts", "test"),
+        ("astro.config.mjs", "build"),
+        ("vite.config.ts", "build"),
+        ("webpack.config.cjs", "build"),
+    ],
+)
+def test_javascript_tool_configs_and_test_files_accept_dev_dependencies(
+    tmp_path, filename, scope
+):
+    (tmp_path / "package.json").write_text('{"devDependencies":{"tool-lib":"1.0.0"}}')
+    source = tmp_path / filename
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("import tool from 'tool-lib';\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.findings
+    assert result.bundles[0].usages[0].scope == scope
+    source.rename(tmp_path / "runtime.js")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert any(f.code == "dependency.scope-mismatch" for f in result.findings)
+
+
+@pytest.mark.parametrize("suffix", [".astro", ".vue", ".svelte"])
+def test_unparsed_frontend_components_do_not_establish_unused_dependencies(
+    tmp_path, suffix
+):
+    (tmp_path / "package.json").write_text('{"dependencies":{"component-lib":"1.0.0"}}')
+    source = tmp_path / ("Component" + suffix)
+    source.write_text("<script>import thing from 'component-lib';</script>\n")
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert not any(f.code == "dependency.unused" for f in result.findings)
+    assert any(d.code == "usage.unsupported-source" for d in result.diagnostics)
+    assert source in result.bundles[0].source_files
+
+
+@pytest.mark.parametrize("version", ["", "${external.version}"])
+def test_unresolved_maven_managed_versions_are_not_unpinned_findings(tmp_path, version):
+    rendered = f"<version>{version}</version>" if version else ""
+    (tmp_path / "pom.xml").write_text(
+        "<project><dependencyManagement><dependencies><dependency>"
+        "<groupId>org.example</groupId><artifactId>platform</artifactId><version>1.0.0</version>"
+        "<type>pom</type><scope>import</scope></dependency></dependencies></dependencyManagement>"
+        "<dependencies><dependency><groupId>org.example</groupId><artifactId>managed</artifactId>"
+        + rendered
+        + "</dependency><dependency><groupId>org.example</groupId><artifactId>floating</artifactId>"
+        "<version>[1.0,2.0)</version></dependency></dependencies></project>"
+    )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    assert not result.capability("dependency_hygiene").complete
+    assert {
+        f.package.name for f in result.findings if f.code == "dependency.unpinned"
+    } == {"org.example:floating"}
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -573,6 +673,59 @@ def test_go_replace_uses_effective_coordinate_for_usage_and_security(
     assert bundle.usages[0].mapped_package.name == "new.example/fork"
 
 
+@pytest.mark.parametrize("parent_version", ["1.0.0", "${revision}"])
+def test_maven_parent_mismatch_preserves_child_declarations(tmp_path, parent_version):
+    (tmp_path / "pom.xml").write_text(
+        """<project>
+  <groupId>unrelated</groupId><artifactId>reactor</artifactId><version>1.0.0</version>
+  <properties><managed.version>9.9.9</managed.version></properties>
+  <dependencyManagement><dependencies><dependency>
+    <groupId>example</groupId><artifactId>managed</artifactId><version>9.9.9</version>
+  </dependency></dependencies></dependencyManagement>
+</project>"""
+    )
+    child = tmp_path / "component"
+    child.mkdir()
+    (child / "pom.xml").write_text(
+        f"""<project>
+  <parent>
+    <groupId>external</groupId><artifactId>parent</artifactId><version>{parent_version}</version>
+  </parent>
+  <artifactId>component</artifactId>
+  <dependencies>
+    <dependency><groupId>example</groupId><artifactId>pinned</artifactId><version>2.0.0</version></dependency>
+    <dependency><groupId>example</groupId><artifactId>managed</artifactId></dependency>
+    <dependency><groupId>example</groupId><artifactId>expression</artifactId><version>${{managed.version}}</version></dependency>
+  </dependencies>
+</project>"""
+    )
+
+    result = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, enabled_ecosystems=("Maven",))
+    )
+    bundle = next(
+        item for item in result.bundles if item.project.root == Path("component")
+    )
+    direct = {
+        item.package.name: item for item in bundle.declarations if item.kind == "direct"
+    }
+
+    assert set(direct) == {"example:pinned", "example:managed", "example:expression"}
+    assert direct["example:managed"].constraint.normalized is None
+    assert direct["example:expression"].constraint.normalized == "${managed.version}"
+    assert [(item.package.name, item.version) for item in bundle.resolved] == [
+        ("example:pinned", "2.0.0")
+    ]
+    assert all(
+        not item.complete
+        for item in bundle.capabilities
+        if item.name in {"manifest", "resolution"}
+    )
+    assert "manifest.parent-coordinate-mismatch" in {
+        item.code for item in bundle.diagnostics
+    }
+
+
 def test_maven_management_supplies_version_and_maps_java_usage(
     tmp_path: Path,
 ) -> None:
@@ -762,6 +915,35 @@ def test_notebook_dynamic_import_aliases_cross_cell_boundaries(tmp_path: Path) -
     assert [item.module for item in result.imports] == ["requests"]
     assert [item.code for item in result.diagnostics] == ["usage.dynamic"]
     assert result.diagnostics[0].source.line > result.imports[0].source.line
+
+
+@pytest.mark.parametrize("suffix", [".py", ".pyi"])
+def test_python_script_package_branch_keeps_sibling_import_local(tmp_path, suffix):
+    from depcheck.analyzer.import_scanner import ImportScanner
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / ("evidence" + suffix)).write_text("VALUE = 1\n")
+    script = scripts / "report.py"
+    script.write_text(
+        "if __package__:\n"
+        "    from .evidence import VALUE\n"
+        "else:\n"
+        "    from evidence import VALUE\n"
+        "    import requests\n"
+        "import evidence\n"
+    )
+    scanner = ImportScanner()
+
+    for result in (
+        scanner.scan_detailed(tmp_path),
+        scanner.scan_files(tmp_path, [script]),
+    ):
+        assert {(item.module, item.source.line) for item in result.imports} == {
+            ("requests", 5),
+            ("evidence", 6),
+        }
+        assert not result.diagnostics
 
 
 @pytest.mark.parametrize("layout", ["pkg", "src/pkg"])

@@ -251,6 +251,15 @@ class EvidenceAnalyzer:
                 if item.constraint.scheme.lower()
                 in {"pep440", "semver", "go", "maven", "conan", "vcpkg"}
             ]
+            if any(
+                item.constraint.scheme.lower() == "maven"
+                and (
+                    not (item.constraint.normalized or item.constraint.raw).strip()
+                    or "${" in (item.constraint.normalized or item.constraint.raw)
+                )
+                for item in supported
+            ):
+                continue
             if not supported or any(cls._exact_version(item) for item in supported):
                 continue
             package = direct[0].package
@@ -284,6 +293,18 @@ class EvidenceAnalyzer:
                 installations.setdefault((key, installation), []).append(item)
         for (key, _), direct in installations.items():
             if len(direct) < 2:
+                continue
+            if (
+                key[1] == "pypi"
+                and len(
+                    {
+                        item.source.path.parent
+                        for item in direct
+                        if item.source.path.name == "pyproject.toml"
+                    }
+                )
+                > 1
+            ):
                 continue
             package = direct[0].package
             details = {"project_id": key[0], "ecosystem": package.ecosystem}

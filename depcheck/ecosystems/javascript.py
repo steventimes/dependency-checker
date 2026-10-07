@@ -43,6 +43,7 @@ _LOCK_NAMES = (
     "yarn.lock",
 )
 _SOURCE_SUFFIXES = frozenset({".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"})
+_UNPARSED_SOURCE_SUFFIXES = frozenset({".astro", ".vue", ".svelte"})
 _DEPENDENCY_SECTIONS = (
     ("dependencies", "runtime"),
     ("devDependencies", "development"),
@@ -533,7 +534,7 @@ class NpmEvidenceCollector:
             path
             for path in discover_files(
                 project_root,
-                suffixes=_SOURCE_SUFFIXES,
+                suffixes=_SOURCE_SUFFIXES | _UNPARSED_SOURCE_SUFFIXES,
                 excluded_directories=excluded_directories,
             )
             if _nearest_package_root(path.parent, project_root) == project_root
@@ -541,6 +542,17 @@ class NpmEvidenceCollector:
         source_paths = frozenset(source_files)
         alias_resolutions: dict[str, AliasResolution] = {}
         for path in source_files:
+            if path.suffix.lower() in _UNPARSED_SOURCE_SUFFIXES:
+                complete = False
+                diagnostics.append(
+                    _diagnostic(
+                        "usage.unsupported-source",
+                        f"Static imports in {path.suffix} components are not supported",
+                        path,
+                        severity="warning",
+                    )
+                )
+                continue
             try:
                 text = read_text(path)
             except StaticReadError as exc:
@@ -1027,9 +1039,16 @@ def _nearest_package_root(path: Path, boundary: Path) -> Path:
 
 def _source_scope(path: Path, root: Path) -> str:
     parts = {item.lower() for item in path.relative_to(root).parts}
-    return (
-        "test" if parts & {"__tests__", "spec", "specs", "test", "tests"} else "runtime"
-    )
+    stem = path.stem.lower()
+    if (
+        parts & {"__tests__", "spec", "specs", "test", "tests"}
+        or stem.endswith((".test", ".spec"))
+        or stem in {"playwright.config", "vitest.config", "jest.config", "karma.config"}
+    ):
+        return "test"
+    if stem in {"astro.config", "vite.config", "webpack.config", "rollup.config"}:
+        return "build"
+    return "runtime"
 
 
 def _diagnostic(

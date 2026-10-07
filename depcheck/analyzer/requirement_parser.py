@@ -51,7 +51,7 @@ class RequirementParser(BaseDependencyParser):
         self._parse_file(
             self.path,
             group=self._group_for_filename(self.path.name),
-            kind="direct",
+            kind="locked" if self.path.suffix.lower() == ".lock" else "direct",
             declarations=declarations,
             diagnostics=diagnostics,
             files=files,
@@ -178,16 +178,30 @@ class RequirementParser(BaseDependencyParser):
             if stripped.startswith("-"):
                 continue
 
+            stripped = re.sub(
+                r"(?:\s+--hash(?:=|\s+)[A-Za-z0-9_-]+:[A-Fa-f0-9]+)+\s*$",
+                "",
+                stripped,
+            )
             source = SourceLocation(path, line=line_number)
             try:
-                declarations.append(
-                    PythonRequirement.from_requirement(
-                        stripped,
-                        source=source,
-                        group=group,
-                        kind=kind,
-                    )
+                requirement = PythonRequirement.from_requirement(
+                    stripped,
+                    source=source,
+                    group=group,
+                    kind=kind,
                 )
+                if kind == "locked" and requirement.pinned_version is None:
+                    diagnostics.append(
+                        Diagnostic(
+                            code="manifest.invalid-lock-entry",
+                            severity="error",
+                            message="Compiled requirements locks require exact registry versions",
+                            source=source,
+                        )
+                    )
+                else:
+                    declarations.append(requirement)
             except InvalidRequirement as exc:
                 diagnostics.append(
                     Diagnostic(
@@ -230,6 +244,8 @@ class RequirementParser(BaseDependencyParser):
     @staticmethod
     def _group_for_filename(filename: str) -> str:
         lowered = filename.lower()
+        if lowered.startswith("build-") or "-build" in lowered:
+            return "build"
         if any(token in lowered for token in ("dev", "test", "lint", "quality")):
             return "dev"
         return "runtime"

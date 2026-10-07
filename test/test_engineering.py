@@ -243,6 +243,82 @@ def test_skill_scorer_accepts_real_diagnostic_fields_and_rejects_wrong_claims() 
         assert not scorer["score_suite"](cases, traces).passed
 
 
+@pytest.mark.parametrize("field", ["security_safe", "release_ready"])
+@pytest.mark.parametrize(
+    "claim,accepted",
+    [(None, True), (False, True), (True, False), (0, False), ("false", False)],
+)
+def test_skill_scorer_accepts_unknown_claims_without_accepting_safe_claims(
+    field, claim, accepted
+) -> None:
+    from dataclasses import replace
+    import runpy
+
+    evals = ROOT / "skills" / "check-dependencies" / "evals"
+    scorer = runpy.run_path(str(evals / "score.py"))
+    case = next(
+        c
+        for c in scorer["load_cases"](evals / "cases.json")
+        if c.case_id == "missing-lockfile"
+    )
+    case = replace(case, expected_claims={**case.expected_claims, field: [False, None]})
+    trace = scorer["load_traces"](evals / "traces.example.json")[case.case_id]
+    trace["claims"][field] = claim
+    assert scorer["score_suite"]([case], {case.case_id: trace}).passed is accepted
+    trace["claims"].pop(field)
+    assert not scorer["score_suite"]([case], {case.case_id: trace}).passed
+
+
+def test_skill_scorer_matches_cli_operation_before_checking_response() -> None:
+    import runpy
+
+    scorer = runpy.run_path(str(ROOT / "skills/check-dependencies/evals/score.py"))
+    expected = [
+        {
+            "name": "cli",
+            "arguments": {"command": "update"},
+            "result_contains": {"read_only": True},
+        }
+    ]
+    calls = [
+        {"name": "cli", "arguments": {"command": "context"}, "result": {}},
+        {
+            "name": "cli",
+            "arguments": {"command": "update"},
+            "result": {"read_only": True},
+        },
+    ]
+    assert not scorer["_check_tool_calls"](expected, calls)
+    calls[1]["arguments"]["argv"] = ["update", "/repo", "urllib3==2.2.3"]
+    assert scorer["_check_tool_calls"](expected, calls)
+    expected[0]["arguments_contains"] = {"command": "update"}
+    assert not scorer["_check_tool_calls"](expected, calls)
+    calls[1]["result"]["read_only"] = False
+    assert scorer["_check_tool_calls"](expected, calls)
+    assert scorer["_check_tool_calls"](expected, calls[:1])
+
+
+def test_analysis_change_reparses_cached_python_usage(tmp_path: Path) -> None:
+    from depcheck.analyzer.import_scanner import ImportScanner
+    from depcheck.indexing import RepositoryIndex, RepositoryIndexer
+    from depcheck.model import ImportEvidence, SourceLocation
+
+    class OldScanner(ImportScanner):
+        def _scan_file_detailed(self, path, scope):
+            return [ImportEvidence("obsolete", SourceLocation(path, 1), scope)], []
+
+    (tmp_path / "app.py").write_text("import requests\n")
+    RepositoryIndexer(import_scanner=OldScanner()).refresh(tmp_path)
+    with IndexStore(tmp_path) as store, store.transaction():
+        store.set_metadata({"config_digest": "older-analysis-semantics"})
+
+    RepositoryIndexer().refresh(tmp_path)
+
+    assert [item["package"] for item in RepositoryIndex(tmp_path).dependencies()] == [
+        "requests"
+    ]
+
+
 def test_new_exclusions_remove_previously_indexed_manifests(tmp_path: Path) -> None:
     from depcheck.indexing import RepositoryIndex, RepositoryIndexer
 
@@ -590,3 +666,35 @@ def test_unsupported_yarn_lock_addition_invalidates_full_index(tmp_path):
     assert not service.repository_context()["stale"]
     project = service.repository_context()["projects"][0]
     assert not project["capabilities"]["resolution"]["complete"]
+
+
+@pytest.mark.parametrize("filtered", [False, True])
+def test_unsupported_frontend_component_changes_invalidate_index(tmp_path, filtered):
+    from depcheck.agent import DependencyAgentService
+
+    (tmp_path / "package.json").write_text("{}")
+    service = DependencyAgentService(tmp_path)
+    selection = {"ecosystems": ("npm",)} if filtered else {}
+    service.index_repository(**selection)
+    assert not service.repository_context()["stale"]
+    (tmp_path / "Component.astro").write_text("<div>example</div>\n")
+    assert service.repository_context()["stale"]
+    service.index_repository(**selection)
+    assert not service.repository_context()["stale"]
+    project = service.repository_context()["projects"][0]
+    assert not project["capabilities"]["usage"]["complete"]
+
+
+def test_compiled_requirements_lock_changes_invalidate_index(tmp_path):
+    from depcheck.agent import DependencyAgentService
+
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies=["urllib3>=2"]\n')
+    lock = tmp_path / "requirements-production.lock"
+    lock.write_text("urllib3==2.7.0\n")
+    service = DependencyAgentService(tmp_path)
+    service.index_repository()
+    assert service.explain_dependency("urllib3")["resolved_version"] == "2.7.0"
+    lock.write_text("urllib3==2.8.0\n")
+    assert service.repository_context()["stale"]
+    service.index_repository()
+    assert service.explain_dependency("urllib3")["resolved_version"] == "2.8.0"

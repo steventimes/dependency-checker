@@ -6,7 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from .service import DependencyAgentService
 
@@ -193,7 +194,7 @@ async def _client_root_policy(context: Context) -> RootPolicy:
         parsed = urlsplit(str(root.uri))
         if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
             continue
-        candidate = Path(unquote(parsed.path))
+        candidate = Path(url2pathname(parsed.path))
         if candidate.is_dir():
             roots.append(candidate)
     if not roots:

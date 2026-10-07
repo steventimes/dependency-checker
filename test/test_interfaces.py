@@ -17,6 +17,23 @@ def make_python_project(root: Path) -> None:
     (root / "app.py").write_text("import requests\n", encoding="utf-8")
 
 
+def test_explanations_and_impacts_retain_incomplete_usage_coverage(tmp_path):
+    (tmp_path / "package.json").write_text('{"dependencies":{"component-lib":"1.0.0"}}')
+    (tmp_path / "App.astro").write_text("<div>component</div>\n")
+    service = DependencyAgentService(tmp_path)
+    service.index_repository()
+    query = service.query_dependencies("component-lib")
+    assert query["dependencies"][0]["usage_complete"] is False
+    explanation = service.explain_dependency("component-lib")
+    assert explanation["usages"] == []
+    assert explanation["usage_complete"] is False
+    assert explanation["evidence_complete"] is False
+    impact = service.dependency_impact("component-lib")
+    assert impact["usage_count"] == 0
+    assert impact["usage_complete"] is False
+    assert impact["evidence_complete"] is False
+
+
 def test_scan_cli_uses_the_canonical_schema(
     tmp_path: Path,
     capsys,
@@ -268,6 +285,95 @@ def test_mcp_stdio_calls_all_tools_and_rejects_unapproved_root(tmp_path: Path) -
 
     asyncio.run(bounded_exercise())
     assert (tmp_path / "requirements.txt").read_text() == "requests==2.31.0\n"
+
+
+def test_client_roots_decode_file_uri_once(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from depcheck.agent.mcp_server import _client_root_policy
+
+    root = tmp_path / "repo%2F with space"
+    root.mkdir()
+
+    async def list_roots():
+        return SimpleNamespace(roots=[SimpleNamespace(uri=root.as_uri())])
+
+    context = SimpleNamespace(
+        request_context=SimpleNamespace(session=SimpleNamespace(list_roots=list_roots))
+    )
+    policy = asyncio.run(_client_root_policy(context))
+    assert policy.allowed_roots == (root.resolve(),)
+
+
+def test_client_roots_use_native_windows_uri_conversion(tmp_path: Path, monkeypatch):
+    import nturl2path
+    from types import SimpleNamespace
+    from depcheck.agent import mcp_server
+
+    uri = "file:///C:/workspace/repo%252Fwith%20space"
+    converted = []
+
+    def native_conversion(path):
+        decoded = nturl2path.url2pathname(path)
+        converted.append(decoded)
+        assert decoded == r"C:\workspace\repo%2Fwith space"
+        return str(tmp_path)
+
+    monkeypatch.setattr(mcp_server, "url2pathname", native_conversion, raising=False)
+
+    async def list_roots():
+        return SimpleNamespace(roots=[SimpleNamespace(uri=uri)])
+
+    context = SimpleNamespace(
+        request_context=SimpleNamespace(session=SimpleNamespace(list_roots=list_roots))
+    )
+    policy = asyncio.run(mcp_server._client_root_policy(context))
+    assert policy.allowed_roots == (tmp_path.resolve(),)
+    assert len(converted) == 1
+
+
+def test_mcp_stdio_uses_client_roots_without_fixed_allowlist(tmp_path: Path) -> None:
+    import sys
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    from mcp.types import ListRootsResult, Root
+
+    root = tmp_path / "client repo%2F"
+    root.mkdir()
+    make_python_project(root)
+
+    async def exercise():
+        async def list_roots(context):
+            return ListRootsResult(roots=[Root(uri=root.as_uri(), name="Repository")])
+
+        server = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "depcheck.agent.mcp_server"],
+            env={"DEPCHECK_ALLOWED_ROOTS": ""},
+        )
+        async with stdio_client(server) as (read, write):
+            async with ClientSession(
+                read, write, list_roots_callback=list_roots
+            ) as session:
+                await session.initialize()
+                result = await session.call_tool("index_repository", {})
+                assert not result.isError, result
+                result = await session.call_tool(
+                    "query_dependencies", {"query": "requests"}
+                )
+                assert not result.isError, result
+                payload = json.loads(result.content[0].text)
+                assert payload["dependencies"][0]["resolved_version"] == "2.31.0"
+                rejected = await session.call_tool(
+                    "index_repository", {"project_root": str(tmp_path)}
+                )
+                assert rejected.isError
+
+    async def bounded():
+        async with asyncio.timeout(20):
+            await exercise()
+
+    asyncio.run(bounded())
+    assert (root / "requirements.txt").read_text() == "requests==2.31.0\n"
 
 
 def test_context_runtime_capabilities_match_registered_packs(tmp_path: Path) -> None:

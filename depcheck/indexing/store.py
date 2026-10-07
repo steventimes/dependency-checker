@@ -921,6 +921,13 @@ class IndexStore:
             )
             if project_id is None or str(row["project_id"]) == project_id
         }
+        coverage: dict[str, dict[str, bool]] = {}
+        for row in self.connection.execute(
+            "SELECT project_id, name, complete FROM capabilities"
+        ):
+            coverage.setdefault(str(row["project_id"]), {})[str(row["name"])] = bool(
+                row["complete"]
+            )
         records: dict[tuple[str, str, str], dict[str, Any]] = {}
 
         def record_for(
@@ -946,6 +953,7 @@ class IndexStore:
                 if normalize(row_package) != normalize(package):
                     return None
             key = (row_project_id, row_ecosystem.lower(), row_package)
+            states = coverage.get(row_project_id, {})
             return records.setdefault(
                 key,
                 {
@@ -963,6 +971,10 @@ class IndexStore:
                     "usages": [],
                     "imports": [],
                     "findings": [],
+                    "evidence_complete": bool(states) and all(states.values()),
+                    "usage_complete": all(
+                        states.get(name, False) for name in ("usage", "mapping")
+                    ),
                 },
             )
 

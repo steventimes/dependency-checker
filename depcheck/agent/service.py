@@ -174,6 +174,8 @@ class DependencyAgentService:
             "ecosystem": explanation["ecosystem"],
             "package": explanation["package"],
             "usage_count": len(usages),
+            "evidence_complete": explanation["evidence_complete"],
+            "usage_complete": explanation["usage_complete"],
             "files": files,
             "scopes": dict(sorted(scopes.items())),
             "finding_codes": sorted(

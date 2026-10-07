@@ -219,7 +219,7 @@ def score_suite(
             if not isinstance(claims, Mapping):
                 problems.append("claims must be an object")
             else:
-                if not _contains(claims, case.expected_claims):
+                if not _claims_match(claims, case.expected_claims):
                     problems.append("claims do not match the eval case rubric")
                 problems.extend(_check_claim_consistency(claims, answer))
         if problems:
@@ -233,6 +233,18 @@ def score_suite(
         failed_cases=failed,
         failures=failures,
     )
+
+
+def _claims_match(claims: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    for field, value in expected.items():
+        if field not in claims:
+            return False
+        if field in {"security_safe", "release_ready"} and isinstance(value, list):
+            if not any(claims[field] is option for option in value):
+                return False
+        elif not _contains(claims[field], value):
+            return False
+    return True
 
 
 def _check_claim_consistency(
@@ -287,11 +299,19 @@ def _check_tool_calls(
     position = 0
     for expected_call in expected:
         name = str(expected_call["name"])
+        expected_arguments = expected_call.get(
+            "arguments_contains", expected_call.get("arguments")
+        )
         match = next(
             (
                 (index, call)
                 for index, call in enumerate(actual[position:], start=position)
                 if call.get("name") == name
+                and (
+                    _contains(call.get("arguments"), expected_arguments)
+                    if "arguments_contains" in expected_call
+                    else call.get("arguments") == expected_arguments
+                )
             ),
             None,
         )
@@ -300,8 +320,6 @@ def _check_tool_calls(
             continue
         index, call = match
         position = index + 1
-        if call.get("arguments") != expected_call.get("arguments"):
-            problems.append(f"tool arguments do not match for {name}")
         if not _contains(call.get("result"), expected_call.get("result_contains")):
             problems.append(f"tool result does not satisfy assertions for {name}")
     return problems
@@ -357,6 +375,8 @@ def _tool_calls(data: Mapping[str, Any], key: str) -> tuple[Mapping[str, Any], .
             _object(item, "result")
         else:
             _object(item, "result_contains")
+            if "arguments_contains" in item:
+                _object(item, "arguments_contains")
         calls.append(dict(item))
     return tuple(calls)
 
