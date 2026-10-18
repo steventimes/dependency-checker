@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from pathlib import Path
 import re
 import shlex
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -13,7 +13,7 @@ import requests  # type: ignore[import-untyped]
 from packaging.utils import canonicalize_name
 
 from depcheck._version import USER_AGENT
-from depcheck.snapshots import read_evidence_json, parse_evidence_json
+from depcheck.evidence_input import parse_evidence_json, read_evidence_json
 
 LIFECYCLE = {
     "preinstall",

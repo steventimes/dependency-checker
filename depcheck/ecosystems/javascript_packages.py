@@ -335,3 +335,80 @@ class NpmSources:
                     reason="lock-source-unconfirmed-for-non-registry-request",
                 )
         return origin
+
+
+_NODE_BUILTINS = frozenset(
+    {
+        "assert",
+        "assert/strict",
+        "async_hooks",
+        "buffer",
+        "child_process",
+        "cluster",
+        "console",
+        "crypto",
+        "dgram",
+        "diagnostics_channel",
+        "dns",
+        "dns/promises",
+        "domain",
+        "events",
+        "fs",
+        "fs/promises",
+        "http",
+        "http2",
+        "https",
+        "inspector",
+        "inspector/promises",
+        "module",
+        "net",
+        "os",
+        "path",
+        "path/posix",
+        "path/win32",
+        "perf_hooks",
+        "process",
+        "punycode",
+        "querystring",
+        "readline",
+        "readline/promises",
+        "repl",
+        "stream",
+        "stream/consumers",
+        "stream/promises",
+        "stream/web",
+        "string_decoder",
+        "timers",
+        "timers/promises",
+        "tls",
+        "tty",
+        "url",
+        "util",
+        "util/types",
+        "v8",
+        "vm",
+        "wasi",
+        "worker_threads",
+        "zlib",
+    }
+)
+
+
+def _import_package(reference: str) -> str | None:
+    value = reference.strip()
+    if not value or value.startswith((".", "/", "#")):
+        return None
+    if value.startswith(("node:", "astro:")) or _external_reference(value):
+        return None
+    if value in _NODE_BUILTINS:
+        return None
+    if value.startswith("@"):
+        parts = value.split("/")
+        return "/".join(parts[:2]).lower() if len(parts) >= 2 else None
+    return value.split("/", 1)[0].lower()
+
+
+def _external_reference(reference: str) -> bool:
+    if reference.startswith(("node:", "astro:")):
+        return False
+    return reference.startswith("//") or ":" in reference.split("/", 1)[0]

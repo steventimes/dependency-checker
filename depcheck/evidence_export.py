@@ -8,9 +8,9 @@ from typing import Any
 
 from depcheck._version import __version__
 from depcheck.bounded_io import read_bytes
+from depcheck.evidence_input import read_evidence_json
 from depcheck.model import ANALYSIS_REVISION
 from depcheck.path_policy import require_within_project
-from depcheck.snapshots import read_evidence_json
 
 
 def export_evidence(

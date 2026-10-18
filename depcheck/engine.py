@@ -1,46 +1,38 @@
 from __future__ import annotations
 
-from depcheck.profiling import measured
-
-from depcheck.bounded_io import repository_operation
-
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field, replace
 import hashlib
 import json
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from packaging.utils import canonicalize_name
-
+from depcheck.bounded_io import repository_operation
 from depcheck.compatibility.checker import CompatibilityChecker, CompatibilityReport
 from depcheck.config import DepcheckConfig, load_project_config
+from depcheck.ecosystems import (
+    EcosystemRegistry,
+    ProviderContext,
+    create_default_registry,
+)
+from depcheck.ecosystems.coverage import repository_coverage
+from depcheck.ecosystems.preparation import analyze_bundle, without_ignored
 from depcheck.model import (
+    ANALYSIS_REVISION,
     AnalysisReport,
     Capability,
     CapabilityState,
-    PythonRequirement,
     Diagnostic,
     EvidenceBundle,
     Finding,
     ManifestParseResult,
     PackageIdentity,
     ProjectUnit,
+    PythonRequirement,
     ScanResult,
-    ANALYSIS_REVISION,
 )
+from depcheck.profiling import measured
 from depcheck.security.osv_client import OSVClient
-from depcheck.ecosystems import (
-    EcosystemRegistry,
-    ProviderContext,
-    create_default_registry,
-)
-from depcheck.ecosystems.analysis import EvidenceAnalyzer
-from depcheck.ecosystems.tool_usage import apply_tool_usage
-from depcheck.ecosystems.coverage import repository_coverage
-from depcheck.ecosystems.commands import apply_command_usage
-from depcheck.ecosystems.tool_configs import apply_tool_config_usage
-
 
 _OSV_ECOSYSTEMS = {
     "pypi": "PyPI",
@@ -64,6 +56,8 @@ class RepositoryScanOptions:
 
 
 class RepositoryScanner:
+    _without_ignored = staticmethod(without_ignored)
+
     def __init__(
         self,
         *,
@@ -125,19 +119,14 @@ class RepositoryScanner:
         for project in projects:
             pack = self._pack_for_project(registry, project, config, active)
             bundle = self._collect(root, project, pack, provider_settings)
-            bundle = self._without_ignored(
-                bundle, (*config.ignored_packages, *active.ignored_packages)
+            bundle, report = analyze_bundle(
+                bundle,
+                root,
+                usage_projects,
+                provider_settings,
+                ignored_packages=(*config.ignored_packages, *active.ignored_packages),
+                tool_usage=config.tool_usage,
             )
-            if project.manager != "yarn-lock":
-                bundle = apply_tool_usage(bundle, config.tool_usage, root)
-                bundle = apply_command_usage(
-                    bundle, root, usage_projects, provider_settings
-                )
-                bundle = apply_tool_config_usage(
-                    bundle, root, usage_projects, provider_settings
-                )
-            report = EvidenceAnalyzer().analyze(bundle)
-            bundle = replace(bundle, diagnostics=report.diagnostics)
             bundles.append(bundle)
             reports.append(report)
 
@@ -336,39 +325,6 @@ class RepositoryScanner:
             )
             return factory(mapping)
         return pack
-
-    @staticmethod
-    def _without_ignored(
-        bundle: EvidenceBundle,
-        ignored_packages: tuple[str, ...],
-    ) -> EvidenceBundle:
-        normalize = (
-            canonicalize_name
-            if bundle.project.ecosystem.lower() == "pypi"
-            else str.lower
-        )
-        ignored = {normalize(item) for item in ignored_packages}
-        if not ignored:
-            return bundle
-        return replace(
-            bundle,
-            declarations=tuple(
-                item
-                for item in bundle.declarations
-                if normalize(item.package.name) not in ignored
-            ),
-            resolved=tuple(
-                item
-                for item in bundle.resolved
-                if normalize(item.package.name) not in ignored
-            ),
-            usages=tuple(
-                item
-                for item in bundle.usages
-                if item.mapped_package is None
-                or normalize(item.mapped_package.name) not in ignored
-            ),
-        )
 
     @staticmethod
     @measured("collection.ecosystems")

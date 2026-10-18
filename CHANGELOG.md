@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Separate shared evidence input, OSV advisory interpretation, Python metadata
+  resolution, index preparation and ecosystem parsers into focused modules.
+  Offline advisory reevaluation no longer constructs an HTTP session. CLI and
+  MCP contracts, analysis revision 57 and index schema v4 are unchanged.
+
 ## 0.5.0 — 2026-10-18
 
 [Release](https://github.com/steventimes/dependency-checker/releases/tag/v0.5.0) ·

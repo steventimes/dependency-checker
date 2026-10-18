@@ -6,27 +6,29 @@ from typing import Any
 
 from packaging.utils import canonicalize_name
 
-from depcheck.compatibility.safe_updater import (
-    RequirementUpdatePlan,
-    RequirementsUpdater,
-)
+from depcheck.bounded_io import capture_reads, repository_operation
+from depcheck.cmake_model import inspect_cmake_model
 from depcheck.compatibility.pyproject_updater import PyprojectUpdater
-from depcheck.path_policy import require_within_project
+from depcheck.compatibility.safe_updater import (
+    RequirementsUpdater,
+    RequirementUpdatePlan,
+)
 from depcheck.config import load_project_config
-from depcheck.engine import RepositoryScanner, RepositoryScanOptions
-from depcheck.indexing import RepositoryIndex, RepositoryIndexer
+from depcheck.ecosystems import EcosystemRegistry, create_default_registry
 from depcheck.ecosystems.python_manifest import PythonManifestCollector
 from depcheck.ecosystems.static import is_excluded
-from depcheck.ecosystems import create_default_registry, EcosystemRegistry
-from depcheck.snapshots import compare_snapshots
-from depcheck.sbom import inspect_sbom
-from depcheck.cmake_model import inspect_cmake_model
+from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+from depcheck.evidence_export import export_evidence
 from depcheck.external_evidence import KINDS, inspect_external_evidence
+from depcheck.indexing import RepositoryIndex, RepositoryIndexer
+from depcheck.indexing.fingerprints import freshness_guard
+from depcheck.inventory_compare import compare_inventories
+from depcheck.path_policy import default_index_path, require_within_project
+from depcheck.python_calls import analyze_python_calls
+from depcheck.sbom import inspect_sbom
 from depcheck.security.evidence import inspect_security_evidence
 from depcheck.security.offline import reevaluate_vulnerabilities
-from depcheck.python_calls import analyze_python_calls
-from depcheck.evidence_export import export_evidence
-from depcheck.inventory_compare import compare_inventories
+from depcheck.snapshots import compare_snapshots
 from depcheck.supply_chain import (
     compare_package_behavior,
     compare_package_names,
@@ -35,9 +37,6 @@ from depcheck.supply_chain import (
 
 from .gitnexus import GitNexusCompanion
 from .paging import evidence_page
-from depcheck.bounded_io import repository_operation, capture_reads
-from depcheck.path_policy import default_index_path
-from depcheck.indexing.indexer import _freshness_guard
 
 
 class DependencyAgentService:
@@ -87,7 +86,7 @@ class DependencyAgentService:
     @repository_operation("self._io_root")
     def scan_repository(self) -> dict[str, Any]:
         with capture_reads() as receipts:
-            guard = _freshness_guard(
+            guard = freshness_guard(
                 self.project_root,
                 load_project_config(self.project_root),
                 default_index_path(self.project_root),

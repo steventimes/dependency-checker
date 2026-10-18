@@ -166,7 +166,7 @@ def test_maven_parent_directory_paths_retain_local_plugin_and_dependency_evidenc
 def test_maven_directory_parent_pom_symlink_does_not_read_outside_root(
     tmp_path, monkeypatch
 ):
-    from depcheck.ecosystems import java
+    from depcheck.ecosystems import java_maven
 
     audited = tmp_path / "repo"
     audited.mkdir()
@@ -184,13 +184,13 @@ def test_maven_directory_parent_pom_symlink_does_not_read_outside_root(
         "<project><parent><groupId>example</groupId><artifactId>parent</artifactId><version>1</version><relativePath>../parent</relativePath></parent><artifactId>child</artifactId></project>",
         encoding="utf-8",
     )
-    original = java.read_text
+    original = java_maven.read_text
 
     def read(path, *args, **kwargs):
         assert path.resolve() != outside
         return original(path, *args, **kwargs)
 
-    monkeypatch.setattr(java, "read_text", read)
+    monkeypatch.setattr(java_maven, "read_text", read)
     result = RepositoryScanner().scan(
         audited, RepositoryScanOptions(security=False, compatibility=False)
     )
@@ -198,13 +198,13 @@ def test_maven_directory_parent_pom_symlink_does_not_read_outside_root(
 
 
 def test_maven_xml_node_budget_precedes_dom_allocation(tmp_path, monkeypatch):
-    from depcheck.ecosystems import java
+    from depcheck.ecosystems import java_maven
 
     (tmp_path / "pom.xml").write_text(
         "<project>" + "<x/>" * 100001 + "</project>", encoding="utf-8"
     )
     monkeypatch.setattr(
-        java.ET,
+        java_maven.ET,
         "fromstring",
         lambda *args, **kwargs: pytest.fail("DOM allocated before XML node budget"),
     )
@@ -769,7 +769,7 @@ def test_path_boundary_optimization_preserves_windows_drive_and_case_rules(
     from pathlib import PureWindowsPath
 
     from depcheck.ecosystems import static
-    from depcheck.indexing import indexer
+    from depcheck.indexing import fingerprints
 
     class ResolvedWindowsPath(PureWindowsPath):
         def resolve(self):
@@ -777,16 +777,16 @@ def test_path_boundary_optimization_preserves_windows_drive_and_case_rules(
 
     win_os = SimpleNamespace(path=ntpath)
     monkeypatch.setattr(static, "os", win_os)
-    monkeypatch.setattr(indexer, "os", win_os)
-    monkeypatch.setattr(indexer, "Path", ResolvedWindowsPath)
+    monkeypatch.setattr(fingerprints, "os", win_os)
+    monkeypatch.setattr(fingerprints, "Path", ResolvedWindowsPath)
     root = ResolvedWindowsPath(r"C:\Repo")
     candidate = ResolvedWindowsPath(path)
     assert static._inside(root, candidate) is inside
     if inside:
-        assert indexer._relative(root, candidate) == relative
+        assert fingerprints._relative(root, candidate) == relative
     else:
         with pytest.raises(ValueError):
-            indexer._relative(root, candidate)
+            fingerprints._relative(root, candidate)
 
 
 @pytest.mark.parametrize("suffix", ["nested/目录/file.py", "a b/c/file.js", "."])

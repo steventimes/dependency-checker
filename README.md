@@ -1191,6 +1191,16 @@ inspection does not fetch or authenticate the current upstream records.
 Tests are grouped in five files under `test/`. Keep local reports, logs, and
 scratch fixtures under `.tmp/`; it is ignored by Git and dependency discovery.
 
+Shared evidence readers live in `depcheck/evidence_input.py`. OSV advisory
+interpretation lives in `depcheck/security/advisories.py`; the HTTP client handles
+requests and caching. Python compatibility results and release metadata access
+are separate from the resolver. Index fingerprinting, cached evidence analysis
+and publication metadata have separate modules under `depcheck/indexing/`.
+Java and JavaScript collectors delegate manifest, lockfile and lexical parsing
+to ecosystem-specific modules. Keep evidence preparation shared between scans
+and index refreshes, and retain transaction and freshness checks when changing
+the index workflow.
+
 ```bash
 uv sync --frozen --extra test
 uv run --frozen --extra test python -m pytest test -q

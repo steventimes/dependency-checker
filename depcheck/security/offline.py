@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-import re
 from typing import Any
 
 from semver import Version as SemVersion
 
+from depcheck.evidence_input import parse_evidence_json, read_evidence_json
 from depcheck.sbom import inspect_sbom
-from depcheck.snapshots import read_evidence_json, parse_evidence_json
-from .osv_client import OSVClient, match_affected_version, _timestamp
+
+from .advisories import (
+    advisory_timestamp as _timestamp,
+)
+from .advisories import (
+    group_aliases,
+    match_affected_version,
+    normalize_package,
+    parse_advisory,
+)
 
 
 def inventory_identities(
@@ -163,10 +172,9 @@ def reevaluate_vulnerabilities(
             ecosystem, name = coordinate.get("ecosystem"), coordinate.get("name")
             if not isinstance(ecosystem, str) or not isinstance(name, str):
                 raise ValueError("OSV package requires ecosystem and name")
-            key = (ecosystem.lower(), OSVClient._normalize_package(name, ecosystem))
+            key = (ecosystem.lower(), normalize_package(name, ecosystem))
             if record not in by_package.setdefault(key, []):
                 by_package[key].append(record)
-    client = OSVClient()
     observations: list[dict[str, Any]] = []
     now = datetime.now(timezone.utc)
     observation = (
@@ -213,7 +221,7 @@ def reevaluate_vulnerabilities(
             continue
         assert isinstance(package, str) and isinstance(ecosystem, str)
         assert isinstance(version, str) and isinstance(query_ecosystem, str)
-        normalized = OSVClient._normalize_package(package, ecosystem)
+        normalized = normalize_package(package, ecosystem)
         issues = []
         uncertain = False
         advisory_checks: list[dict[str, Any]] = []
@@ -238,7 +246,7 @@ def reevaluate_vulnerabilities(
                 )
                 uncertain |= status == "unknown"
                 if status == "affected":
-                    issue, notes = client._parse_detail(
+                    issue, notes = parse_advisory(
                         record, normalized, query_ecosystem, version
                     )
                     issues.append(issue)
@@ -268,7 +276,7 @@ def reevaluate_vulnerabilities(
                     }
                 )
         if issues:
-            issues, notes = client._group_aliases(
+            issues, notes = group_aliases(
                 issues,
                 {key: (value, None) for key, value in details.items()},
                 normalized,

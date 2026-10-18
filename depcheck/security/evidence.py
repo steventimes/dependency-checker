@@ -9,33 +9,26 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
-from collections.abc import Iterator
 from xml.etree import ElementTree as ET
 
 from packageurl import PackageURL
 
 from depcheck.bounded_io import read_bytes
+from depcheck.evidence_input import (
+    objects as objects,
+)
+from depcheck.evidence_input import (
+    parse_evidence_json,
+    read_evidence_json,
+)
+from depcheck.evidence_input import (
+    text as text,
+)
 from depcheck.path_policy import require_within_project
-from depcheck.snapshots import parse_evidence_json, read_evidence_json
-
-
-def objects(value: Any, label: str, *, maximum: int = 20000) -> list[dict[str, Any]]:
-    if (
-        not isinstance(value, list)
-        or len(value) > maximum
-        or not all(isinstance(item, dict) for item in value)
-    ):
-        raise ValueError(f"{label} must be a bounded array of objects")
-    return value
-
-
-def text(value: Any, label: str) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > 16384:
-        raise ValueError(f"{label} must be a non-empty bounded string")
-    return value
 
 
 def timestamp(value: Any) -> str:

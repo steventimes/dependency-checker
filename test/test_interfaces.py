@@ -974,7 +974,7 @@ def test_rejected_workflow_symlink_is_hashed_without_reading_outside(tmp_path):
 
 
 def test_workflow_directory_symlink_never_hashes_descendant_data(tmp_path, monkeypatch):
-    from depcheck.indexing import indexer
+    from depcheck.indexing import fingerprints
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -986,13 +986,13 @@ def test_workflow_directory_symlink_never_hashes_descendant_data(tmp_path, monke
         (root / ".github").symlink_to(outside, target_is_directory=True)
     except OSError:
         pytest.skip("symlinks unavailable")
-    original = indexer._file_digest
+    original = fingerprints._file_digest
 
     def bounded_digest(path):
         assert path.resolve().is_relative_to(root), "hashed outside audit root"
         return original(path)
 
-    monkeypatch.setattr(indexer, "_file_digest", bounded_digest)
+    monkeypatch.setattr(fingerprints, "_file_digest", bounded_digest)
     service = DependencyAgentService(root)
     service.index_repository()
     assert not service.repository_context()["complete"]
@@ -2109,7 +2109,7 @@ def test_scan_and_explain_reuse_work_without_accepting_changed_evidence(
 
 
 def test_tool_response_budget_handles_oversized_single_evidence(tmp_path):
-    from depcheck.agent.paging import evidence_page, bounded_response
+    from depcheck.agent.paging import bounded_response, evidence_page
 
     payload = {
         "schema": "depcheck.agent.dependency-explanation.v1",
@@ -2125,9 +2125,10 @@ def test_tool_response_budget_handles_oversized_single_evidence(tmp_path):
 
 
 def test_schema3_query_is_read_only_and_refresh_rebuilds_source_evidence(tmp_path):
+    import sqlite3
+
     from depcheck.indexing import RepositoryIndex, RepositoryIndexer
     from depcheck.indexing.store import IndexStore
-    import sqlite3
 
     (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
     RepositoryIndexer().refresh(tmp_path)
@@ -2509,6 +2510,7 @@ def test_python_callable_propagation_resolves_callbacks_returns_and_shadowing(tm
 
 def test_offline_osv_reevaluation_matches_versions_aliases_and_preserves_input(
     tmp_path,
+    monkeypatch,
 ):
     (tmp_path / "requirements.txt").write_text("demo==1.5\n")
     scan = (
@@ -2544,6 +2546,11 @@ def test_offline_osv_reevaluation_matches_versions_aliases_and_preserves_input(
     (tmp_path / "osv.json").write_text(json.dumps(database))
     before = (tmp_path / "snapshot.json").read_bytes()
     service = DependencyAgentService(tmp_path)
+
+    def reject_session(*args, **kwargs):
+        pytest.fail("offline advisory interpretation constructed an HTTP session")
+
+    monkeypatch.setattr("requests.Session", reject_session)
     result = service.reevaluate_vulnerabilities("snapshot.json", "osv.json")
     row = result["observations"][0]
     assert row["status"] == "matched" and row["matching_complete"]
@@ -2910,6 +2917,7 @@ def test_offline_osv_withdrawal_retains_submicrosecond_order(
     tmp_path, monkeypatch, withdrawn, status
 ):
     import datetime
+
     from depcheck.security import offline
 
     class FixedDatetime(datetime.datetime):

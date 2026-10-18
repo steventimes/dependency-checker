@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from packaging.markers import UndefinedComparison, UndefinedEnvironmentName
 from packaging.requirements import InvalidRequirement, Requirement
@@ -22,8 +22,13 @@ from resolvelib.resolvers import ResolutionImpossible, ResolutionTooDeep
 
 from depcheck.model import Diagnostic, ManifestParseResult, PythonRequirement
 
-if TYPE_CHECKING:
-    from .checker import CompatibilityChecker, CompatibilityReport
+from .metadata import ReleaseMetadata
+from .models import (
+    CompatibilityConflict,
+    CompatibilityReport,
+    PythonCompatibilityConflict,
+    append_diagnostic,
+)
 
 PYTHON = "@python"
 
@@ -66,13 +71,13 @@ class _Provider(AbstractProvider[_Requirement, _Candidate, str]):
 
     def __init__(
         self,
-        checker: CompatibilityChecker,
+        metadata: ReleaseMetadata,
         environment: dict[str, str],
         constraints: dict[str, list[_Requirement]],
         blocked: set[str],
         diagnostics: list[Diagnostic],
     ) -> None:
-        self.checker = checker
+        self.release_metadata = metadata
         self.environment = environment
         self.constraints = constraints
         self.blocked = blocked
@@ -85,7 +90,7 @@ class _Provider(AbstractProvider[_Requirement, _Candidate, str]):
         self.dependency_cache: dict[_Candidate, tuple[_Requirement, ...]] = {}
 
     def stop(self, code: str, message: str) -> Any:
-        self.checker._append_diagnostic(
+        append_diagnostic(
             self.diagnostics, Diagnostic(code=code, severity="error", message=message)
         )
         raise _Incomplete(message)
@@ -151,7 +156,7 @@ class _Provider(AbstractProvider[_Requirement, _Candidate, str]):
                         "Package candidate budget exhausted.",
                     )
                 self.request()
-                versions, diagnostic = self.checker._available_versions_detailed(name)
+                versions, diagnostic = self.release_metadata.versions(name)
                 if diagnostic is not None:
                     self.diagnostics.append(diagnostic)
                     raise _Incomplete(diagnostic.message)
@@ -212,7 +217,7 @@ class _Provider(AbstractProvider[_Requirement, _Candidate, str]):
         key = (candidate.name, candidate.version)
         if key not in self.metadata:
             self.request()
-            info = self.checker._metadata_info(
+            info = self.release_metadata.info(
                 canonicalize_name(candidate.name), candidate.version, self.diagnostics
             )
             if info is None:
@@ -281,7 +286,7 @@ class _Provider(AbstractProvider[_Requirement, _Candidate, str]):
             except InvalidRequirement as exc:
                 self.stop("pypi.invalid-requires-dist", f"{source}: {exc}")
             try:
-                applies = self.checker._marker_applies(
+                applies = _marker_applies(
                     parsed, self.environment, set(candidate.extras)
                 )
             except (
@@ -321,17 +326,13 @@ class _Provider(AbstractProvider[_Requirement, _Candidate, str]):
 
 
 def resolve_manifest(
-    checker: CompatibilityChecker,
+    metadata: ReleaseMetadata,
     manifest: ManifestParseResult,
     active: list[PythonRequirement],
     environment: dict[str, str],
+    *,
+    max_rounds: int = 1000,
 ) -> CompatibilityReport:
-    from .checker import (
-        CompatibilityConflict,
-        CompatibilityReport,
-        PythonCompatibilityConflict,
-    )
-
     diagnostics = list(manifest.diagnostics)
     blocked = {
         str(canonicalize_name(item.name))
@@ -353,7 +354,7 @@ def resolve_manifest(
         if requires_python and not SpecifierSet(requires_python).contains(
             environment["python_full_version"], prereleases=True
         ):
-            checker._append_diagnostic(
+            append_diagnostic(
                 diagnostics,
                 Diagnostic(
                     code="compatibility.script-python-conflict",
@@ -363,7 +364,7 @@ def resolve_manifest(
                 ),
             )
         if name in blocked:
-            checker._append_diagnostic(
+            append_diagnostic(
                 diagnostics,
                 Diagnostic(
                     code="compatibility.source-unverified",
@@ -388,7 +389,7 @@ def resolve_manifest(
         elif item.kind == "direct":
             roots.append(requirement)
             relaxed.append(requirement)
-    provider = _Provider(checker, environment, constraints, blocked, diagnostics)
+    provider = _Provider(metadata, environment, constraints, blocked, diagnostics)
     selected: dict[str, str] = {}
     conflicts: list[CompatibilityConflict] = []
     python_conflicts: list[PythonCompatibilityConflict] = []
@@ -397,7 +398,7 @@ def resolve_manifest(
 
     def solve(requirements: list[_Requirement]) -> dict[str, str]:
         result = Resolver(provider, BaseReporter()).resolve(
-            requirements, max_rounds=checker.MAX_RESOLUTION_ROUNDS
+            requirements, max_rounds=max_rounds
         )
         return {
             candidate.name: candidate.version
@@ -455,7 +456,7 @@ def resolve_manifest(
             Diagnostic(
                 code="compatibility.resolution-limit",
                 severity="error",
-                message=f"Backtracking exceeded {checker.MAX_RESOLUTION_ROUNDS} rounds; satisfiability is unknown.",
+                message=f"Backtracking exceeded {max_rounds} rounds; satisfiability is unknown.",
             )
         )
         if status != "unsatisfiable":
@@ -481,9 +482,22 @@ def resolve_manifest(
             "optimality": "not-established",
             "metadata_requests": provider.requests,
             "max_metadata_requests": provider.MAX_REQUESTS,
-            "max_rounds": checker.MAX_RESOLUTION_ROUNDS,
+            "max_rounds": max_rounds,
             "installation_status": "not-checked",
             "artifact_compatibility_status": "not-checked",
             "api_compatibility_status": "not-checked",
         },
+    )
+
+
+def _marker_applies(
+    requirement: Requirement,
+    environment: dict[str, str],
+    extras: set[str],
+) -> bool:
+    if requirement.marker is None:
+        return True
+    return any(
+        requirement.marker.evaluate({**environment, "extra": extra})
+        for extra in ("", *sorted(extras))
     )

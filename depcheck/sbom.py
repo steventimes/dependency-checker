@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-from packaging.utils import canonicalize_name
 from packageurl import PackageURL
+from packaging.utils import canonicalize_name
 
-from depcheck.snapshots import read_evidence_json
+from depcheck.evidence_input import read_evidence_json
 
 _ECOSYSTEMS = {
     "pypi": "PyPI",

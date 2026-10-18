@@ -11,8 +11,8 @@ import requests  # type: ignore[import-untyped]
 from packaging.utils import canonicalize_name
 
 from depcheck._version import USER_AGENT
+from depcheck.evidence_input import parse_evidence_json
 from depcheck.model import Diagnostic
-from depcheck.snapshots import parse_evidence_json
 
 logger = logging.getLogger(__name__)
 

@@ -7,18 +7,21 @@ authority, and absence of a path never suppresses a package vulnerability.
 
 from __future__ import annotations
 
-from collections import deque
 import hashlib
-import json
+from collections import deque
 from pathlib import Path
 from typing import Any
 
 from packageurl import PackageURL
 
 from depcheck.bounded_io import read_bytes
+from depcheck.evidence_input import (
+    evidence_json_decoder,
+    objects,
+    read_evidence_json,
+    text,
+)
 from depcheck.path_policy import require_within_project
-from depcheck.security.evidence import objects, text
-from depcheck.snapshots import read_evidence_json, _unique_object, _invalid_constant
 
 KINDS = (
     "callgraph",
@@ -42,7 +45,7 @@ def inspect_external_evidence(
     else:
         data, digest = read_evidence_json(root, path)
         if kind == "callgraph":
-            tables, metadata = _callgraph(data)
+            tables, metadata = project_call_graph(data)
         elif kind in {"deps-dev", "scorecard"}:
             tables, metadata = _metadata(data, kind)
         elif kind in KINDS:
@@ -70,7 +73,7 @@ def inspect_external_evidence(
     }
 
 
-def _callgraph(
+def project_call_graph(
     data: dict[str, Any],
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     if data.get("schema") != "depcheck.call-graph.v1":
@@ -340,9 +343,7 @@ def _govulncheck(
     require_within_project(root, candidate, operation="read govulncheck stream")
     raw = read_bytes(candidate)
     source = raw.decode("utf-8")
-    decoder = json.JSONDecoder(
-        object_pairs_hook=_unique_object, parse_constant=_invalid_constant
-    )
+    decoder = evidence_json_decoder()
     position = 0
     messages = []
     while position < len(source):

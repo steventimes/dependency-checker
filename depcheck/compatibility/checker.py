@@ -1,70 +1,38 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
 from packaging.markers import default_environment
-from packaging.requirements import InvalidRequirement, Requirement
-from packaging.specifiers import InvalidSpecifier, SpecifierSet
-from packaging.utils import NormalizedName, canonicalize_name
+from packaging.requirements import InvalidRequirement
+from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from depcheck.model import (
-    PythonRequirement,
     Diagnostic,
     ManifestParseResult,
+    PythonRequirement,
     SourceLocation,
 )
 
-from .pypi_client import PyPIClient, PyPIFetchResult
-
-
-@dataclass(frozen=True)
-class CompatibilityConflict:
-    package: str
-    declared: str | None
-    required: str
-    required_by: str
-
-
-@dataclass(frozen=True)
-class CompatibilityGap:
-    package: str
-    required: str
-    required_by: str
-
-
-@dataclass(frozen=True)
-class PythonCompatibilityConflict:
-    package: str
-    version: str
-    requires_python: str
-    current_python: str
-
-
-@dataclass(frozen=True)
-class CompatibilityReport:
-    conflicts: list[CompatibilityConflict]
-    missing: list[CompatibilityGap]
-    unconstrained: list[CompatibilityGap]
-    suggestions: dict[str, str]
-    python_conflicts: list[PythonCompatibilityConflict] = field(default_factory=list)
-    diagnostics: list[Diagnostic] = field(default_factory=list)
-    selected_versions: dict[str, str] = field(default_factory=dict)
-    resolution_status: str = "not-evaluated"
-    resolution: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def complete(self) -> bool:
-        return not any(item.severity == "error" for item in self.diagnostics)
-
-
-@dataclass(frozen=True)
-class RequirementConstraint:
-    source: str
-    specifier: SpecifierSet
+from .metadata import ReleaseMetadata
+from .models import (
+    CompatibilityConflict as CompatibilityConflict,
+)
+from .models import (
+    CompatibilityGap as CompatibilityGap,
+)
+from .models import (
+    CompatibilityReport as CompatibilityReport,
+)
+from .models import (
+    PythonCompatibilityConflict as PythonCompatibilityConflict,
+)
+from .models import (
+    RequirementConstraint as RequirementConstraint,
+)
+from .pypi_client import PyPIClient
+from .resolver import resolve_manifest
 
 
 class CompatibilityChecker:
@@ -164,8 +132,6 @@ class CompatibilityChecker:
                 ],
             )
 
-        from .resolver import resolve_manifest
-
         available_groups = {item.group for item in active if item.kind == "direct"}
         unknown = set(dependency_groups) - available_groups
         if unknown:
@@ -178,7 +144,13 @@ class CompatibilityChecker:
             for item in active
             if item.group in selected_groups or item.kind == "constraint"
         ]
-        report = resolve_manifest(self, manifest, selected, environment)
+        report = resolve_manifest(
+            ReleaseMetadata(self.client),
+            manifest,
+            selected,
+            environment,
+            max_rounds=self.MAX_RESOLUTION_ROUNDS,
+        )
         return replace(
             report,
             resolution={
@@ -187,91 +159,6 @@ class CompatibilityChecker:
                 "unselected_groups": sorted(available_groups - selected_groups),
                 "selection_basis": "runtime plus explicitly requested groups; installed selection unknown",
             },
-        )
-
-    def _candidate(
-        self,
-        package: NormalizedName,
-        specifier: SpecifierSet,
-        diagnostics: list[Diagnostic],
-    ) -> str | None:
-        versions, diagnostic = self._available_versions_detailed(str(package))
-        if diagnostic is not None:
-            self._append_diagnostic(diagnostics, diagnostic)
-            return None
-        return self._find_best_version(versions, specifier)
-
-    def _metadata_info(
-        self,
-        package: NormalizedName,
-        version: str,
-        diagnostics: list[Diagnostic],
-    ) -> Mapping[str, Any] | None:
-        result = self._fetch_metadata(str(package), version)
-        if result.diagnostic is not None:
-            self._append_diagnostic(diagnostics, result.diagnostic)
-            return None
-        data = result.data or {}
-        info = data.get("info")
-        if not isinstance(info, dict):
-            self._append_diagnostic(
-                diagnostics,
-                Diagnostic(
-                    code="pypi.invalid-response",
-                    severity="error",
-                    message=f"PyPI 元数据缺少 info 对象：{package}=={version}",
-                ),
-            )
-            return None
-        return info
-
-    def _available_versions_detailed(
-        self,
-        package: str,
-    ) -> tuple[list[str], Diagnostic | None]:
-        result = self._fetch_metadata(package)
-        if result.diagnostic is not None:
-            return [], result.diagnostic
-        data = result.data or {}
-        releases = data.get("releases")
-        if not isinstance(releases, dict):
-            return [], Diagnostic(
-                code="pypi.invalid-response",
-                severity="error",
-                message=f"PyPI releases 不是对象：{package}",
-            )
-
-        versions: list[str] = []
-        for raw, files in releases.items():
-            if not isinstance(files, list) or not files:
-                continue
-            if any(
-                isinstance(file_data, dict) and not file_data.get("yanked", False)
-                for file_data in files
-            ):
-                versions.append(str(raw))
-        return versions, None
-
-    def _fetch_metadata(
-        self,
-        package: str,
-        version: str | None = None,
-    ) -> PyPIFetchResult:
-        fetch = getattr(self.client, "fetch_metadata", None)
-        if callable(fetch):
-            return fetch(package, version)
-        legacy_fetch = getattr(self.client, "get_metadata", None)
-        if callable(legacy_fetch):
-            data = legacy_fetch(package, version)
-            if isinstance(data, dict):
-                return PyPIFetchResult(data)
-        return PyPIFetchResult(
-            None,
-            Diagnostic(
-                code="pypi.metadata-unavailable",
-                severity="error",
-                message=f"无法读取 PyPI 元数据：{package}",
-            ),
         )
 
     @staticmethod
@@ -287,53 +174,6 @@ class CompatibilityChecker:
         return environment
 
     @staticmethod
-    def _resolution_state(
-        selected: Mapping[NormalizedName, str],
-        extras: Mapping[NormalizedName, set[str]],
-    ) -> tuple[object, ...]:
-        versions = tuple(
-            sorted((str(name), version) for name, version in selected.items())
-        )
-        active_extras = tuple(
-            sorted(
-                (str(name), tuple(sorted(values))) for name, values in extras.items()
-            )
-        )
-        return versions, active_extras
-
-    @staticmethod
-    def _combine_specifiers(
-        requirements: Sequence[RequirementConstraint],
-    ) -> SpecifierSet:
-        return SpecifierSet(
-            ",".join(
-                str(requirement.specifier)
-                for requirement in requirements
-                if str(requirement.specifier)
-            )
-        )
-
-    @staticmethod
-    def _find_best_version(
-        versions: Sequence[str],
-        specifier: SpecifierSet,
-    ) -> str | None:
-        parsed: list[Version] = []
-        for raw in versions:
-            try:
-                parsed.append(Version(raw))
-            except InvalidVersion:
-                continue
-
-        allow_prereleases = specifier.prereleases is True
-        for version in sorted(parsed, reverse=True):
-            if version.is_prerelease and not allow_prereleases:
-                continue
-            if specifier.contains(version, prereleases=allow_prereleases):
-                return str(version)
-        return None
-
-    @staticmethod
     def _extract_exact_version(specifier: str | None) -> str | None:
         """保留旧辅助方法，供既有集成平滑迁移。"""
         if not specifier:
@@ -342,90 +182,3 @@ class CompatibilityChecker:
         if value.startswith("==") and "," not in value and "*" not in value:
             return value[2:]
         return None
-
-    @staticmethod
-    def _marker_applies(
-        requirement: Requirement,
-        environment: dict[str, str],
-        extras: set[str],
-    ) -> bool:
-        if requirement.marker is None:
-            return True
-        return any(
-            requirement.marker.evaluate({**environment, "extra": extra})
-            for extra in ("", *sorted(extras))
-        )
-
-    @staticmethod
-    def _conflict(
-        package: NormalizedName,
-        selected: str | None,
-        combined: SpecifierSet,
-        constraints: Sequence[RequirementConstraint],
-    ) -> CompatibilityConflict:
-        sources = sorted({item.source for item in constraints if str(item.specifier)})
-        return CompatibilityConflict(
-            package=str(package),
-            declared=f"=={selected}" if selected is not None else None,
-            required=str(combined) or "a published release",
-            required_by=", ".join(sources) or "project manifest",
-        )
-
-    @staticmethod
-    def _dedupe_conflicts(
-        conflicts: Sequence[CompatibilityConflict],
-    ) -> list[CompatibilityConflict]:
-        unique: list[CompatibilityConflict] = []
-        seen: set[tuple[object, ...]] = set()
-        for item in conflicts:
-            key = (item.package, item.declared, item.required, item.required_by)
-            if key not in seen:
-                seen.add(key)
-                unique.append(item)
-        return unique
-
-    @staticmethod
-    def _append_diagnostic(
-        diagnostics: list[Diagnostic],
-        diagnostic: Diagnostic,
-    ) -> None:
-        key = (diagnostic.code, diagnostic.severity, diagnostic.message)
-        if not any(
-            (item.code, item.severity, item.message) == key for item in diagnostics
-        ):
-            diagnostics.append(diagnostic)
-
-    def _python_conflicts(
-        self,
-        selected: Mapping[NormalizedName, str],
-        metadata: Mapping[NormalizedName, Mapping[str, Any]],
-        current_python: str,
-        diagnostics: list[Diagnostic],
-    ) -> list[PythonCompatibilityConflict]:
-        conflicts: list[PythonCompatibilityConflict] = []
-        for package, info in sorted(metadata.items(), key=lambda item: str(item[0])):
-            requires_python = info.get("requires_python")
-            if not requires_python:
-                continue
-            try:
-                python_specifier = SpecifierSet(str(requires_python))
-            except InvalidSpecifier as exc:
-                self._append_diagnostic(
-                    diagnostics,
-                    Diagnostic(
-                        code="pypi.invalid-requires-python",
-                        severity="error",
-                        message=f"无法解析 {package} 的 requires_python：{exc}",
-                    ),
-                )
-                continue
-            if not python_specifier.contains(current_python, prereleases=True):
-                conflicts.append(
-                    PythonCompatibilityConflict(
-                        package=str(package),
-                        version=selected[package],
-                        requires_python=str(requires_python),
-                        current_python=current_python,
-                    )
-                )
-        return conflicts

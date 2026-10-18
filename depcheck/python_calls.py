@@ -8,20 +8,19 @@ in a monotone fixed point. Dynamic dispatch remains explicit incomplete evidence
 from __future__ import annotations
 
 import ast
-from collections import defaultdict
 import hashlib
 import io
-from pathlib import Path
 import tokenize
+from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from packageurl import PackageURL
 
 from depcheck.bounded_io import read_bytes
-from depcheck.external_evidence import _callgraph
+from depcheck.evidence_input import objects, read_evidence_json, text
+from depcheck.external_evidence import project_call_graph
 from depcheck.path_policy import require_within_project
-from depcheck.security.evidence import objects, text
-from depcheck.snapshots import read_evidence_json
 from depcheck.source_locations import parse_python_ast
 
 MAX_SOURCES = 512
@@ -583,7 +582,7 @@ class _Analysis:
             "source_hashes": self.hashes,
             "coverage": coverage,
         }
-        tables, metadata = _callgraph(graph)
+        tables, metadata = project_call_graph(graph)
         return {
             "graph": graph,
             "tables": tables,

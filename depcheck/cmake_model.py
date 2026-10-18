@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path, PureWindowsPath
 import hashlib
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from depcheck.bounded_io import DEFAULT_MAX_BYTES, ReadLimitError, read_bytes
+from depcheck.evidence_input import parse_evidence_json
 from depcheck.path_policy import require_within_project
-from depcheck.snapshots import parse_evidence_json
 
 _MAX_FILES = 1_024
 _MAX_BYTES = 16 * 1024 * 1024
