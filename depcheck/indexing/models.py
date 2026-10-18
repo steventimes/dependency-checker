@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-INDEX_SCHEMA = "depcheck.index.v3"
+INDEX_SCHEMA = "depcheck.index.v4"
 
 
 @dataclass(frozen=True, slots=True)

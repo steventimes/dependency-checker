@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+from depcheck.profiling import measured
+
+from depcheck.bounded_io import repository_operation
+
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 import os
+import hashlib
+import json
 from pathlib import Path
+import tomllib
 from urllib.parse import quote
 
 from packaging.utils import canonicalize_name
-from packaging.version import Version
+from packaging.markers import UndefinedComparison, UndefinedEnvironmentName
+from packaging.version import InvalidVersion, Version
 
 from depcheck.analyzer.import_scanner import ImportScanner
 from depcheck.model import (
@@ -26,17 +34,19 @@ from depcheck.model import (
     MappingConfidence,
     PackageRef,
     ProjectUnit,
+    SourceLocation,
     ResolvedDependency,
     UsageEvidence,
     VersionConstraint,
 )
-from depcheck.ecosystems.static import exclusions_for
+from depcheck.ecosystems.static import exclusions_for, discover_files, read_text
 from depcheck.ecosystems.python_manifest import (
     PythonManifestCollector,
     IGNORED_DIRECTORIES,
     is_requirements_file,
     parser_map,
 )
+from depcheck.ecosystems.python_script import inline_script_files, parse_inline_script
 
 DEFAULT_IMPORT_MAP: dict[str, str] = {
     "bs4": "beautifulsoup4",
@@ -58,11 +68,54 @@ _USAGE_RESULT = "python_usage_result"
 _LOCK_NAMES = frozenset({"Pipfile.lock", "pdm.lock", "poetry.lock", "uv.lock"})
 
 
+def named_component_roots(
+    root: Path, settings: Mapping[str, object]
+) -> tuple[Path, ...]:
+    configured = settings.get("python_roots", ())
+    roots = (
+        [Path(p) for p in configured if isinstance(p, str)]
+        if isinstance(configured, (list, tuple))
+        else []
+    )
+    for path in discover_files(
+        root,
+        names=frozenset({"pyproject.toml"}),
+        excluded_directories=exclusions_for(settings),
+    ):
+        try:
+            data = tomllib.loads(read_text(path))
+            name = data.get("project", {}).get("name") or data.get("tool", {}).get(
+                "poetry", {}
+            ).get("name")
+            if (isinstance(name, str) and name.strip()) or "workspace" in data.get(
+                "tool", {}
+            ).get("uv", {}):
+                roots.append(path.parent.relative_to(root))
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
+            continue
+    return tuple(sorted(set(roots), key=lambda p: (len(p.parts), p.as_posix())))
+
+
+def _component_exclusions(
+    root: Path, project: ProjectUnit, settings: Mapping[str, object]
+) -> tuple[str, ...]:
+    exclusions = exclusions_for(settings, project.root)
+    children = tuple(
+        p.relative_to(project.root).as_posix()
+        for p in named_component_roots(root, settings)
+        if p != project.root and project.root in p.parents
+    )
+    return (*exclusions, *children)
+
+
 class PythonProjectDetector:
+    @repository_operation("context.repository_root")
     def detect(self, context: ProviderContext) -> tuple[ProjectUnit, ...]:
         root = context.repository_root
         exclusions = exclusions_for(context.settings)
         source_files = ImportScanner(exclusions).discover_files(root)
+        scripts = inline_script_files(root, exclusions, paths=source_files)
+        script_paths = set(scripts)
         has_python_manifest = _has_manifest_candidate(
             root,
             exclusions,
@@ -81,32 +134,64 @@ class PythonProjectDetector:
             else ()
         )
 
-        relative_root = Path(".")
-        relative_manifests = tuple(_relative(path, root) for path in manifests)
-        locks = tuple(
-            path
-            for path in relative_manifests
-            if path.name in _LOCK_NAMES
-            or (path.suffix.lower() == ".lock" and is_requirements_file(path))
+        roots = named_component_roots(root, context.settings)
+        paths = tuple(_relative(p, root) for p in manifests)
+
+        def owner(path: Path) -> Path:
+            return next(
+                (p for p in reversed(roots) if p == path.parent or p in path.parents),
+                Path("."),
+            )
+
+        active_roots = set(roots)
+        active_roots.update(
+            owner(p)
+            for p in (
+                *paths,
+                *(_relative(p, root) for p in source_files if p not in script_paths),
+            )
         )
-        return (
+        if not active_roots and not scripts:
+            active_roots.add(Path("."))
+        projects = []
+        for relative_root in sorted(
+            active_roots, key=lambda p: (len(p.parts), p.as_posix())
+        ):
+            relative_manifests = tuple(p for p in paths if owner(p) == relative_root)
+            projects.append(
+                ProjectUnit(
+                    project_id=ProjectUnit.stable_id(relative_root, "PyPI", "python"),
+                    root=relative_root,
+                    language="python",
+                    ecosystem="PyPI",
+                    manager="python",
+                    manifests=relative_manifests,
+                    locks=tuple(
+                        p
+                        for p in relative_manifests
+                        if p.name in _LOCK_NAMES
+                        or (p.suffix.lower() == ".lock" and is_requirements_file(p))
+                    ),
+                )
+            )
+        projects.extend(
             ProjectUnit(
                 project_id=ProjectUnit.stable_id(
-                    relative_root,
-                    "PyPI",
-                    "python",
+                    script.relative_to(root), "PyPI", "pep723"
                 ),
-                root=relative_root,
+                root=script.parent.relative_to(root),
                 language="python",
                 ecosystem="PyPI",
-                manager="python",
-                manifests=relative_manifests,
-                locks=locks,
-            ),
+                manager="pep723",
+                manifests=(script.relative_to(root),),
+            )
+            for script in scripts
         )
+        return tuple(projects)
 
 
 class PythonManifestProvider:
+    @repository_operation("context.repository_root")
     def collect(
         self,
         context: ProviderContext,
@@ -119,6 +204,7 @@ class PythonManifestProvider:
 
 
 class PythonResolutionProvider:
+    @repository_operation("context.repository_root")
     def collect(
         self,
         context: ProviderContext,
@@ -131,28 +217,58 @@ class PythonResolutionProvider:
             if item.kind == "direct" and item.group != "build"
         }
         resolved: list[ResolvedDependency] = []
-        seen: set[tuple[str, str]] = set()
+        seen: set[tuple[str, str, str]] = set()
+        locked_names = {i.name for i in result.declarations if i.kind == "locked"}
+        overrides = {
+            i.name: dict(i.origin)
+            for i in result.declarations
+            if i.kind == "direct" and i.origin.get("public") is False
+        }
         for item in result.declarations:
             version = item.pinned_version
             if version is None or item.kind not in {"direct", "locked"}:
                 continue
-            key = (item.name, version)
+            if item.kind == "direct" and item.name in locked_names:
+                continue
+            origin = {**dict(item.origin), **overrides.get(item.name, {})}
+            origin_key = json.dumps(origin, sort_keys=True)
+            if "lock" in origin:
+                origin_key += (
+                    "\0"
+                    + _relative(item.source.path, context.repository_root).as_posix()
+                )
+            key = (item.name, version, origin_key)
             if key in seen:
                 continue
             seen.add(key)
             resolved.append(
                 ResolvedDependency(
                     project_id=project.project_id,
-                    package=_package_ref(item.name, item.display_name),
+                    package=_package_ref(
+                        item.name,
+                        item.display_name,
+                        public=origin.get("public") is True,
+                    ),
                     version=version,
                     source=item.source,
                     direct=item.name in direct_names,
+                    origin=origin,
+                    instance_id=(
+                        "lock:uv:"
+                        + hashlib.sha256(origin_key.encode()).hexdigest()[:24]
+                        if "lock" in origin
+                        else None
+                        if origin.get("public") is True
+                        else "source:"
+                        + hashlib.sha256(origin_key.encode()).hexdigest()[:24]
+                    ),
                 )
             )
         return tuple(resolved)
 
 
 class PythonUsageProvider:
+    @repository_operation("context.repository_root")
     def collect(
         self,
         context: ProviderContext,
@@ -203,6 +319,7 @@ class PythonUsageMapper:
 
 
 class PythonEvidenceCollector:
+    @repository_operation("context.repository_root")
     def collect(
         self,
         context: ProviderContext,
@@ -242,6 +359,7 @@ def create_python_pack(
     )
 
 
+@measured("collection.python")
 def collect_python_bundle(
     repository_root: Path,
     project: ProjectUnit,
@@ -250,7 +368,36 @@ def collect_python_bundle(
 ) -> EvidenceBundle:
     root = Path(repository_root).resolve()
     project_root = root / project.root
-    exclusions = exclusions_for(settings or {}, project.root)
+    exclusions = _component_exclusions(root, project, settings or {})
+    if project.manager == "pep723":
+        script = root / project.manifests[0]
+        bundle = adapt_python_bundle(
+            root,
+            project,
+            pack,
+            filter_python_manifest(
+                parse_inline_script(script), (settings or {}).get("python_version")
+            ),
+            ImportScanner(exclusions).scan_files(project_root, [script]),
+        )
+        return replace(
+            bundle,
+            capabilities=tuple(
+                _status(capability.name, False)
+                if capability.name in {"usage", "mapping"}
+                else capability
+                for capability in bundle.capabilities
+            ),
+            diagnostics=(
+                *bundle.diagnostics,
+                Diagnostic(
+                    code="usage.script-helper-coverage-unknown",
+                    severity="warning",
+                    message="Only this independent script is scanned; imported local helpers and runner injection remain outside its usage scope. Zero observed imports do not establish an unused requirement.",
+                    source=SourceLocation(script),
+                ),
+            ),
+        )
     manifest_result = (
         PythonManifestCollector(project_root, exclusions).collect()
         if project.manifests
@@ -260,14 +407,95 @@ def collect_python_bundle(
         manifest_result,
         (settings or {}).get("python_version"),
     )
-    usage_result = ImportScanner(exclusions).scan_detailed(project_root)
-    return adapt_python_bundle(
+    scanner = ImportScanner(exclusions)
+    source_files = scanner.discover_files(project_root)
+    scripts = set(inline_script_files(project_root, exclusions, paths=source_files))
+    usage_result = scanner.scan_files(
+        project_root, [path for path in source_files if path not in scripts]
+    )
+    bundle = adapt_python_bundle(
         root,
         project,
         pack,
         manifest_result,
         usage_result,
     )
+    workspace = _uv_workspace_root(root, project_root)
+    if workspace is not None:
+        diagnostic = Diagnostic(
+            code="resolution.uv-workspace-activation-unknown",
+            severity="warning",
+            message="uv workspace members share an installation environment and lock. Component ownership describes declarations and source; lock activation and cross-member availability are unknown.",
+            source=SourceLocation(workspace / "pyproject.toml"),
+        )
+        bundle = replace(
+            bundle,
+            capabilities=tuple(_status(c.name, False) for c in bundle.capabilities),
+            diagnostics=(*bundle.diagnostics, diagnostic),
+            evidence_files=tuple(
+                dict.fromkeys(
+                    (
+                        *bundle.evidence_files,
+                        workspace / "pyproject.toml",
+                        *(
+                            (workspace / "uv.lock",)
+                            if (workspace / "uv.lock").is_file()
+                            else ()
+                        ),
+                    )
+                )
+            ),
+        )
+    return bundle
+
+
+def _uv_workspace_root(root: Path, project_root: Path) -> Path | None:
+    """Locate a shared-environment boundary without guessing active lock subsets."""
+    for parent in (project_root, *project_root.parents):
+        if parent != root and root not in parent.parents:
+            break
+        path = parent / "pyproject.toml"
+        if not path.is_file():
+            continue
+        try:
+            data = tomllib.loads(read_text(path))
+            uv = data.get("tool", {}).get("uv", {})
+            if uv.get("managed") is False:
+                return None
+            if "workspace" in uv:
+                if parent == project_root:
+                    return parent
+                from depcheck.ecosystems.workspaces import _workspace_pattern
+
+                workspace = uv["workspace"]
+                if not isinstance(workspace, dict):
+                    return parent
+                members, excluded = (
+                    workspace.get("members"),
+                    workspace.get("exclude", []),
+                )
+                if (
+                    not isinstance(members, list)
+                    or not isinstance(excluded, list)
+                    or not all(isinstance(p, str) for p in [*members, *excluded])
+                ):
+                    return parent
+                patterns = [_workspace_pattern(p) for p in [*members, *excluded]]
+                if any(p is None for p in patterns):
+                    return parent
+                relative = project_root.relative_to(parent).as_posix()
+                included = any(
+                    p is not None and p.fullmatch(relative)
+                    for p in patterns[: len(members)]
+                )
+                rejected = any(
+                    p is not None and p.fullmatch(relative)
+                    for p in patterns[len(members) :]
+                )
+                return parent if included and not rejected else None
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
+            continue
+    return None
 
 
 def filter_python_manifest(
@@ -282,12 +510,26 @@ def filter_python_manifest(
         "python_version": f"{version.major}.{version.minor}",
         "python_full_version": str(version),
     }
+    diagnostics = list(manifest_result.diagnostics)
+    active: list[PythonRequirement] = []
+    for item in manifest_result.declarations:
+        try:
+            applies = item.is_active(environment)
+        except (UndefinedComparison, UndefinedEnvironmentName, InvalidVersion) as exc:
+            diagnostic = Diagnostic(
+                code="manifest.marker-evaluation-unknown",
+                severity="error",
+                message=f"{item.raw_requirement}: marker applicability is unknown: {exc}",
+                source=item.source,
+            )
+            if diagnostic not in diagnostics:
+                diagnostics.append(diagnostic)
+            # Retain the declaration without asserting its activation.
+            applies = True
+        if applies:
+            active.append(item)
     active_direct = {
-        item.name
-        for item in manifest_result.declarations
-        if item.kind == "direct"
-        and item.group != "build"
-        and item.is_active(environment)
+        item.name for item in active if item.kind == "direct" and item.group != "build"
     }
     inactive_direct = {
         item.name
@@ -297,11 +539,10 @@ def filter_python_manifest(
     return ManifestParseResult(
         declarations=tuple(
             item
-            for item in manifest_result.declarations
-            if item.is_active(environment)
-            and not (item.kind == "locked" and item.name in inactive_direct)
+            for item in active
+            if not (item.kind == "locked" and item.name in inactive_direct)
         ),
-        diagnostics=manifest_result.diagnostics,
+        diagnostics=tuple(diagnostics),
         files=manifest_result.files,
     )
 
@@ -344,36 +585,65 @@ def adapt_python_bundle(
         else raw_usages
     )
 
-    component_roots: dict[str, set[Path]] = {}
-    for item in declarations:
-        if item.kind == "direct" and item.source.path.name == "pyproject.toml":
-            component_roots.setdefault(item.package.name, set()).add(
-                item.source.path.parent
-            )
-    component_diagnostics = tuple(
-        Diagnostic(
-            code="analysis.python-component-scope-ambiguous",
-            severity="error",
-            message=(
-                f"{package} is declared in independent Python component manifests; "
-                "their installation scopes cannot be compared as one project."
+    component_manifests = sorted(
+        {
+            item.source.path
+            for item in declarations
+            if item.kind == "direct"
+            and item.scope != "build"
+            and item.source.path.name == "pyproject.toml"
+        }
+    )
+    component_diagnostics = (
+        (
+            Diagnostic(
+                code="analysis.python-component-scope-ambiguous",
+                severity="error",
+                message=(
+                    "Multiple Python dependency roots share an aggregate project ID; "
+                    "their installation scopes cannot be compared safely. "
+                    "Scan each component root separately."
+                ),
+                source=next(
+                    item.source
+                    for item in declarations
+                    if item.source.path == component_manifests[0]
+                ),
             ),
         )
-        for package, roots in sorted(component_roots.items())
-        if len(roots) > 1
+        if len(component_manifests) > 1
+        else ()
     )
     manifest_complete = _complete(
         (*manifest_result.diagnostics, *component_diagnostics)
     )
-    usage_complete = _complete(usage_result.diagnostics) and not any(
-        item.code == "usage.dynamic" for item in usage_result.diagnostics
+    usage_complete = (
+        not component_diagnostics
+        and _complete(usage_result.diagnostics)
+        and not any(item.code == "usage.dynamic" for item in usage_result.diagnostics)
     )
     mapping_complete = usage_complete and all(
         item.mapping_confidence is not MappingConfidence.UNKNOWN for item in usages
     )
+    source_diagnostics = tuple(
+        Diagnostic(
+            code="resolution.python-source-unverified",
+            severity="warning",
+            message=f"{item.package.name}: {item.origin.get('kind', 'unknown')} source does not establish a public PyPI identity; public registry checks are skipped.",
+            source=item.source,
+        )
+        for item in resolved
+        if item.origin.get("public") is not True
+    )
+    conditional_locks = any(
+        item.origin.get("lock", {}).get("conditional") for item in resolved
+    )
     capabilities = (
         _status("manifest", manifest_complete),
-        _status("resolution", manifest_complete),
+        _status(
+            "resolution",
+            manifest_complete and not source_diagnostics and not conditional_locks,
+        ),
         _status("usage", usage_complete),
         _status("mapping", mapping_complete),
     )
@@ -385,6 +655,7 @@ def adapt_python_bundle(
         diagnostics=(
             *manifest_result.diagnostics,
             *component_diagnostics,
+            *source_diagnostics,
             *usage_result.diagnostics,
         ),
         capabilities=capabilities,
@@ -400,6 +671,8 @@ def _manifest_result(
     cached = context.settings.get(_MANIFEST_RESULT)
     if isinstance(cached, ManifestParseResult):
         return cached
+    if project.manager == "pep723":
+        return parse_inline_script(context.repository_root / project.manifests[0])
     return (
         PythonManifestCollector(
             context.repository_root / project.root,
@@ -429,7 +702,11 @@ def _adapt_declaration(
     normalized = str(declaration.specifier)
     return DependencyDeclaration(
         project_id=project_id,
-        package=_package_ref(declaration.name, declaration.display_name),
+        package=_package_ref(
+            declaration.name,
+            declaration.display_name,
+            public=declaration.origin.get("public") is True,
+        ),
         constraint=VersionConstraint(
             raw=normalized,
             scheme="pep440",
@@ -443,6 +720,7 @@ def _adapt_declaration(
             "extras": list(declaration.extras),
             "raw_requirement": declaration.raw_requirement,
             "group": declaration.group,
+            "origin": dict(declaration.origin),
         },
     )
 
@@ -458,13 +736,13 @@ def _adapt_usage(project_id: str, usage: ImportEvidence) -> UsageEvidence:
     )
 
 
-def _package_ref(name: str, display_name: str) -> PackageRef:
+def _package_ref(name: str, display_name: str, *, public: bool = True) -> PackageRef:
     canonical = str(canonicalize_name(name))
     return PackageRef(
         ecosystem="PyPI",
         name=canonical,
         display_name=display_name,
-        purl=f"pkg:pypi/{quote(canonical, safe='')}",
+        purl=f"pkg:pypi/{quote(canonical, safe='')}" if public else None,
     )
 
 

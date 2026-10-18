@@ -29,7 +29,10 @@ from depcheck.ecosystems.registry import EcosystemRegistry
 def create_default_registry(
     import_mapping: Mapping[str, str] | None = None,
 ) -> EcosystemRegistry:
-    """Create a fresh registry containing all built-in packs available in M0."""
+    """Create a fresh registry containing all built-in packs."""
+    from depcheck.ecosystems.cargo import create_cargo_pack
+    from depcheck.ecosystems.bazel import create_bazel_pack
+    from depcheck.ecosystems.cmake import create_cmake_pack
     from depcheck.ecosystems.javascript import create_npm_pack
     from depcheck.ecosystems.go import create_go_pack
     from depcheck.ecosystems.java import create_maven_pack
@@ -43,6 +46,9 @@ def create_default_registry(
     registry.register(create_maven_pack())
     registry.register(create_conan_pack())
     registry.register(create_vcpkg_pack())
+    registry.register(create_cargo_pack())
+    registry.register(create_cmake_pack())
+    registry.register(create_bazel_pack())
     return registry
 
 

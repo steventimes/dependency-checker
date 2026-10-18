@@ -4,12 +4,15 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+import os
 from pathlib import Path
 from typing import Any
 from packaging.markers import Marker
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
+
+ANALYSIS_REVISION = 57
 
 
 class CapabilityState(StrEnum):
@@ -165,6 +168,7 @@ class ResolvedDependency:
     dependencies: tuple[PackageRef, ...] = field(default_factory=tuple)
     instance_id: str | None = None
     dependency_links: tuple[ResolvedDependencyLink, ...] = field(default_factory=tuple)
+    origin: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def identity(self) -> PackageIdentity:
@@ -240,6 +244,7 @@ class EvidenceBundle:
                     "location": item.source.to_dict(repository_root),
                     "direct": item.direct,
                     "integrity": item.integrity,
+                    "origin": dict(item.origin),
                     "dependencies": [
                         package.to_dict() for package in item.dependencies
                     ],
@@ -287,11 +292,21 @@ def _relative(path: Path, repository_root: Path) -> str:
     try:
         return path.resolve().relative_to(repository_root.resolve()).as_posix()
     except ValueError:
-        return path.as_posix()
+        try:
+            # A rejected symlink still has a location within the audited tree.
+            return (
+                Path(os.path.abspath(path))
+                .relative_to(repository_root.resolve())
+                .as_posix()
+            )
+        except ValueError:
+            return path.as_posix()
 
 
 @dataclass(frozen=True, slots=True)
 class SourceLocation:
+    """One-based lines and Unicode code-point columns; notebooks use virtual lines."""
+
     path: Path
     line: int | None = None
     column: int | None = None
@@ -322,6 +337,7 @@ class PythonRequirement:
     source: SourceLocation
     group: str = "runtime"
     kind: str = "direct"
+    origin: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_requirement(
@@ -331,8 +347,18 @@ class PythonRequirement:
         source: SourceLocation,
         group: str = "runtime",
         kind: str = "direct",
+        origin: Mapping[str, Any] | None = None,
     ) -> PythonRequirement:
         parsed = Requirement(raw_requirement.strip())
+        from depcheck.python_sources import python_origin
+
+        # A direct URL takes precedence over a configured registry assertion.
+        if parsed.url:
+            selected_origin = python_origin({"url": parsed.url})
+        elif origin is not None:
+            selected_origin = dict(origin)
+        else:
+            selected_origin = python_origin(None, implicit_public=True)
         return cls(
             name=str(canonicalize_name(parsed.name)),
             display_name=parsed.name,
@@ -343,6 +369,7 @@ class PythonRequirement:
             source=source,
             group=group,
             kind=kind,
+            origin=selected_origin,
         )
 
     def is_active(self, environment: Mapping[str, str] | None = None) -> bool:
@@ -484,8 +511,18 @@ class ScanResult:
             return "incomplete"
         return "fail" if self.findings else "pass"
 
-    def to_dict(self) -> dict[str, Any]:
+    @property
+    def summary(self) -> dict[str, Any]:
         counts = Counter(finding.code for finding in self.findings)
+        return {
+            "status": self.status,
+            "complete": self.complete,
+            "risk_count": self.risk_count,
+            "diagnostic_count": len(self.diagnostics),
+            "counts": dict(sorted(counts.items())),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
         source_files = sorted(
             {
                 _relative(path, self.root)
@@ -505,6 +542,7 @@ class ScanResult:
                 "identity": item.identity.to_dict(),
                 "direct": item.direct,
                 "integrity": item.integrity,
+                **({"origin": dict(item.origin)} if item.origin else {}),
                 "dependencies": [
                     {
                         "ecosystem": link.package.ecosystem,
@@ -557,13 +595,7 @@ class ScanResult:
 
         return {
             "schema": "depcheck.scan.v1",
-            "summary": {
-                "status": self.status,
-                "complete": self.complete,
-                "risk_count": self.risk_count,
-                "diagnostic_count": len(self.diagnostics),
-                "counts": dict(sorted(counts.items())),
-            },
+            "summary": self.summary,
             "capabilities": {
                 capability.name: capability.to_dict()
                 for capability in self.capabilities
@@ -582,6 +614,11 @@ class ScanResult:
                 ),
                 "resolved_count": len(resolved),
                 "resolved_dependencies": resolved,
+                "declarations": [
+                    item
+                    for bundle in self.bundles
+                    for item in bundle.to_dict(self.root)["declarations"]
+                ],
                 "usage_count": sum(len(bundle.usages) for bundle in self.bundles),
             },
             "projects": projects,

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +53,8 @@ class CompatibilityReport:
     python_conflicts: list[PythonCompatibilityConflict] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
     selected_versions: dict[str, str] = field(default_factory=dict)
+    resolution_status: str = "not-evaluated"
+    resolution: dict[str, Any] = field(default_factory=dict)
 
     @property
     def complete(self) -> bool:
@@ -67,9 +68,9 @@ class RequirementConstraint:
 
 
 class CompatibilityChecker:
-    """用发布元数据检查候选依赖图；不做完整的版本回溯。"""
+    """Backtrack over public release metadata without installing target code."""
 
-    MAX_RESOLUTION_ROUNDS = 100
+    MAX_RESOLUTION_ROUNDS = 1000
 
     def __init__(self, client: PyPIClient | None = None) -> None:
         self.client = client or PyPIClient()
@@ -117,220 +118,75 @@ class CompatibilityChecker:
         manifest: ManifestParseResult,
         *,
         python_version: str | None = None,
+        dependency_groups: tuple[str, ...] = (),
     ) -> CompatibilityReport:
+        from depcheck.ecosystems.python import filter_python_manifest
+
         environment = self._target_environment(python_version)
-        current_python = environment["python_full_version"]
-        active = [
-            item
-            for item in manifest.declarations
-            if item.group != "build" and item.is_active(environment)
-        ]
-        direct = [item for item in active if item.kind == "direct"]
+        manifest = filter_python_manifest(manifest, environment["python_full_version"])
+        if any(
+            item.code == "manifest.marker-evaluation-unknown"
+            for item in manifest.diagnostics
+        ):
+            return CompatibilityReport(
+                conflicts=[],
+                missing=[],
+                unconstrained=[],
+                suggestions={},
+                resolution_status="incomplete",
+                diagnostics=list(manifest.diagnostics),
+            )
+        active = [item for item in manifest.declarations if item.group != "build"]
         locked = [item for item in active if item.kind == "locked"]
-
-        direct_constraints: defaultdict[NormalizedName, list[RequirementConstraint]] = (
-            defaultdict(list)
-        )
-        direct_extras: defaultdict[NormalizedName, set[str]] = defaultdict(set)
-        constraint_specs: defaultdict[NormalizedName, list[RequirementConstraint]] = (
-            defaultdict(list)
-        )
-        for item in active:
-            if item.kind == "constraint":
-                constraint_specs[canonicalize_name(item.name)].append(
-                    RequirementConstraint("constraints file", item.specifier)
-                )
-        for item in direct:
-            direct_constraints[canonicalize_name(item.name)].append(
-                RequirementConstraint("project manifest", item.specifier)
-            )
-            direct_extras[canonicalize_name(item.name)].update(item.extras)
-
-        diagnostics: list[Diagnostic] = list(manifest.diagnostics)
-        seed_conflicts: list[CompatibilityConflict] = []
-        selected: dict[NormalizedName, str] = {}
-        fixed_versions: set[NormalizedName] = set()
-
-        # 锁文件代表实际安装状态，优先于范围声明；多个锁定版本本身就是冲突。
-        for item in locked:
-            if not item.pinned_version:
-                continue
-            package = canonicalize_name(item.name)
-            existing = selected.get(package)
-            if existing is not None and existing != item.pinned_version:
-                seed_conflicts.append(
-                    CompatibilityConflict(
-                        package=str(package),
-                        declared=f"=={existing},=={item.pinned_version}",
-                        required="single resolved version",
-                        required_by="lockfiles",
-                    )
-                )
-                continue
-            selected[package] = item.pinned_version
-            fixed_versions.add(package)
-
-        for item in direct:
-            if not item.pinned_version:
-                continue
-            package = canonicalize_name(item.name)
-            if package not in selected:
-                selected[package] = item.pinned_version
-            fixed_versions.add(package)
-
-        extras: dict[NormalizedName, set[str]] = {
-            package: set(values) for package, values in direct_extras.items()
+        conditional_locks = {
+            item.source.path: item.source
+            for item in locked
+            if item.origin.get("lock", {}).get("conditional")
         }
-        seen_states: set[tuple[object, ...]] = set()
-        final_conflicts = list(seed_conflicts)
-        final_suggestions: dict[str, str] = {}
-        final_metadata: dict[NormalizedName, Mapping[str, Any]] = {}
-
-        for _round in range(self.MAX_RESOLUTION_ROUNDS):
-            state = self._resolution_state(selected, extras)
-            if state in seen_states:
-                self._append_diagnostic(
-                    diagnostics,
-                    Diagnostic(
-                        code="compatibility.resolution-cycle",
-                        severity="error",
-                        message="兼容性解析在候选版本之间循环，无法得到稳定结果",
-                    ),
-                )
-                break
-            seen_states.add(state)
-
-            metadata: dict[NormalizedName, Mapping[str, Any]] = {}
-            transitive: defaultdict[NormalizedName, list[RequirementConstraint]] = (
-                defaultdict(list)
-            )
-            next_extras: dict[NormalizedName, set[str]] = {
-                package: set(values) for package, values in direct_extras.items()
-            }
-
-            for package, version in sorted(
-                selected.items(), key=lambda item: str(item[0])
-            ):
-                info = self._metadata_info(package, version, diagnostics)
-                if info is None:
-                    continue
-                metadata[package] = info
-                requires_dist = info.get("requires_dist")
-                if requires_dist is None:
-                    requires_dist = []
-                if not isinstance(requires_dist, list):
-                    self._append_diagnostic(
-                        diagnostics,
+        if conditional_locks:
+            return CompatibilityReport(
+                conflicts=[],
+                missing=[],
+                unconstrained=[],
+                suggestions={},
+                resolution_status="incomplete",
+                diagnostics=[
+                    *manifest.diagnostics,
+                    *(
                         Diagnostic(
-                            code="pypi.invalid-requires-dist",
+                            code="compatibility.uv-lock-selection-unknown",
                             severity="error",
-                            message=f"PyPI requires_dist 不是数组：{package}",
-                        ),
-                    )
-                    continue
-                for raw_requirement in requires_dist:
-                    try:
-                        requirement = Requirement(str(raw_requirement))
-                    except (InvalidRequirement, TypeError) as exc:
-                        self._append_diagnostic(
-                            diagnostics,
-                            Diagnostic(
-                                code="pypi.invalid-requires-dist",
-                                severity="error",
-                                message=f"无法解析 {package} 的依赖元数据：{exc}",
-                            ),
+                            message="Conditional uv lock candidates cannot seed one flat compatibility graph; environment, extras/group selection and installed activation are unknown.",
+                            source=source,
                         )
-                        continue
-                    if not self._marker_applies(
-                        requirement,
-                        environment,
-                        extras.get(package, set()),
-                    ):
-                        continue
-                    target = canonicalize_name(requirement.name)
-                    transitive[target].append(
-                        RequirementConstraint(str(package), requirement.specifier)
-                    )
-                    next_extras.setdefault(target, set()).update(requirement.extras)
-
-            next_selected = dict(selected)
-            round_conflicts = list(seed_conflicts)
-            round_suggestions: dict[str, str] = {}
-            packages = set(direct_constraints) | set(transitive)
-            for package in sorted(packages, key=str):
-                constraints = [
-                    *direct_constraints.get(package, []),
-                    *constraint_specs.get(package, []),
-                    *transitive.get(package, []),
-                ]
-                combined = self._combine_specifiers(constraints)
-                current = selected.get(package)
-
-                if current is not None and package in fixed_versions:
-                    if not combined.contains(current, prereleases=True):
-                        round_conflicts.append(
-                            self._conflict(package, current, combined, constraints)
-                        )
-                        candidate = self._candidate(package, combined, diagnostics)
-                        if candidate is not None:
-                            round_suggestions[str(package)] = f"=={candidate}"
-                    continue
-
-                candidate = self._candidate(package, combined, diagnostics)
-                if candidate is None:
-                    round_conflicts.append(
-                        self._conflict(package, current, combined, constraints)
-                    )
-                    continue
-                next_selected[package] = candidate
-
-            final_conflicts = self._dedupe_conflicts(round_conflicts)
-            final_suggestions = round_suggestions
-            final_metadata = metadata
-            if next_selected == selected and next_extras == extras:
-                break
-            selected = next_selected
-            extras = next_extras
-        else:
-            self._append_diagnostic(
-                diagnostics,
-                Diagnostic(
-                    code="compatibility.resolution-limit",
-                    severity="error",
-                    message=(
-                        f"兼容性解析超过 {self.MAX_RESOLUTION_ROUNDS} 轮，"
-                        "依赖图可能不稳定"
+                        for source in conditional_locks.values()
                     ),
-                ),
+                ],
             )
 
-        python_conflicts = self._python_conflicts(
-            selected,
-            final_metadata,
-            current_python,
-            diagnostics,
-        )
-        if (final_conflicts or python_conflicts) and set(selected) - fixed_versions:
-            self._append_diagnostic(
-                diagnostics,
-                Diagnostic(
-                    code="compatibility.backtracking-required",
-                    severity="error",
-                    message=(
-                        "The selected candidate graph has conflicts. Alternative "
-                        "versions were not exhaustively searched; this does not "
-                        "establish that the declared constraints are unsatisfiable."
-                    ),
-                ),
+        from .resolver import resolve_manifest
+
+        available_groups = {item.group for item in active if item.kind == "direct"}
+        unknown = set(dependency_groups) - available_groups
+        if unknown:
+            raise ValueError(
+                "Unknown dependency group selection: " + ", ".join(sorted(unknown))
             )
-        return CompatibilityReport(
-            conflicts=final_conflicts,
-            missing=[],
-            unconstrained=[],
-            suggestions=final_suggestions,
-            python_conflicts=python_conflicts,
-            diagnostics=diagnostics,
-            selected_versions={str(key): value for key, value in selected.items()},
+        selected_groups = {"runtime", *dependency_groups}
+        selected = [
+            item
+            for item in active
+            if item.group in selected_groups or item.kind == "constraint"
+        ]
+        report = resolve_manifest(self, manifest, selected, environment)
+        return replace(
+            report,
+            resolution={
+                **report.resolution,
+                "selected_groups": sorted(selected_groups),
+                "unselected_groups": sorted(available_groups - selected_groups),
+                "selection_basis": "runtime plus explicitly requested groups; installed selection unknown",
+            },
         )
 
     def _candidate(

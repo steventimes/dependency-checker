@@ -3,11 +3,14 @@ from __future__ import annotations
 import tomllib
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from packaging.requirements import InvalidRequirement
-from packaging.utils import canonicalize_name
+from packaging.utils import InvalidName, canonicalize_name
 from packaging.version import InvalidVersion, Version
+from depcheck.source_locations import SourceKey, SourcePositions
 
 from depcheck.model import (
     PythonRequirement,
@@ -17,10 +20,26 @@ from depcheck.model import (
 )
 
 from .base_parser import BaseDependencyParser
+from depcheck.bounded_io import DEFAULT_MAX_BYTES
+
+_GROUP_MAX_ENTRIES = 20_000
+_GROUP_MAX_DEPTH = 64
+_GROUP_MAX_DIAGNOSTICS = 64
+
+
+@dataclass
+class _GroupBudget:
+    entries: int
+    bytes: int
+    exhausted: bool = False
 
 
 class PyProjectParser(BaseDependencyParser):
     """统一读取 PEP 621、PEP 735、Poetry 与 PDM 依赖声明。"""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.positions = SourcePositions(self.path, "")
 
     def parse(self) -> dict[str, str | None]:
         deps: dict[str, str | None] = {}
@@ -44,7 +63,8 @@ class PyProjectParser(BaseDependencyParser):
                 )
             )
         try:
-            data = tomllib.loads(self.path.read_text(encoding="utf-8"))
+            text = self._read_text()
+            data = tomllib.loads(text)
         except (OSError, UnicodeError, ValueError) as exc:
             return ManifestParseResult(
                 diagnostics=(
@@ -58,11 +78,50 @@ class PyProjectParser(BaseDependencyParser):
                 files=(self.path,),
             )
 
+        self.positions = SourcePositions.toml(self.path, text)
         declarations: list[PythonRequirement] = []
         diagnostics: list[Diagnostic] = []
-        self._parse_pep_tables(data, declarations, diagnostics)
+        tool = data.get("tool", {})
+        if not isinstance(tool, dict):
+            diagnostics.append(self._invalid_table("tool"))
+            tool = {}
+        uv = tool.get("uv", {})
+        if not isinstance(uv, dict):
+            diagnostics.append(self._invalid_table("tool.uv"))
+            uv = {}
+        self._parse_pep_tables(data, declarations, diagnostics, uv=uv)
         self._parse_poetry(data, declarations, diagnostics)
         self._parse_pdm(data, declarations, diagnostics)
+        from dataclasses import replace
+        from depcheck.python_sources import python_origin
+
+        index_config = {
+            manager: config[key]
+            for manager, key in (
+                ("uv", "index"),
+                ("poetry", "source"),
+                ("pdm", "source"),
+            )
+            if isinstance(config := tool.get(manager), dict) and config.get(key)
+        }
+        if index_config:
+            declarations = [
+                replace(
+                    item, origin=python_origin({"configured_indexes": index_config})
+                )
+                if item.origin.get("public") is True
+                else item
+                for item in declarations
+            ]
+        sources = uv.get("sources", {}) if isinstance(uv, dict) else {}
+        if isinstance(sources, dict):
+            sources = {str(canonicalize_name(k)): v for k, v in sources.items()}
+            declarations = [
+                replace(item, origin=python_origin(sources[item.name]))
+                if item.name in sources
+                else item
+                for item in declarations
+            ]
         return ManifestParseResult(
             declarations=tuple(declarations),
             diagnostics=tuple(diagnostics),
@@ -74,6 +133,8 @@ class PyProjectParser(BaseDependencyParser):
         data: Mapping[str, Any],
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
+        *,
+        uv: Mapping[str, Any],
     ) -> None:
         project = data.get("project", {})
         if isinstance(project, dict):
@@ -86,7 +147,7 @@ class PyProjectParser(BaseDependencyParser):
                         code="manifest.invalid-dynamic-fields",
                         severity="error",
                         message="project.dynamic 必须是字符串数组",
-                        source=SourceLocation(self.path),
+                        source=self.positions.key("project", "dynamic"),
                     )
                 )
             else:
@@ -97,11 +158,15 @@ class PyProjectParser(BaseDependencyParser):
                                 code="manifest.dynamic-pyproject",
                                 severity="error",
                                 message=f"project.{field} 是动态依赖，无法静态解析",
-                                source=SourceLocation(self.path),
+                                source=self.positions.key("project", "dynamic"),
                             )
                         )
             self._append_requirements(
-                project.get("dependencies", []), "runtime", declarations, diagnostics
+                project.get("dependencies", []),
+                "runtime",
+                declarations,
+                diagnostics,
+                key=("project", "dependencies"),
             )
             optional = project.get("optional-dependencies", {})
             if isinstance(optional, dict):
@@ -111,6 +176,7 @@ class PyProjectParser(BaseDependencyParser):
                         f"optional:{group}",
                         declarations,
                         diagnostics,
+                        key=("project", "optional-dependencies", str(group)),
                     )
             else:
                 diagnostics.append(self._invalid_table("project.optional-dependencies"))
@@ -120,27 +186,120 @@ class PyProjectParser(BaseDependencyParser):
         build_system = data.get("build-system", {})
         if isinstance(build_system, dict):
             self._append_requirements(
-                build_system.get("requires", []), "build", declarations, diagnostics
+                build_system.get("requires", []),
+                "build",
+                declarations,
+                diagnostics,
+                key=("build-system", "requires"),
             )
         else:
             diagnostics.append(self._invalid_table("build-system"))
 
         groups = data.get("dependency-groups", {})
+        budget = _GroupBudget(_GROUP_MAX_ENTRIES, DEFAULT_MAX_BYTES)
+        names: dict[str, list[str]] = defaultdict(list)
         if isinstance(groups, dict):
-            budget = [20_000]
+            group_diagnostics: list[Diagnostic] = []
+            valid: list[str] = []
             for group in groups:
+                source = self.positions.key("dependency-groups", group)
+                if not self._take_group_budget(
+                    budget, 128 + len(group.encode("utf-8")), source, group_diagnostics
+                ):
+                    break
+                try:
+                    normalized = str(canonicalize_name(group, validate=True))
+                except InvalidName:
+                    group_diagnostics.append(
+                        Diagnostic(
+                            "manifest.invalid-group-name",
+                            "error",
+                            "Dependency group name is invalid.",
+                            source,
+                        )
+                    )
+                    continue
+                names[normalized].append(group)
+                valid.append(group)
+            for aliases in names.values():
+                if len(aliases) > 1:
+                    source = self.positions.key("dependency-groups", aliases[1])
+                    if not self._take_group_budget(
+                        budget, 128, source, group_diagnostics
+                    ):
+                        break
+                    group_diagnostics.append(
+                        Diagnostic(
+                            "manifest.group-ambiguous",
+                            "error",
+                            "Dependency group names collide after normalization; no include target is chosen.",
+                            source,
+                        )
+                    )
+            for group in valid:
                 self._append_dependency_group(
-                    str(group),
-                    target_group=str(group),
+                    group,
+                    target_group=f"dev:{group}",
                     groups=groups,
+                    names=names,
                     declarations=declarations,
-                    diagnostics=diagnostics,
+                    diagnostics=group_diagnostics,
                     active=(),
-                    visited=set(),
                     budget=budget,
                 )
+            diagnostics.extend(group_diagnostics)
         else:
             diagnostics.append(self._invalid_table("dependency-groups"))
+        self._append_uv_legacy(uv, names, budget, declarations, diagnostics)
+
+    def _append_uv_legacy(
+        self,
+        uv: Mapping[str, Any],
+        names: Mapping[str, list[str]],
+        budget: _GroupBudget,
+        declarations: list[PythonRequirement],
+        diagnostics: list[Diagnostic],
+    ) -> None:
+        if "dev-dependencies" not in uv:
+            return
+        key = ("tool", "uv", "dev-dependencies")
+        values = uv["dev-dependencies"]
+        if not isinstance(values, list):
+            diagnostics.append(
+                Diagnostic(
+                    "manifest.invalid-dependency-list",
+                    "error",
+                    "tool.uv.dev-dependencies must be an array of requirement strings.",
+                    self.positions.value(*key),
+                )
+            )
+            return
+        targets = names.get("dev", [])
+        group = "dev:" + (targets[0] if len(targets) == 1 else "dev")
+        # uv appends these requirements after standard group flattening. They
+        # contribute to dev itself, not to groups that include the standard dev.
+        for index, value in enumerate(values):
+            source = self.positions.value(*key, index)
+            size = (
+                256 + len(group.encode("utf-8")) + len(str(self.path).encode("utf-8"))
+            )
+            if isinstance(value, str):
+                size += len(value.encode("utf-8"))
+            if not self._take_group_budget(budget, size, source, diagnostics):
+                return
+            if isinstance(value, str):
+                self._append_requirement(
+                    value, group, "direct", declarations, diagnostics, source
+                )
+            else:
+                diagnostics.append(
+                    Diagnostic(
+                        "manifest.invalid-dependency-entry",
+                        "error",
+                        "tool.uv.dev-dependencies entries must be requirement strings; group includes are unsupported here.",
+                        source,
+                    )
+                )
 
     def _parse_poetry(
         self,
@@ -179,14 +338,24 @@ class PyProjectParser(BaseDependencyParser):
                 else:
                     group = "runtime"
                 self._append_poetry_entry(
-                    str(name), value, group, declarations, diagnostics
+                    str(name),
+                    value,
+                    group,
+                    declarations,
+                    diagnostics,
+                    key=("tool", "poetry", "dependencies", str(name)),
                 )
 
         legacy_dev = poetry.get("dev-dependencies", {})
         if isinstance(legacy_dev, dict):
             for name, value in legacy_dev.items():
                 self._append_poetry_entry(
-                    str(name), value, "dev:dev", declarations, diagnostics
+                    str(name),
+                    value,
+                    "dev:dev",
+                    declarations,
+                    diagnostics,
+                    key=("tool", "poetry", "dev-dependencies", str(name)),
                 )
 
         poetry_groups = poetry.get("group", {})
@@ -204,6 +373,14 @@ class PyProjectParser(BaseDependencyParser):
                         f"dev:{group}",
                         declarations,
                         diagnostics,
+                        key=(
+                            "tool",
+                            "poetry",
+                            "group",
+                            str(group),
+                            "dependencies",
+                            str(name),
+                        ),
                     )
 
     def _parse_pdm(
@@ -224,6 +401,7 @@ class PyProjectParser(BaseDependencyParser):
                     f"dev:{group}",
                     declarations,
                     diagnostics,
+                    key=("tool", "pdm", "dev-dependencies", str(group)),
                 )
 
     def _append_requirements(
@@ -232,6 +410,8 @@ class PyProjectParser(BaseDependencyParser):
         group: str,
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
+        *,
+        key: SourceKey,
     ) -> None:
         if not isinstance(values, list):
             diagnostics.append(
@@ -239,15 +419,20 @@ class PyProjectParser(BaseDependencyParser):
                     code="manifest.invalid-dependency-list",
                     severity="error",
                     message=f"依赖组 {group} 必须是数组",
-                    source=SourceLocation(self.path),
+                    source=self.positions.key(*key),
                 )
             )
             return
-        for value in values:
+        for index, value in enumerate(values):
+            source = self.positions.value(*key, index)
             if not isinstance(value, str):
-                diagnostics.append(self._invalid(group, repr(value), "必须是字符串"))
+                diagnostics.append(
+                    self._invalid(group, repr(value), "必须是字符串", source)
+                )
                 continue
-            self._append_requirement(value, group, "direct", declarations, diagnostics)
+            self._append_requirement(
+                value, group, "direct", declarations, diagnostics, source
+            )
 
     def _append_poetry_entry(
         self,
@@ -256,12 +441,17 @@ class PyProjectParser(BaseDependencyParser):
         group: str,
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
+        *,
+        key: SourceKey,
     ) -> None:
         if isinstance(value, list):
-            for item in value:
-                self._append_poetry_entry(name, item, group, declarations, diagnostics)
+            for index, item in enumerate(value):
+                self._append_poetry_entry(
+                    name, item, group, declarations, diagnostics, key=(*key, index)
+                )
             return
 
+        source = self.positions.key(*key)
         extras: tuple[str, ...] = ()
         marker = ""
         kind = "direct"
@@ -282,7 +472,7 @@ class PyProjectParser(BaseDependencyParser):
                 marker = f"; {raw_marker.strip()}"
         else:
             diagnostics.append(
-                self._invalid(group, name, "Poetry 条目必须是字符串或表")
+                self._invalid(group, name, "Poetry 条目必须是字符串或表", source)
             )
             return
 
@@ -292,7 +482,7 @@ class PyProjectParser(BaseDependencyParser):
             converted = self._convert_poetry_constraint(version)
             if converted is None:
                 diagnostics.append(
-                    self._invalid(group, f"{name}{version}", "版本约束无效")
+                    self._invalid(group, f"{name}{version}", "版本约束无效", source)
                 )
                 return
             version = converted
@@ -303,6 +493,7 @@ class PyProjectParser(BaseDependencyParser):
             kind,
             declarations,
             diagnostics,
+            source,
         )
 
     def _append_requirement(
@@ -312,18 +503,19 @@ class PyProjectParser(BaseDependencyParser):
         kind: str,
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
+        source: SourceLocation,
     ) -> None:
         try:
             declarations.append(
                 PythonRequirement.from_requirement(
                     requirement,
-                    source=SourceLocation(self.path),
+                    source=source,
                     group=group,
                     kind=kind,
                 )
             )
         except InvalidRequirement as exc:
-            diagnostics.append(self._invalid(group, requirement, str(exc)))
+            diagnostics.append(self._invalid(group, requirement, str(exc), source))
 
     def _append_dependency_group(
         self,
@@ -331,35 +523,38 @@ class PyProjectParser(BaseDependencyParser):
         *,
         target_group: str,
         groups: Mapping[str, Any],
+        names: Mapping[str, list[str]],
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
         active: tuple[str, ...],
-        visited: set[str],
-        budget: list[int],
+        budget: _GroupBudget,
+        include_source: SourceLocation | None = None,
     ) -> None:
+        if budget.exhausted:
+            return
         if group in active:
             diagnostics.append(
                 Diagnostic(
                     code="manifest.group-cycle",
                     severity="error",
-                    message=f"dependency-groups 存在循环引用：{' -> '.join((*active, group))}",
-                    source=SourceLocation(self.path),
+                    message="Cyclic dependency group include: "
+                    + " -> ".join(name[:80] for name in (*active, group)),
+                    source=include_source
+                    or self.positions.key("dependency-groups", group),
                 )
             )
             return
-        if group in visited or budget[0] < 0:
-            return
-        if len(active) >= 64:
+        if len(active) >= _GROUP_MAX_DEPTH:
             diagnostics.append(
                 Diagnostic(
                     code="manifest.group-limit",
                     severity="error",
                     message="dependency-groups nesting exceeds 64 levels",
-                    source=SourceLocation(self.path),
+                    source=include_source
+                    or self.positions.key("dependency-groups", group),
                 )
             )
             return
-        visited.add(group)
         values = groups.get(group)
         if not isinstance(values, list):
             diagnostics.append(
@@ -367,38 +562,83 @@ class PyProjectParser(BaseDependencyParser):
                     code="manifest.invalid-dependency-list",
                     severity="error",
                     message=f"依赖组 {group} 必须是数组",
-                    source=SourceLocation(self.path),
+                    source=include_source
+                    or self.positions.key("dependency-groups", group),
                 )
             )
             return
-        for value in values:
-            budget[0] -= 1
-            if budget[0] < 0:
-                diagnostics.append(
-                    Diagnostic(
-                        code="manifest.group-limit",
-                        severity="error",
-                        message="dependency-groups expansion exceeds 20000 entries",
-                        source=SourceLocation(self.path),
-                    )
-                )
+        for index, value in enumerate(values):
+            source = self.positions.value("dependency-groups", group, index)
+            literal = (
+                value
+                if isinstance(value, str)
+                else value.get("include-group", "")
+                if isinstance(value, dict)
+                else ""
+            )
+            size = (
+                256
+                + len(target_group.encode("utf-8"))
+                + len(str(self.path).encode("utf-8"))
+            )
+            if isinstance(literal, str):
+                size += len(literal.encode("utf-8"))
+            if not self._take_group_budget(budget, size, source, diagnostics):
                 return
             if isinstance(value, str):
-                self._append_requirements(
-                    [value], f"dev:{target_group}", declarations, diagnostics
+                self._append_requirement(
+                    value,
+                    target_group,
+                    "direct",
+                    declarations,
+                    diagnostics,
+                    source,
                 )
-            elif isinstance(value, dict) and isinstance(
-                value.get("include-group"), str
+            elif (
+                isinstance(value, dict)
+                and value.keys() == {"include-group"}
+                and isinstance(value.get("include-group"), str)
             ):
+                include_source = self.positions.value(
+                    "dependency-groups", group, index, "include-group"
+                )
+                try:
+                    normalized = str(
+                        canonicalize_name(value["include-group"], validate=True)
+                    )
+                except InvalidName:
+                    diagnostics.append(
+                        Diagnostic(
+                            "manifest.invalid-group-name",
+                            "error",
+                            "Included dependency group name is invalid.",
+                            include_source,
+                        )
+                    )
+                    continue
+                candidates = names.get(normalized, [])
+                if len(candidates) != 1:
+                    diagnostics.append(
+                        Diagnostic(
+                            "manifest.group-ambiguous"
+                            if candidates
+                            else "manifest.group-not-found",
+                            "error",
+                            "Included dependency group has no unique normalized target.",
+                            include_source,
+                        )
+                    )
+                    continue
                 self._append_dependency_group(
-                    value["include-group"],
+                    candidates[0],
                     target_group=target_group,
                     groups=groups,
+                    names=names,
                     declarations=declarations,
                     diagnostics=diagnostics,
                     active=(*active, group),
-                    visited=visited,
                     budget=budget,
+                    include_source=include_source,
                 )
             else:
                 diagnostics.append(
@@ -406,9 +646,37 @@ class PyProjectParser(BaseDependencyParser):
                         code="manifest.invalid-group-entry",
                         severity="error",
                         message=f"依赖组 {group} 含有无效条目",
-                        source=SourceLocation(self.path),
+                        source=source,
                     )
                 )
+
+    @staticmethod
+    def _take_group_budget(
+        budget: _GroupBudget,
+        size: int,
+        source: SourceLocation,
+        diagnostics: list[Diagnostic],
+    ) -> bool:
+        if budget.exhausted:
+            return False
+        budget.entries -= 1
+        budget.bytes -= size
+        if (
+            budget.entries < 0
+            or budget.bytes < 0
+            or len(diagnostics) >= _GROUP_MAX_DIAGNOSTICS
+        ):
+            budget.exhausted = True
+            diagnostics.append(
+                Diagnostic(
+                    "manifest.group-limit",
+                    "error",
+                    "Dependency group expansion reached its entry, context or diagnostic budget; retained evidence is incomplete.",
+                    source,
+                )
+            )
+            return False
+        return True
 
     @staticmethod
     def _poetry_optional(value: object) -> bool:
@@ -450,12 +718,14 @@ class PyProjectParser(BaseDependencyParser):
             upper = f"{version.major}.{version.minor + 1}"
         return f">={version},<{upper}"
 
-    def _invalid(self, group: str, value: str, reason: str) -> Diagnostic:
+    def _invalid(
+        self, group: str, value: str, reason: str, source: SourceLocation | None = None
+    ) -> Diagnostic:
         return Diagnostic(
             code="manifest.invalid-requirement",
             severity="error",
             message=f"依赖组 {group} 的声明 {value!r} 无效：{reason}",
-            source=SourceLocation(self.path),
+            source=source or SourceLocation(self.path),
         )
 
     def _invalid_table(self, field: str) -> Diagnostic:
@@ -463,5 +733,5 @@ class PyProjectParser(BaseDependencyParser):
             code="manifest.invalid-dependency-table",
             severity="error",
             message=f"{field} 必须是表",
-            source=SourceLocation(self.path),
+            source=self.positions.key(*field.split(".")),
         )

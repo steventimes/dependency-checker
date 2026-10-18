@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import ast
-import tokenize
 
 from packaging.requirements import InvalidRequirement
+from depcheck.source_locations import SourcePositions, parse_python_ast
 
 from depcheck.model import (
     PythonRequirement,
@@ -38,8 +38,8 @@ class SetupPyParser(BaseDependencyParser):
                 )
             )
         try:
-            with tokenize.open(self.path) as handle:
-                tree = ast.parse(handle.read(), filename=str(self.path))
+            text = self._read_python()
+            tree = parse_python_ast(text)
         except SyntaxError as exc:
             return ManifestParseResult(
                 diagnostics=(
@@ -69,6 +69,7 @@ class SetupPyParser(BaseDependencyParser):
 
         declarations: list[PythonRequirement] = []
         diagnostics: list[Diagnostic] = []
+        positions = SourcePositions(self.path, text)
         calls = [
             node
             for node in ast.walk(tree)
@@ -91,21 +92,24 @@ class SetupPyParser(BaseDependencyParser):
                 "runtime",
                 declarations,
                 diagnostics,
+                positions,
             )
             self._append_sequence(
                 keywords.get("tests_require"),
                 "dev:test",
                 declarations,
                 diagnostics,
+                positions,
             )
             self._append_sequence(
                 keywords.get("setup_requires"),
                 "build",
                 declarations,
                 diagnostics,
+                positions,
             )
             self._append_extras(
-                keywords.get("extras_require"), declarations, diagnostics
+                keywords.get("extras_require"), declarations, diagnostics, positions
             )
 
         return ManifestParseResult(
@@ -120,24 +124,27 @@ class SetupPyParser(BaseDependencyParser):
         group: str,
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
+        positions: SourcePositions,
     ) -> None:
         if node is None:
             return
         try:
             values = ast.literal_eval(node)
         except (ValueError, TypeError):
-            diagnostics.append(self._dynamic(node, group))
+            diagnostics.append(self._dynamic(node, group, positions))
             return
         if not isinstance(values, (list, tuple, set)):
-            diagnostics.append(self._dynamic(node, group))
+            diagnostics.append(self._dynamic(node, group, positions))
             return
-        for value in values:
+        nodes = node.elts if isinstance(node, (ast.List, ast.Tuple)) else []
+        for index, value in enumerate(values):
             self._append_requirement(
                 value,
                 group,
-                node,
+                nodes[index] if nodes else None,
                 declarations,
                 diagnostics,
+                positions,
             )
 
     def _append_extras(
@@ -145,43 +152,55 @@ class SetupPyParser(BaseDependencyParser):
         node: ast.AST | None,
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
+        positions: SourcePositions,
     ) -> None:
         if node is None:
             return
         try:
             groups = ast.literal_eval(node)
         except (ValueError, TypeError):
-            diagnostics.append(self._dynamic(node, "extras_require"))
+            diagnostics.append(self._dynamic(node, "extras_require", positions))
             return
         if not isinstance(groups, dict):
-            diagnostics.append(self._dynamic(node, "extras_require"))
+            diagnostics.append(self._dynamic(node, "extras_require", positions))
             return
+        value_nodes = (
+            {
+                ast.literal_eval(key): value
+                for key, value in zip(node.keys, node.values)
+                if key is not None
+            }
+            if isinstance(node, ast.Dict)
+            else {}
+        )
         for group, values in groups.items():
             if not isinstance(group, str) or not isinstance(values, (list, tuple, set)):
-                diagnostics.append(self._dynamic(node, "extras_require"))
+                diagnostics.append(self._dynamic(node, "extras_require", positions))
                 continue
-            for value in values:
+            group_node = value_nodes.get(group)
+            nodes = (
+                group_node.elts if isinstance(group_node, (ast.List, ast.Tuple)) else []
+            )
+            for index, value in enumerate(values):
                 self._append_requirement(
                     value,
                     f"optional:{group}",
-                    node,
+                    nodes[index] if nodes else None,
                     declarations,
                     diagnostics,
+                    positions,
                 )
 
     def _append_requirement(
         self,
         value: object,
         group: str,
-        node: ast.AST,
+        node: ast.AST | None,
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
+        positions: SourcePositions,
     ) -> None:
-        location = SourceLocation(
-            self.path,
-            line=getattr(node, "lineno", None),
-            column=getattr(node, "col_offset", 0) + 1,
-        )
+        location = positions.ast_node(node)
         if not isinstance(value, str):
             diagnostics.append(
                 Diagnostic(
@@ -210,16 +229,14 @@ class SetupPyParser(BaseDependencyParser):
                 )
             )
 
-    def _dynamic(self, node: ast.AST, field: str) -> Diagnostic:
+    def _dynamic(
+        self, node: ast.AST, field: str, positions: SourcePositions
+    ) -> Diagnostic:
         return Diagnostic(
             code="manifest.dynamic-setup-py",
             severity="error",
             message=f"setup.py 的 {field} 不是静态字面量，无法安全解析",
-            source=SourceLocation(
-                self.path,
-                line=getattr(node, "lineno", None),
-                column=getattr(node, "col_offset", 0) + 1,
-            ),
+            source=positions.ast_node(node),
         )
 
     @staticmethod

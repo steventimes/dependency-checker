@@ -3,6 +3,8 @@ from __future__ import annotations
 import tomllib
 
 from packaging.requirements import InvalidRequirement
+from depcheck.source_locations import SourcePositions
+from depcheck.python_sources import PipenvSources
 
 from depcheck.model import (
     PythonRequirement,
@@ -37,8 +39,9 @@ class PipfileParser(BaseDependencyParser):
                 )
             )
         try:
-            data = tomllib.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, ValueError) as exc:
+            text = self._read_text()
+            data = tomllib.loads(text)
+        except (OSError, UnicodeError, ValueError, RecursionError) as exc:
             return ManifestParseResult(
                 diagnostics=(
                     Diagnostic(
@@ -53,6 +56,8 @@ class PipfileParser(BaseDependencyParser):
 
         declarations: list[PythonRequirement] = []
         diagnostics: list[Diagnostic] = []
+        positions = SourcePositions.toml(self.path, text)
+        sources = PipenvSources(data.get("source"))
         for section, group in (("packages", "runtime"), ("dev-packages", "dev")):
             values = data.get(section, {}) if isinstance(data, dict) else {}
             if not isinstance(values, dict):
@@ -61,12 +66,20 @@ class PipfileParser(BaseDependencyParser):
                         code="manifest.invalid-dependency-table",
                         severity="error",
                         message=f"Pipfile 的 [{section}] 必须是表",
-                        source=SourceLocation(self.path),
+                        source=positions.key(section),
                     )
                 )
                 continue
             for name, value in values.items():
-                self._append_entry(str(name), value, group, declarations, diagnostics)
+                self._append_entry(
+                    str(name),
+                    value,
+                    group,
+                    declarations,
+                    diagnostics,
+                    source=positions.key(section, str(name)),
+                    origin=sources.origin(value),
+                )
 
         return ManifestParseResult(
             declarations=tuple(declarations),
@@ -81,6 +94,9 @@ class PipfileParser(BaseDependencyParser):
         group: str,
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
+        *,
+        source: SourceLocation,
+        origin: dict,
     ) -> None:
         extras: tuple[str, ...] = ()
         marker = ""
@@ -105,7 +121,9 @@ class PipfileParser(BaseDependencyParser):
                 kind = "local"
                 version = ""
         else:
-            diagnostics.append(self._invalid(f"Pipfile 条目 {name!r} 必须是字符串或表"))
+            diagnostics.append(
+                self._invalid(f"Pipfile 条目 {name!r} 必须是字符串或表", source)
+            )
             return
 
         rendered_extras = f"[{','.join(extras)}]" if extras else ""
@@ -114,20 +132,23 @@ class PipfileParser(BaseDependencyParser):
             declarations.append(
                 PythonRequirement.from_requirement(
                     requirement,
-                    source=SourceLocation(self.path),
+                    source=source,
                     group=group,
                     kind=kind,
+                    origin=origin,
                 )
             )
         except InvalidRequirement as exc:
             diagnostics.append(
-                self._invalid(f"无效 Pipfile 依赖 {requirement!r}：{exc}")
+                self._invalid(f"无效 Pipfile 依赖 {requirement!r}：{exc}", source)
             )
 
-    def _invalid(self, message: str) -> Diagnostic:
+    def _invalid(
+        self, message: str, source: SourceLocation | None = None
+    ) -> Diagnostic:
         return Diagnostic(
             code="manifest.invalid-requirement",
             severity="error",
             message=message,
-            source=SourceLocation(self.path),
+            source=source or SourceLocation(self.path),
         )

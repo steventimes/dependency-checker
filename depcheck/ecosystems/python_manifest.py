@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from depcheck.bounded_io import repository_operation
+
 import logging
 import os
+from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -121,12 +124,13 @@ class PythonManifestCollector:
             )
         return all_deps
 
+    @repository_operation("self.project_root")
     def collect(self) -> ManifestParseResult:
         """解析并聚合所有清单，同时保留来源和失败诊断。"""
         declarations: list[PythonRequirement] = []
         diagnostics: list[Diagnostic] = []
         files: list[Path] = []
-        seen_declarations: set[tuple[object, ...]] = set()
+        seen_declarations: Counter[tuple[object, ...]] = Counter()
         seen_files: set[Path] = set()
 
         for file_path in self.find_dependency_file():
@@ -158,6 +162,7 @@ class PythonManifestCollector:
                 if resolved not in seen_files:
                     seen_files.add(resolved)
                     files.append(parsed_file)
+            occurrences: Counter[tuple[object, ...]] = Counter()
             for item in result.declarations:
                 key = (
                     item.name,
@@ -166,10 +171,14 @@ class PythonManifestCollector:
                     item.kind,
                     item.source.path.resolve(),
                     item.source.line,
+                    item.source.column,
                 )
-                if key not in seen_declarations:
-                    seen_declarations.add(key)
+                occurrences[key] += 1
+                if occurrences[key] > seen_declarations[key]:
                     declarations.append(item)
+            # Retain a parser result's multiplicity, without adding it again
+            # when the same physical declaration is reached from another entry file.
+            seen_declarations |= occurrences
 
         diagnostics[:0] = self.discovery_diagnostics
         self.last_dependency_files = files

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from depcheck.ecosystems.javascript_packages import (
+    NpmSources,
     exact_version,
     package_ref,
     registry_name,
@@ -52,6 +53,7 @@ def collect_pnpm_lock(
     project: ProjectUnit,
     declarations: Sequence[DependencyDeclaration],
     repository_root: Path,
+    sources: NpmSources,
 ) -> PnpmLockEvidence:
     source = SourceLocation(path, 1, 1)
     diagnostics: dict[str, Diagnostic] = {}
@@ -121,12 +123,15 @@ def collect_pnpm_lock(
         return key if node(key) is not None else None
 
     roots: set[str] = set()
+    root_requests: dict[str, list[Mapping[str, Any]]] = {}
     locked: dict[tuple[str, str], str] = {}
     declared_identities: dict[str, set[str]] = {}
     declared_entries: set[tuple[str, str]] = set()
+    declared_origins: dict[str, list[Mapping[str, Any]]] = {}
     for item in declarations:
         installation = str(item.metadata.get("installation_name", item.package.name))
         declared_identities.setdefault(installation, set()).add(item.package.name)
+        declared_origins.setdefault(installation, []).append(item.metadata["origin"])
         declared_entries.add(
             (str(item.metadata.get("section", "dependencies")), installation)
         )
@@ -149,6 +154,7 @@ def collect_pnpm_lock(
             key = reference(name, entry.get("version"))
             if key is not None:
                 roots.add(key)
+                root_requests.setdefault(key, []).extend(declared_origins.get(name, ()))
                 expected = declared_identities.get(name, set())
                 if expected and nodes[key][0] not in expected:
                     incomplete(f"pnpm registry identity disagrees for {name!r}")
@@ -164,6 +170,24 @@ def collect_pnpm_lock(
             incomplete(
                 f"pnpm importer does not match package.json for {name!r} in {section}"
             )
+
+    origins: dict[str, dict[str, Any]] = {}
+
+    def origin(key: str) -> dict[str, Any]:
+        if key not in origins:
+            name, version, _, resolution = nodes[key]
+            value = sources.resolution_origin(
+                name, version, {}, root_requests.get(key, ())
+            )
+            if set(resolution) - {"integrity"}:
+                value.update(
+                    kind="unknown",
+                    public=False,
+                    reason="unsupported-pnpm-resolution-fields",
+                )
+                incomplete(f"Unsupported pnpm resolution metadata for {key!r}")
+            origins[key] = value
+        return origins[key]
 
     pending = sorted(roots, reverse=True)
     visited: set[str] = set()
@@ -183,7 +207,7 @@ def collect_pnpm_lock(
                     continue
                 child_name, child_version, _, _ = nodes[target]
                 links[target] = ResolvedDependencyLink(
-                    package_ref(child_name),
+                    package_ref(child_name, public=origin(target)["public"]),
                     child_version,
                     instance_prefix + target,
                 )
@@ -193,7 +217,7 @@ def collect_pnpm_lock(
         resolved.append(
             ResolvedDependency(
                 project_id=project.project_id,
-                package=package_ref(name),
+                package=package_ref(name, public=origin(key)["public"]),
                 version=version,
                 source=source,
                 direct=key in roots,
@@ -201,6 +225,7 @@ def collect_pnpm_lock(
                 dependencies=tuple(link.package for link in ordered_links),
                 instance_id=instance_prefix + key,
                 dependency_links=ordered_links,
+                origin=origin(key),
             )
         )
     return PnpmLockEvidence(

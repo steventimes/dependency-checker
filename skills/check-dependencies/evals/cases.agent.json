@@ -27,7 +27,8 @@
       "expected_tool_calls": [],
       "forbidden_trace_events": [
         "tool.package-manager",
-        "claim.security-safe"
+        "claim.security-safe",
+        "tool.network"
       ],
       "expected_final_status": "incomplete",
       "required_answer_terms": [
@@ -76,10 +77,24 @@
         "skill.activate",
         "tool.cli"
       ],
-      "expected_tool_calls": [],
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "project_id": "npm:npm:two",
+            "ecosystem": "npm",
+            "package": "shared"
+          },
+          "arguments": {}
+        }
+      ],
       "forbidden_trace_events": [
         "tool.package-manager",
-        "claim.security-safe"
+        "claim.security-safe",
+        "tool.network"
       ],
       "expected_final_status": "pass",
       "required_answer_terms": [
@@ -103,6 +118,15 @@
       "quality_rubric": "Return the complete package-* inventory for npm:npm:one using pages of at most 20 entries, then explain shared specifically in npm:npm:two. Security was not requested. Verify actual CLI results and inspect calls manually.",
       "cost_latency_budget": {
         "max_tool_calls": 15
+      },
+      "behavior_checks": {
+        "pagination": {
+          "query": "package-",
+          "ecosystem": "npm",
+          "project_id": "npm:npm:one",
+          "page_size": 20,
+          "expected_count": 65
+        }
       }
     },
     {
@@ -154,7 +178,8 @@
       ],
       "forbidden_trace_events": [
         "tool.package-manager",
-        "claim.security-safe"
+        "claim.security-safe",
+        "tool.network"
       ],
       "expected_final_status": "incomplete",
       "required_answer_terms": [
@@ -180,6 +205,1753 @@
       "quality_rubric": "Retain uncertainty from non-literal imports, preview the supported static PEP 621 urllib3 entry with an explicit file and group, and preserve offline security and compatibility limits. Verify actual CLI results and unchanged fixture files.",
       "cost_latency_budget": {
         "max_tool_calls": 15
+      }
+    },
+    {
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      },
+      "case_id": "cmake-activation",
+      "task": "Audit this CMake project offline. Explain the googletest configuration declaration and whether its installed version, source usage, removal safety, and vulnerability status are established. Use a qualified explanation for the declaration. Do not configure, build, or download anything.",
+      "fixtures": {
+        "CMakeLists.txt": "include(FetchContent)\nFetchContent_Declare(googletest GIT_REPOSITORY https://github.com/google/googletest.git GIT_TAG main)\nFetchContent_MakeAvailable(googletest)\n",
+        "hello_test.cc": "#include <gtest/gtest.h>\n"
+      },
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments": {},
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "ecosystem": "CMake",
+            "project_id": "cmake:cmake:.",
+            "package": "googletest",
+            "purl": null,
+            "resolved_versions": [],
+            "declarations": [
+              {
+                "metadata": {
+                  "activation": "unknown",
+                  "mechanism": "fetchcontent_declare"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "required_answer_terms": [
+        "googletest",
+        "unknown"
+      ],
+      "quality_rubric": "Use actual qualified CLI evidence; distinguish CMake assertions and availability requests from execution, source usage, installed versions and registry security coverage. Inspect recorded commands and unchanged fixtures."
+    },
+    {
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      },
+      "case_id": "cmake-script-scope",
+      "task": "Audit this CMake repository offline. First explain Shared specifically in the root script scope, then distinguish it from the app component declaration. Report what can be concluded about activation, installed versions, source usage, removal and security. Also note uncollected CPM calls. Do not configure, build, run scripts or download anything.",
+      "fixtures": {
+        "fetch.cmake": "include(FetchContent)\nFetchContent_Declare(Shared GIT_REPOSITORY https://example.test/root.git GIT_TAG main)\nCPMAddPackage(\"gh:fmtlib/fmt#11.0.0\")\n",
+        "app/CMakeLists.txt": "FetchContent_Declare(Shared GIT_REPOSITORY https://example.test/app.git GIT_TAG other)\n"
+      },
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments": {},
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "ecosystem": "CMake",
+            "project_id": "cmake:cmake-script:.",
+            "package": "shared",
+            "purl": null,
+            "resolved_versions": [],
+            "declarations": [
+              {
+                "location": {
+                  "path": "fetch.cmake"
+                },
+                "metadata": {
+                  "activation": "unknown",
+                  "mechanism": "fetchcontent_declare"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "required_answer_terms": [
+        "shared",
+        "unknown",
+        "cmake:cmake-script:.",
+        "cpm"
+      ],
+      "quality_rubric": "Verify a qualified explanation for the root script scope, retain the independent app scope and unknown activation/installed graph/source usage. CPM wrappers are coverage gaps. Inspect recorded commands and unchanged fixtures."
+    },
+    {
+      "case_id": "pipenv-private-position",
+      "task": "Audit this Pipenv repository offline. Explain requests with its declaration location and configured source. Distinguish its exact declared pin from an installed package, public PyPI identity and completed vulnerability analysis. Do not install, update or access the network.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "Pipfile": "[[source]]\nname=\"private\"\nurl=\"https://private.example/simple\"\nverify_ssl=true\n\n[packages]\nrequests={version=\"==2.31.0\",index=\"private\"}\n",
+        "app.py": "import requests\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments": {},
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "ecosystem": "PyPI",
+            "project_id": "pypi:python:.",
+            "package": "requests",
+            "purl": null,
+            "resolved_versions": [
+              "2.31.0"
+            ],
+            "declarations": [
+              {
+                "location": {
+                  "path": "Pipfile",
+                  "line": 7
+                },
+                "metadata": {
+                  "origin": {
+                    "public": false
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "private",
+        "2.31.0",
+        "skipped",
+        "Pipfile"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Use actual declaration position and unverified private source identity. Exact static pin does not prove installed state or security clearance; inspect recorded commands and unchanged fixtures.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "vcpkg-feature-activation",
+      "task": "Explain why gtest is listed in vcpkg:vcpkg:. and whether it is installed or can be removed. Include the feature, declaration location, default-feature condition, host context and static override. Use explain and impact. Do not infer selection from default-features; security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "vcpkg.json": "{\n \"name\":\"demo\",\n \"default-features\":[{\"name\":\"tests\",\"platform\":\"windows\"}],\n \"features\":{\n  \"tests\":{\n   \"description\":\"Build tests\",\n   \"dependencies\":[\n    {\"name\":\"gtest\",\"host\":true,\"version>=\":\"1.17.0\"}\n   ]\n  }\n },\n \"overrides\":[{\"name\":\"gtest\",\"version\":\"1.18.0\"}]\n}\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "package": "gtest",
+            "ecosystem": "vcpkg",
+            "project_id": "vcpkg:vcpkg:."
+          },
+          "arguments": {}
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "result_contains": {
+            "evidence_complete": false,
+            "usage_count": 0
+          },
+          "arguments": {}
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "gtest",
+        "conditional",
+        "tests",
+        "windows",
+        "host",
+        "1.18.0",
+        "unknown"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Retain conditional vcpkg feature/default/host assertions and exact declaration location. Static override is not installed/selected version. Zero observed usages do not justify removal. Review all recorded commands manually.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "maven-plugin-configuration",
+      "task": "Explain org.apache.maven.plugins:maven-compiler-plugin in maven:maven:. Distinguish the pluginManagement version assertion from the build plugin whose version is unspecified, and configured compile execution from actual execution/installation. Use explain and impact. Decide whether zero Java imports prove it can be removed. Security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "pom.xml": "<project>\n<groupId>example</groupId><artifactId>app</artifactId><version>1</version>\n<properties><plugin.version>3.13.0</plugin.version></properties>\n<build><pluginManagement><plugins>\n<plugin><artifactId>maven-compiler-plugin</artifactId><version>${plugin.version}</version></plugin>\n</plugins></pluginManagement><plugins>\n<plugin><artifactId>maven-compiler-plugin</artifactId>\n<executions><execution><id>compile-it</id><phase>compile</phase><goals><goal>compile</goal></goals></execution></executions>\n</plugin>\n</plugins></build></project>\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "package": "org.apache.maven.plugins:maven-compiler-plugin",
+            "ecosystem": "Maven",
+            "project_id": "maven:maven:.",
+            "resolved_versions": [],
+            "evidence_complete": false,
+            "declarations": [
+              {
+                "kind": "conditional",
+                "scope": "build",
+                "metadata": {
+                  "maven_kind": "plugin-management"
+                },
+                "constraint": {
+                  "normalized": "3.13.0"
+                },
+                "location": {
+                  "path": "pom.xml",
+                  "line": 5
+                }
+              },
+              {
+                "kind": "conditional",
+                "scope": "build",
+                "metadata": {
+                  "maven_kind": "build-plugin"
+                },
+                "constraint": {
+                  "normalized": null
+                },
+                "location": {
+                  "path": "pom.xml",
+                  "line": 7
+                }
+              }
+            ]
+          },
+          "arguments": {}
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "result_contains": {
+            "evidence_complete": false,
+            "usage_count": 0
+          },
+          "arguments": {}
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "maven-compiler-plugin",
+        "3.13.0",
+        "compile"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Management and plugin declarations remain distinct. Missing selected version does not become installed version; phase/goals are configured, not observed execution. Zero imports do not justify plugin removal. Review complete commands manually.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      },
+      "ordered_tool_calls": false
+    },
+    {
+      "case_id": "go-checksum-selection",
+      "task": "Audit this Go project offline. Explain whether example.com/dep is selected or installed at v1.0.0 or v1.4.0, whether its hashes are verified, and whether example.com/old can be removed or the dependencies called safe. Use declaration and usage evidence to support the answer.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "absent",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "go.mod": "module example.com/app\n\nrequire example.com/dep v1.0.0\n",
+        "go.sum": "example.com/dep v1.0.0/go.mod h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nexample.com/dep v1.4.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nexample.com/old v0.9.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n",
+        "main.go": "package main\nimport \"example.com/dep\"\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments": {},
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "package": "example.com/dep",
+            "ecosystem": "Go",
+            "resolved_versions": [],
+            "evidence_complete": false,
+            "declarations": [
+              {
+                "kind": "direct",
+                "constraint": {
+                  "raw": "v1.0.0",
+                  "scheme": "go-minimum"
+                },
+                "location": {
+                  "path": "go.mod",
+                  "line": 3
+                }
+              },
+              {
+                "kind": "checksum",
+                "metadata": {
+                  "checksum_kind": "go.mod",
+                  "integrity_verified": false
+                },
+                "location": {
+                  "path": "go.sum",
+                  "line": 1
+                }
+              },
+              {
+                "kind": "checksum",
+                "metadata": {
+                  "checksum_kind": "module-zip",
+                  "version": "v1.4.0",
+                  "integrity_verified": false
+                },
+                "location": {
+                  "path": "go.sum",
+                  "line": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments": {},
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "result_contains": {
+            "package": "example.com/old",
+            "usage_count": 0,
+            "evidence_complete": false
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "tool.network",
+        "claim.security-safe"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "v1.0.0",
+        "v1.4.0",
+        "example.com/old"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Preserve minimum versus checksum-artifact versions, source positions and unverified integrity. Neither MVS/installed state nor removal follows from hash presence or zero source uses. Review completed commands manually.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      },
+      "ordered_tool_calls": false
+    },
+    {
+      "case_id": "go-tool-configuration",
+      "task": "Explain why example.com/tool is present when no source imports use it. Determine whether removal is justified and whether its configured tool ran, was installed, or has a selected exact version. Audit offline and use declaration and usage locations.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "absent",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "go.mod": "module example.com/app\ngo 1.24.0\nrequire example.com/tool v1.0.0 // indirect\ntool (\n\texample.com/tool/cmd/lint\n)\n",
+        "main.go": "package main\nfunc main() {}\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments": {},
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "package": "example.com/tool",
+            "ecosystem": "Go",
+            "project_id": "go:gomod:.",
+            "resolved_versions": [],
+            "evidence_complete": false,
+            "imports": [],
+            "findings": [],
+            "declarations": [
+              {
+                "kind": "transitive",
+                "metadata": {
+                  "indirect": true,
+                  "go_kind": "require"
+                },
+                "constraint": {
+                  "scheme": "go-minimum"
+                }
+              }
+            ],
+            "usages": [
+              {
+                "kind": "configuration",
+                "scope": "build",
+                "reference": "example.com/tool/cmd/lint",
+                "mapping_confidence": "exact",
+                "location": {
+                  "path": "go.mod",
+                  "line": 5,
+                  "column": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments": {},
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "result_contains": {
+            "package": "example.com/tool",
+            "usage_count": 1,
+            "files": [
+              "go.mod"
+            ],
+            "evidence_complete": false
+          }
+        }
+      ],
+      "ordered_tool_calls": false,
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "tool.network",
+        "claim.security-safe"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "example.com/tool",
+        "cmd/lint"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "The explicit indirect require and tool configuration explain the provider despite zero source imports. No removal, availability, execution, installation or exact selected-version claim follows. Review completed commands manually.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "gradle-configuration-lock-variants",
+      "task": "Audit this Gradle project offline. Explain the slf4j-api request and each locked configuration/version, whether either is the installed version, and whether zero source imports justify removal. Check for false dependency inventory from documentation strings.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "absent",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "build.gradle.kts": "val docs = \"\"\"\nimplementation(\"ghost:docs:9.0\")\n\"\"\"\ndependencies {\n    implementation(\n        \"org.slf4j:slf4j-api:latest.release\"\n    )\n}\n",
+        "gradle.lockfile": "org.slf4j:slf4j-api:1.7.36=compileClasspath\norg.slf4j:slf4j-api:2.0.16=testRuntimeClasspath\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments": {},
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "package": "org.slf4j:slf4j-api",
+            "ecosystem": "Maven",
+            "project_id": "maven:gradle:.",
+            "resolved_versions": [
+              "1.7.36",
+              "2.0.16"
+            ],
+            "resolved_version": null,
+            "evidence_complete": false,
+            "declarations": [
+              {
+                "kind": "conditional",
+                "constraint": {
+                  "raw": "latest.release",
+                  "scheme": "gradle-required"
+                },
+                "location": {
+                  "path": "build.gradle.kts",
+                  "line": 6,
+                  "column": 9
+                }
+              }
+            ],
+            "resolutions": [
+              {
+                "version": "1.7.36",
+                "origin": {
+                  "kind": "gradle-lock",
+                  "configurations": [
+                    "compileClasspath"
+                  ],
+                  "selection": "unknown"
+                }
+              },
+              {
+                "version": "2.0.16",
+                "origin": {
+                  "kind": "gradle-lock",
+                  "configurations": [
+                    "testRuntimeClasspath"
+                  ],
+                  "selection": "unknown"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments": {},
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "result_contains": {
+            "package": "org.slf4j:slf4j-api",
+            "usage_count": 0,
+            "evidence_complete": false
+          }
+        }
+      ],
+      "ordered_tool_calls": false,
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "tool.network",
+        "claim.security-safe"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "slf4j-api",
+        "1.7.36",
+        "2.0.16"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Keep requested selector and locked configuration instances distinct; neither maximum version nor zero imports establishes installed state/removal. Documentation strings must not add dependencies. Review completed commands and claims manually.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "cpp-preprocessor-activation",
+      "task": "Audit whether gtest in conan:conan:. can be removed or must move from test requirements to runtime. Inspect the literal include, preprocessor condition and comment/raw-string examples. Use explain and impact, report physical locations and unknown macro operands. Do not run a compiler or package manager; security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "conanfile.txt": "[test_requires]\ngtest/1.17.0\n",
+        "main.cc": "/*\n#include <fmt/comment.h>\n*/\n#if ENABLE_TESTS\n  #include <gtest/gtest.h>\n#endif\n#include HEADER\n",
+        "examples.cc": "const char* doc = R\"example(\n#include <spdlog/example.h>\n)example\";\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "gtest",
+            "ecosystem": "Conan",
+            "project_id": "conan:conan:.",
+            "usage_complete": false,
+            "usages": [
+              {
+                "kind": "conditional",
+                "mapping_confidence": "inferred",
+                "location": {
+                  "path": "main.cc",
+                  "line": 5,
+                  "column": 3
+                }
+              }
+            ],
+            "findings": []
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "arguments": {},
+          "result_contains": {
+            "usage_count": 1,
+            "evidence_complete": false
+          }
+        }
+      ],
+      "ordered_tool_calls": false,
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "gtest"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Preserve the main.cc line5 conditional include as inferred, not proof of active runtime use. Comment/raw-string examples are not imports. Unknown macro operands and build activation prevent removal or scope-move advice. Review all completed commands, fixture hashes and the full answer manually.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "gradle-catalog-definition",
+      "task": "Explain why the core-lib catalog alias appears in maven:gradle-catalog:gradle, what version and bundle assertions it records, and whether it is installed or removable. Query by alias, then use qualified explain and impact. Inspect the build script without executing Gradle. Preserve declaration/version source positions and unknown catalog binding; security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "gradle/libs.versions.toml": "[versions]\nshared=\"1.4\"\n[libraries]\ncore-lib={module=\"example:core\",version.ref=\"shared\"}\n[bundles]\nmain=[\"core-lib\"]\n[plugins]\ncompile={id=\"example.compile\",version=\"2\"}\n",
+        "build.gradle.kts": "dependencies { implementation(libs.core.lib) }\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "ordered_tool_calls": false,
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "query",
+            "argv": [
+              "core-lib"
+            ]
+          },
+          "arguments": {},
+          "result_contains": {
+            "count": 1,
+            "dependencies": [
+              {
+                "package": "example:core",
+                "project_id": "maven:gradle-catalog:gradle"
+              }
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "example:core",
+            "ecosystem": "Maven",
+            "project_id": "maven:gradle-catalog:gradle",
+            "resolved_versions": [],
+            "usage_complete": false,
+            "declarations": [
+              {
+                "kind": "conditional",
+                "scope": "unknown",
+                "location": {
+                  "path": "gradle/libs.versions.toml",
+                  "line": 4
+                },
+                "constraint": {
+                  "scheme": "gradle-catalog",
+                  "normalized": "1.4"
+                },
+                "metadata": {
+                  "gradle_catalog_alias": "core-lib",
+                  "version_reference": "shared",
+                  "version_source": {
+                    "path": "gradle/libs.versions.toml",
+                    "line": 2
+                  },
+                  "bundles": [
+                    {
+                      "alias": "main"
+                    }
+                  ]
+                }
+              }
+            ],
+            "usages": [],
+            "findings": []
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "arguments": {},
+          "result_contains": {
+            "usage_count": 0,
+            "evidence_complete": false
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "core-lib",
+        "example:core",
+        "1.4"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Catalog library definition and version/bundle positions must survive. A script accessor does not prove catalog binding, execution, installation or selected versions. Plugin IDs remain uncollected, and zero source usages cannot justify removal. Manually review all completed commands and source hashes.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "pep735-repeated-group-includes",
+      "task": "Audit whether the repeated pyyaml records in pypi:python:. can be removed as duplicate declarations. Use qualified explain and impact, inspect the manifest and preserve all three occurrences, original group spelling, normalized include names and requirement-source location. Explain what is known about group installation and distinguish repeated includes from multiple physical declarations. Do not change files or run package managers; security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "pyproject.toml": "[project]\nname=\"demo\"\nversion=\"1\"\n[dependency-groups]\nBase_Test=[\"pyyaml==6.0.2\"]\nci=[{include-group=\"base.test\"},{include-group=\"BASE-TEST\"}]\n",
+        "test_app.py": "import yaml\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "ordered_tool_calls": false,
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "pyyaml",
+            "ecosystem": "PyPI",
+            "project_id": "pypi:python:.",
+            "evidence_page": {
+              "counts": {
+                "declarations": 3
+              }
+            },
+            "declarations": [
+              {
+                "metadata": {
+                  "group": "dev:Base_Test"
+                },
+                "location": {
+                  "path": "pyproject.toml",
+                  "line": 5
+                }
+              },
+              {
+                "metadata": {
+                  "group": "dev:ci"
+                },
+                "location": {
+                  "path": "pyproject.toml",
+                  "line": 5
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "arguments": {},
+          "result_contains": {
+            "usage_count": 1
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "pass",
+      "required_answer_terms": [
+        "pyyaml",
+        "Base_Test",
+        "ci"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "All3 records must be accounted for:1Base_Test plus2ci occurrences of the same physical requirement at pyproject.toml:5. Normalized include refs are not missing groups. Repeated expansion is not duplicate source declarations; source version assertions do not establish installed groups. Do not claim removal justified solely by record counts. Review every completed command and fixture hash.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "python-development-group-selection",
+      "task": "Determine whether the active installed environment currently has a pyyaml version conflict, and establish which development groups and version are selected. Inspect the pyproject configuration, context, qualified explain and impact. Distinguish the left/right declarations and configured uv rule from observed installation; report what the available evidence can establish. Do not edit files or execute the package manager; security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "pyproject.toml": "[project]\nname=\"demo\"\nversion=\"1\"\n[dependency-groups]\nleft=[\"pyyaml==6.0.1\"]\nright=[\"pyyaml==6.0.2\"]\n[tool.uv]\nconflicts=[[{group=\"left\"},{group=\"right\"}]]\n",
+        "test_app.py": "import yaml\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "ordered_tool_calls": false,
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "pyyaml",
+            "ecosystem": "PyPI",
+            "project_id": "pypi:python:.",
+            "evidence_complete": false,
+            "usage_complete": true,
+            "findings": [],
+            "evidence_page": {
+              "counts": {
+                "declarations": 2
+              }
+            },
+            "declarations": [
+              {
+                "metadata": {
+                  "group": "dev:left"
+                }
+              },
+              {
+                "metadata": {
+                  "group": "dev:right"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "arguments": {},
+          "result_contains": {
+            "usage_count": 1,
+            "evidence_complete": false
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "pyyaml",
+        "left",
+        "right",
+        "6.0.1",
+        "6.0.2"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Source constraints differ across development groups; no installed conflict is proven. Explain the configured uv conflict assertion without claiming the scanner evaluated native policies or observed installed selection. usage_complete=true does not override evidence_complete=false. Requested active-environment determination is incomplete. Review every completed command, full answer and fixture hashes.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "uv-legacy-dev-inheritance",
+      "task": "Explain the static development declarations for pyyaml and pytest in pypi:python:. Inspect the manifest and qualified explanations. Report original groups, requirement locations and occurrence counts, and whether the ci include copies the legacy uv entry. This is a declaration-inventory task, not an installed-environment audit. State the limits on installation evidence. Do not edit files or run package managers; security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "pyproject.toml": "[project]\nname=\"demo\"\nversion=\"1\"\n[tool.uv]\ndev-dependencies=[\"pyyaml==6.0.2\"]\n[dependency-groups]\nDEV=[\"pytest==8.3.0\"]\nci=[{include-group=\"dev\"},{include-group=\"DEV\"}]\n",
+        "test_app.py": "import yaml\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "ordered_tool_calls": false,
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "pyyaml",
+            "ecosystem": "PyPI",
+            "project_id": "pypi:python:.",
+            "evidence_page": {
+              "counts": {
+                "declarations": 1
+              }
+            }
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "pytest",
+            "ecosystem": "PyPI",
+            "project_id": "pypi:python:.",
+            "evidence_page": {
+              "counts": {
+                "declarations": 3
+              }
+            }
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "pass",
+      "required_answer_terms": [
+        "pyyaml",
+        "pytest",
+        "DEV",
+        "ci"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "The single legacy pyyaml entry remains at pyproject.toml:5 in dev:DEV only. The standard pytest entry at line7 expands to one dev:DEV plus two dev:ci occurrences. Legacy additions follow standard flattening and are not inherited by ci. Explain original locations and counts without installed selection or security claims. Read the whole Skill and manually review every completed command, full answer and fixture hashes.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "cmake-package-template-activation",
+      "task": "Explain the fmt and Threads assertions in ExportConfig.cmake.in, then determine whether fmt is installed and can be removed. Inspect the template and use qualified explain and impact for fmt using project ID `cmake:cmake-script:.`. Preserve source locations, template provenance and unknown substituted version/condition values. Distinguish literal configuration assertions from generated contents, installed packages and actual usage. Do not edit files, configure CMake or run package managers; security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "ExportConfig.cmake.in": "@PACKAGE_INIT@\ninclude(CMakeFindDependencyMacro)\nif(@EXTERNAL_FMT@)\n  find_dependency(fmt @FMT_VERSION@ CONFIG)\nendif()\nfind_dependency(Threads REQUIRED)\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "ordered_tool_calls": false,
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "fmt",
+            "ecosystem": "CMake",
+            "project_id": "cmake:cmake-script:.",
+            "resolved_versions": [],
+            "evidence_complete": false,
+            "declarations": [
+              {
+                "metadata": {
+                  "template": true,
+                  "mechanism": "find_dependency",
+                  "activation": "unknown",
+                  "dynamic_arguments": [
+                    0
+                  ]
+                },
+                "location": {
+                  "path": "ExportConfig.cmake.in",
+                  "line": 4
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "arguments": {},
+          "result_contains": {
+            "evidence_complete": false,
+            "usage_count": 0
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "fmt",
+        "Threads",
+        "ExportConfig.cmake.in"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Literal fmt and Threads assertions retain original locations4/6. Template substitutions and injected PACKAGE_INIT code remain unknown; no literal fmt version or selected/exported/installed graph follows. Explain and impact must retain evidence_complete=false. Zero source usage with unsupported CMake usage cannot justify removal. Requested installed/removal determination is incomplete. Review every completed command, full answer, full Skill read and source fixture hashes.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "bzlmod-request-and-activation",
+      "task": "Explain abseil-cpp and rules_python in Bazel project bazel:bzlmod:., including original locations, requested versions, repo_name and dev_dependency. Use qualified explanations and impact for abseil-cpp. Determine whether either source request proves the selected installed version or allows removal; account for the local override. Do not edit files, evaluate Starlark or run Bazel/package managers; security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "MODULE.bazel": "module(name=\"demo\")\nbazel_dep(name=\"abseil-cpp\",version=\"20260526.0\",repo_name=\"absl\")\nbazel_dep(name=\"rules_python\",version=\"2.2.0\",dev_dependency=True)\nlocal_path_override(module_name=\"abseil-cpp\",path=\"../private\")\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "ordered_tool_calls": false,
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "abseil-cpp",
+            "ecosystem": "Bazel",
+            "project_id": "bazel:bzlmod:.",
+            "resolved_versions": [],
+            "evidence_complete": false,
+            "declarations": [
+              {
+                "metadata": {
+                  "mechanism": "bazel_dep",
+                  "activation": "unknown",
+                  "arguments": {
+                    "repo_name": "absl"
+                  }
+                },
+                "location": {
+                  "path": "MODULE.bazel",
+                  "line": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "rules_python",
+            "ecosystem": "Bazel",
+            "project_id": "bazel:bzlmod:.",
+            "declarations": [
+              {
+                "scope": "development",
+                "kind": "conditional",
+                "metadata": {
+                  "arguments": {
+                    "dev_dependency": true
+                  }
+                },
+                "location": {
+                  "path": "MODULE.bazel",
+                  "line": 3
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "impact"
+          },
+          "arguments": {},
+          "result_contains": {
+            "evidence_complete": false,
+            "usage_count": 0
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "abseil-cpp",
+        "absl",
+        "rules_python",
+        "20260526.0",
+        "2.2.0"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Preserve module name abseil-cpp vs repository alias absl, original lines2/3, version requests and conditional dev dependency. Local path override is uncollected and must not be evaluated/followed or used to assert installed source. No MVS selected/installed versions, source usage or public security claim follows. Zero unsupported usage cannot justify removal; installed/removal determination stays incomplete. Review full Skill read, all completed commands, complete answer and unchanged fixture hashes.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "pnpm-nested-workspace-ownership",
+      "task": "Establish the actual installed lodash version for npm:npm:group/member and compare its lock evidence with npm:npm:apps/api. Inspect relevant manifests and workspace files and use qualified explanations. Creating the derived index in this disposable fixture is allowed; keep source files and manifests unchanged and do not run package managers. Security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "pnpm-workspace.yaml": "packages:\n  - \"apps/*\"\n  - \"group/*\"\n",
+        "pnpm-lock.yaml": "lockfileVersion: \"9.0\"\nimporters:\n  apps/api:\n    dependencies:\n      lodash:\n        specifier: ^4.17.0\n        version: 4.17.21\n  group/member:\n    dependencies:\n      lodash:\n        specifier: ^4.17.0\n        version: 4.17.21\npackages:\n  lodash@4.17.21:\n    resolution:\n      integrity: sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\nsnapshots:\n  lodash@4.17.21: {}\n",
+        "apps/api/package.json": "{\"dependencies\":{\"lodash\":\"^4.17.0\"}}",
+        "apps/api/app.js": "import \"lodash\";\n",
+        "group/pnpm-workspace.yaml": "packages:\n  - \"*\"\n",
+        "group/member/package.json": "{\"dependencies\":{\"lodash\":\"^4.17.0\"}}",
+        "group/member/app.js": "import \"lodash\";\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "ordered_tool_calls": false,
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "lodash",
+            "ecosystem": "npm",
+            "project_id": "npm:npm:apps/api",
+            "resolved_versions": [
+              "4.17.21"
+            ]
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "arguments": {},
+          "result_contains": {
+            "package": "lodash",
+            "ecosystem": "npm",
+            "project_id": "npm:npm:group/member",
+            "resolved_versions": [],
+            "evidence_complete": true
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "lodash",
+        "apps/api",
+        "group/member",
+        "4.17.21"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Outer workspace covers apps/api and supplies static lock evidence4.17.21. A nearer group/pnpm-workspace.yaml stops outer inheritance for group/member even without a closer lock; the outer importer entry is not sufficient ownership proof. Preserve unknown installed/selected version and do not run the package manager or move/delete locks. Review relevant JavaScript reference read, actual source reads, complete commands/answer and unchanged fixture hashes. A true static evidence_complete flag does not establish an installed version; resolved_versions stays empty for the inner component.",
+      "cost_latency_budget": {
+        "max_tool_calls": 15
+      }
+    },
+    {
+      "case_id": "cargo-legacy-edition-and-precedence",
+      "task": "Inspect foo in cargo:cargo:legacy, cargo:cargo:shadowed and cargo:cargo:rejected. Explain which development declarations are accepted, ignored or rejected and whether removing foo is justified. Use qualified explanations and preserve unknown installation/usage. Creating a derived index in this disposable fixture is allowed; keep source files and manifests unchanged, stay offline and do not run package managers. Security was not requested.",
+      "should_trigger": true,
+      "initial_state": {
+        "index": "missing",
+        "transport": "CLI-only"
+      },
+      "available_tools": [
+        "cli"
+      ],
+      "loaded_instructions": [
+        "check-dependencies"
+      ],
+      "fixtures": {
+        "legacy/Cargo.toml": "[package]\nname=\"legacy\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[dev_dependencies]\nfoo=\"1\"\n",
+        "shadowed/Cargo.toml": "[package]\nname=\"shadowed\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[dev-dependencies]\nfoo=\"1\"\n[dev_dependencies]\nfoo=\"2\"\n",
+        "rejected/Cargo.toml": "[package]\nname=\"rejected\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[dev_dependencies]\nfoo=\"3\"\n",
+        "legacy/src/lib.rs": "// No observed Rust source usage is not removal evidence.\n",
+        "shadowed/src/lib.rs": "// No observed Rust source usage is not removal evidence.\n",
+        "rejected/src/lib.rs": "// No observed Rust source usage is not removal evidence.\n"
+      },
+      "expected_trace_events": [
+        "skill.activate",
+        "tool.cli"
+      ],
+      "ordered_tool_calls": false,
+      "expected_tool_calls": [
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "project_id": "cargo:cargo:legacy",
+            "package": "foo",
+            "usage_complete": false,
+            "resolved_versions": [],
+            "declarations": [
+              {
+                "scope": "development",
+                "kind": "direct",
+                "metadata": {
+                  "legacy_section": {
+                    "status": "accepted"
+                  }
+                }
+              }
+            ]
+          },
+          "arguments": {
+            "command": "explain"
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "project_id": "cargo:cargo:shadowed",
+            "package": "foo",
+            "usage_complete": false,
+            "resolved_versions": [],
+            "declarations": [
+              {
+                "scope": "development",
+                "kind": "configuration",
+                "metadata": {
+                  "legacy_section": {
+                    "status": "ignored"
+                  }
+                }
+              }
+            ]
+          },
+          "arguments": {
+            "command": "explain"
+          }
+        },
+        {
+          "name": "cli",
+          "arguments_contains": {
+            "command": "explain"
+          },
+          "result_contains": {
+            "project_id": "cargo:cargo:rejected",
+            "package": "foo",
+            "usage_complete": false,
+            "resolved_versions": [],
+            "declarations": [
+              {
+                "scope": "development",
+                "kind": "configuration",
+                "metadata": {
+                  "legacy_section": {
+                    "status": "rejected"
+                  }
+                }
+              }
+            ]
+          },
+          "arguments": {
+            "command": "explain"
+          }
+        }
+      ],
+      "forbidden_trace_events": [
+        "tool.package-manager",
+        "claim.security-safe",
+        "tool.network"
+      ],
+      "expected_final_status": "incomplete",
+      "required_answer_terms": [
+        "foo",
+        "development",
+        "2021",
+        "2024",
+        "unknown"
+      ],
+      "forbidden_answer_terms": [
+        "safe to release",
+        "dependencies are safe",
+        "can be safely removed"
+      ],
+      "expected_claims": {
+        "security_safe": [
+          false,
+          null
+        ],
+        "release_ready": [
+          false,
+          null
+        ]
+      },
+      "quality_rubric": "Review full root and Cargo/workflow guidance reads and qualified explanations. Preserve all three literal legacy section states, canonical precedence, missing installation and unsupported Rust usage. No package manager/build execution or source mutation. Synthetic fixtures are not real installed environments.",
+      "cost_latency_budget": {
+        "max_tool_calls": 16
       }
     }
   ]

@@ -13,6 +13,7 @@ from depcheck.model import (
     SourceLocation,
 )
 from depcheck.path_policy import ProjectPathError, require_within_project
+from depcheck.bounded_io import read_text
 
 from .base_parser import BaseDependencyParser
 
@@ -125,7 +126,9 @@ class RequirementParser(BaseDependencyParser):
         if path not in files:
             files.append(path)
         try:
-            content = path.read_text(encoding="utf-8")
+            content = read_text(
+                path, project_root=self.project_root, allow_aliases=True
+            )
         except (OSError, UnicodeError) as exc:
             diagnostics.append(
                 Diagnostic(

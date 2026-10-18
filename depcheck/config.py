@@ -10,6 +10,8 @@ from packaging.utils import canonicalize_name
 
 from depcheck.policy_codes import VALID_FAIL_ON
 from depcheck.path_policy import require_within_project
+from depcheck.bounded_io import read_bytes, repository_operation
+from depcheck.model import ProjectUnit
 
 
 class ConfigurationError(ValueError):
@@ -29,8 +31,20 @@ _NEUTRAL_ALLOWED_KEYS = _LEGACY_ALLOWED_KEYS | {
     "excluded-directories",
     "mappings",
     "tool-usage",
+    "repository-id",
+    "python-roots",
 }
-DEFAULT_ECOSYSTEMS = ("PyPI", "npm", "Go", "Maven", "Conan", "vcpkg")
+DEFAULT_ECOSYSTEMS = (
+    "PyPI",
+    "npm",
+    "Go",
+    "Maven",
+    "Conan",
+    "vcpkg",
+    "Cargo",
+    "CMake",
+    "Bazel",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +73,29 @@ class DepcheckConfig:
         Mapping[str, Mapping[str, str]],
     ] = field(default_factory=dict)
     tool_usage: tuple[ToolUsageDefinition, ...] = field(default_factory=tuple)
+    repository_id: str | None = None
+    python_roots: tuple[str, ...] = ()
+
+    def validate_legacy_python_scope(self, projects: Sequence[ProjectUnit]) -> None:
+        project_ids = sorted(
+            p.project_id for p in projects if p.ecosystem.lower() == "pypi"
+        )
+        legacy = "pypi:python:."
+        if not project_ids or legacy in project_ids:
+            return
+        has_legacy_scope = any(
+            ecosystem.lower() == "pypi" and legacy in mappings
+            for ecosystem, mappings in self.scoped_mappings.items()
+        ) or any(
+            entry.ecosystem.lower() == "pypi" and entry.project_id == legacy
+            for entry in self.tool_usage
+        )
+        if has_legacy_scope:
+            raise ConfigurationError(
+                f"Legacy Python configuration scope {legacy!r} no longer identifies "
+                "the named components. Assign scoped mappings and tool-usage to "
+                f"their owning project IDs: {', '.join(project_ids)}."
+            )
 
     def mapping_for(self, ecosystem: str, project_id: str) -> dict[str, str]:
         result: dict[str, str] = {}
@@ -83,6 +120,7 @@ class DepcheckConfig:
         return result
 
 
+@repository_operation("project_root")
 def load_project_config(project_root: Path) -> DepcheckConfig:
     """优先加载中立配置；缺失时回退到旧 Python 配置。"""
     root = Path(project_root).resolve()
@@ -90,12 +128,22 @@ def load_project_config(project_root: Path) -> DepcheckConfig:
         root, root / ".depcheck.toml", operation="read configuration"
     )
     if neutral_path.is_file():
-        return _parse_config(
+        config = _parse_config(
             _load_toml(neutral_path),
             source=".depcheck.toml",
             allowed_keys=_NEUTRAL_ALLOWED_KEYS,
             default_ecosystems=DEFAULT_ECOSYSTEMS,
         )
+        for relative in config.python_roots:
+            candidate = root / relative
+            require_within_project(
+                root, candidate, operation="select Python installation scope"
+            )
+            if candidate.resolve() != candidate or not candidate.is_dir():
+                raise ConfigurationError(
+                    f"Python installation scope is not a directory: {relative}"
+                )
+        return config
 
     legacy_path = require_within_project(
         root, root / "pyproject.toml", operation="read configuration"
@@ -118,8 +166,7 @@ def load_project_config(project_root: Path) -> DepcheckConfig:
 
 def _load_toml(path: Path) -> Mapping[str, Any]:
     try:
-        with path.open("rb") as handle:
-            document = tomllib.load(handle)
+        document = tomllib.loads(read_bytes(path, allow_aliases=True).decode("utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigurationError(f"cannot read {path}: {exc}") from exc
     if not isinstance(document, Mapping):
@@ -169,6 +216,32 @@ def _parse_config(
     excluded = _string_sequence(raw, "excluded-directories", source)
     _validate_exclusions(excluded, source)
     scoped_mappings = _scoped_mappings(raw, source)
+    repository_id = _optional_string(raw, "repository-id", source)
+    python_roots = _string_sequence(raw, "python-roots", source)
+    for relative in python_roots:
+        path = Path(relative)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or "\\" in relative
+            or ":" in relative
+            or any(c in relative for c in "*?[")
+            or path.as_posix() != relative
+        ):
+            raise ConfigurationError(
+                f"{source}.python-roots requires normalized relative directory paths"
+            )
+    if len(set(python_roots)) != len(python_roots):
+        raise ConfigurationError(f"{source}.python-roots contains duplicates")
+    if repository_id is not None and (
+        len(repository_id) > 256
+        or any(
+            ord(character) < 32 or ord(character) == 127 for character in repository_id
+        )
+    ):
+        raise ConfigurationError(
+            f"{source}.repository-id must be at most 256 characters without control characters"
+        )
     return DepcheckConfig(
         security=security,
         compatibility=compatibility,
@@ -180,6 +253,8 @@ def _parse_config(
         excluded_directories=excluded,
         scoped_mappings=scoped_mappings,
         tool_usage=_tool_usage(raw, source),
+        repository_id=repository_id,
+        python_roots=python_roots,
     )
 
 

@@ -1,27 +1,35 @@
 from __future__ import annotations
 
+from depcheck.bounded_io import repository_operation
+
+import json
+import hashlib
 import re
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from pathlib import Path
-from urllib.parse import quote
+from dataclasses import dataclass, replace
+from pathlib import Path, PureWindowsPath
+from typing import Any
 
 from depcheck.model import Diagnostic, SourceLocation
 from depcheck.ecosystems.base import EcosystemPack, ProviderContext
+from depcheck.ecosystems.gradle import literal_gradle_calls
+from depcheck.ecosystems.gradle_catalog import collect_gradle_catalogs
+from depcheck.ecosystems.maven_identity import package_ref as _package_ref
 from depcheck.model import (
     Capability,
     CapabilityState,
     DependencyDeclaration,
     EvidenceBundle,
     MappingConfidence,
-    PackageRef,
     ProjectUnit,
     ResolvedDependency,
     UsageEvidence,
     VersionConstraint,
 )
 from depcheck.ecosystems.static import (
+    DEFAULT_MAX_BYTES,
     StaticReadError,
     discover_files,
     exclusions_for,
@@ -39,11 +47,9 @@ _GRADLE_CONFIGURATIONS = {
     "testImplementation": "test",
     "testCompile": "test",
     "testRuntimeOnly": "test",
+    "classpath": "build",
 }
-_GRADLE_LITERAL = re.compile(
-    r"^\s*([A-Za-z][\w]*)\s*(?:\(\s*)?['\"]([^'\"]+)['\"]\s*\)?"
-)
-_GRADLE_CALL = re.compile(r"^\s*([A-Za-z][\w]*)\s*\(")
+_GRADLE_LOCK_NAMES = ("gradle.lockfile", "buildscript-gradle.lockfile")
 _IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?([A-Za-z_][\w.]*)")
 _PACKAGE = re.compile(r"^\s*package\s+([A-Za-z_][\w.]*)")
 _PROPERTY = re.compile(r"\$\{([^}]+)\}")
@@ -66,7 +72,19 @@ class _MavenDependencySpec:
     optional: bool
     packaging: str
     classifier: str
-    source: Path
+    source: SourceLocation
+
+
+@dataclass(frozen=True, slots=True)
+class _MavenPluginSpec:
+    group: str
+    artifact: str
+    version: str
+    inherited: str
+    source: SourceLocation
+    properties: Mapping[str, str]
+    metadata: Mapping[str, Any]
+    dependencies: tuple[_MavenDependencySpec, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,19 +98,26 @@ class _EffectivePom:
     parent_version: str
     management: tuple[_MavenDependencySpec, ...]
     dependencies: tuple[_MavenDependencySpec, ...]
+    plugins: tuple[_MavenPluginSpec, ...] = ()
 
 
 class JavaProjectDetector:
+    @repository_operation("context.repository_root")
     def detect(self, context: ProviderContext) -> tuple[ProjectUnit, ...]:
         root = context.repository_root
         candidates = discover_files(
             root,
             names=frozenset({"pom.xml", "build.gradle", "build.gradle.kts"}),
+            suffixes=frozenset({".toml"}),
             excluded_directories=exclusions_for(context.settings),
         )
         by_root: dict[Path, set[str]] = {}
+        catalogs: dict[Path, list[Path]] = {}
         for path in candidates:
-            by_root.setdefault(path.parent, set()).add(path.name)
+            if path.name.lower().endswith(".versions.toml"):
+                catalogs.setdefault(path.parent, []).append(path.relative_to(root))
+            elif path.name in {"pom.xml", "build.gradle", "build.gradle.kts"}:
+                by_root.setdefault(path.parent, set()).add(path.name)
         projects: list[ProjectUnit] = []
         for project_root, names in sorted(
             by_root.items(), key=lambda item: item[0].as_posix()
@@ -112,9 +137,25 @@ class JavaProjectDetector:
                 else None
             )
             if gradle_name is not None:
-                projects.append(
-                    _project_unit(relative_root, "gradle", gradle_name, project_root)
+                unit = _project_unit(relative_root, "gradle", gradle_name, project_root)
+                scripts = tuple(
+                    relative_root / name
+                    for name in ("build.gradle", "build.gradle.kts")
+                    if name in names
                 )
+                projects.append(replace(unit, manifests=scripts))
+        for directory, manifests in catalogs.items():
+            relative = directory.relative_to(root)
+            projects.append(
+                ProjectUnit(
+                    ProjectUnit.stable_id(relative, "Maven", "gradle-catalog"),
+                    relative,
+                    "toml",
+                    "Maven",
+                    "gradle-catalog",
+                    tuple(sorted(manifests)),
+                )
+            )
         return tuple(
             sorted(
                 projects,
@@ -133,6 +174,7 @@ class JavaEvidenceCollector:
             str(key): str(value) for key, value in (mappings or {}).items()
         }
 
+    @repository_operation("context.repository_root")
     def collect(
         self,
         context: ProviderContext,
@@ -140,6 +182,8 @@ class JavaEvidenceCollector:
         pack: EcosystemPack,
     ) -> EvidenceBundle:
         del pack
+        if project.manager == "gradle-catalog":
+            return collect_gradle_catalogs(context, project)
         project_root = context.repository_root / project.root
         manifest = context.repository_root / project.manifests[0]
         diagnostics: list[Diagnostic] = []
@@ -154,14 +198,58 @@ class JavaEvidenceCollector:
                     context.repository_root,
                 )
             else:
-                declarations, parse_diagnostics = _parse_gradle(project, manifest)
+                collected: list[DependencyDeclaration] = []
+                parse_diagnostics = []
+                evidence_files = tuple(
+                    context.repository_root / p for p in project.manifests
+                )
+                for script in evidence_files:
+                    rows, problems = _parse_gradle(
+                        project, script, context.repository_root
+                    )
+                    collected.extend(rows)
+                    parse_diagnostics.extend(problems)
+                declarations = tuple(collected)
+                if len(evidence_files) > 1:
+                    parse_diagnostics.append(
+                        _diagnostic(
+                            "manifest.gradle-build-file-ambiguous",
+                            "Both Gradle DSL build files are inventoried; no active script was selected.",
+                            manifest,
+                            severity="warning",
+                        )
+                    )
             diagnostics.extend(parse_diagnostics)
             manifest_complete = not parse_diagnostics
         except StaticReadError as exc:
             manifest_complete = False
             diagnostics.append(_diagnostic("manifest.invalid", str(exc), manifest))
 
-        resolution_complete = manifest_complete
+        resolution_complete = False
+        if project.manager == "maven":
+            resolution_complete = False
+            diagnostics.append(
+                _diagnostic(
+                    "resolution.maven-build-graph-unknown",
+                    "Maven coordinates are static assertions; implicit lifecycle plugins, "
+                    "effective build selection and the installed graph remain uncollected",
+                    manifest,
+                    severity="warning",
+                )
+            )
+        plugin = next((d for d in declarations if d.metadata.get("maven_kind")), None)
+        if plugin is not None:
+            resolution_complete = False
+            diagnostics.append(
+                _diagnostic(
+                    "resolution.maven-plugin-activation-unknown",
+                    "Maven plugin inventory does not establish an effective build, "
+                    "profile/lifecycle selection, classloader resolution or execution; "
+                    "plugin configuration bodies and runtime use remain uncollected",
+                    plugin.source,
+                    severity="warning",
+                )
+            )
         resolved = list(
             ResolvedDependency(
                 project_id=project.project_id,
@@ -176,10 +264,23 @@ class JavaEvidenceCollector:
             and _is_exact_version(item.constraint.normalized or item.constraint.raw)
         )
         if project.manager == "gradle":
-            lock = project_root / "gradle.lockfile"
-            if lock.is_file():
+            diagnostics.append(
+                _diagnostic(
+                    "resolution.gradle-build-graph-unknown",
+                    "Gradle declarations are requested configuration; lock assertions retain configuration variants, not active build selection or installation.",
+                    manifest,
+                    severity="warning",
+                )
+            )
+            for name in _GRADLE_LOCK_NAMES:
+                lock = project_root / name
+                if not (lock.exists() or lock.is_symlink()):
+                    continue
                 try:
-                    resolved = _merge_gradle_lock(project, lock, resolved)
+                    resolved, lock_diagnostics = _merge_gradle_lock(
+                        project, lock, resolved
+                    )
+                    diagnostics.extend(lock_diagnostics)
                 except StaticReadError as exc:
                     resolution_complete = False
                     diagnostics.append(_diagnostic("lock.invalid", str(exc), lock))
@@ -234,7 +335,7 @@ class JavaEvidenceCollector:
             path
             for path in files
             if _nearest_java_root(path.parent, project_root) == project_root
-            and path.name not in {"build.gradle.kts"}
+            and not path.name.endswith(".gradle.kts")
         )
         local_packages: set[str] = set()
         texts: dict[Path, str] = {}
@@ -292,7 +393,7 @@ class JavaEvidenceCollector:
                         project_id=project.project_id,
                         language="kotlin" if path.suffix in {".kt", ".kts"} else "java",
                         reference=reference,
-                        source=SourceLocation(path, line_number, 1),
+                        source=SourceLocation(path, line_number, match.start(1) + 1),
                         scope=_source_scope(path, project_root),
                         mapped_package=(
                             _package_ref(mapped_name)
@@ -330,17 +431,11 @@ def _project_unit(
         if relative_root != Path(".")
         else Path(manifest_name)
     )
-    lock = project_root / "gradle.lockfile"
-    locks = (
-        (
-            (
-                relative_root / "gradle.lockfile"
-                if relative_root != Path(".")
-                else Path("gradle.lockfile")
-            ),
-        )
-        if manager == "gradle" and lock.is_file()
-        else ()
+    locks = tuple(
+        relative_root / name
+        for name in _GRADLE_LOCK_NAMES
+        if manager == "gradle"
+        and ((project_root / name).exists() or (project_root / name).is_symlink())
     )
     return ProjectUnit(
         project_id=ProjectUnit.stable_id(relative_root, "Maven", manager),
@@ -441,7 +536,7 @@ def _parse_pom(
                     "maven",
                     version or None,
                 ),
-                source=SourceLocation(dependency.source, 1, 1),
+                source=dependency.source,
                 scope=(
                     "optional"
                     if dependency.optional
@@ -537,7 +632,7 @@ def _parse_pom(
                 project_id=project.project_id,
                 package=_package_ref(f"{group}:{artifact}"),
                 constraint=VersionConstraint(raw_version, "maven", version or None),
-                source=SourceLocation(dependency.source, 1, 1),
+                source=dependency.source,
                 scope=(
                     "optional"
                     if dependency.optional
@@ -557,6 +652,11 @@ def _parse_pom(
                 },
             )
         )
+    declarations.extend(
+        _maven_plugin_declarations(
+            project, manifest, repository_root, model.plugins, diagnostics
+        )
+    )
     return (
         tuple(declarations),
         diagnostics,
@@ -597,7 +697,7 @@ def _load_effective_pom(
         return None
 
     evidence_files.append(canonical)
-    root = _read_pom_root(canonical)
+    root, positions = _read_pom_root(canonical)
     parent_element = root.find("./{*}parent")
     parent_model: _EffectivePom | None = None
     declared_parent = {
@@ -617,12 +717,17 @@ def _load_effective_pom(
         if not relative_path:
             _diagnose_parent_unavailable(manifest, declared_parent, diagnostics)
         else:
-            candidate = Path(relative_path)
-            invalid_path = candidate.is_absolute()
+            candidate = Path(relative_path.replace("\\", "/"))
+            invalid_path = (
+                candidate.is_absolute() or PureWindowsPath(relative_path).is_absolute()
+            )
             if not invalid_path:
                 try:
                     candidate = (manifest.parent / candidate).resolve()
                     candidate.relative_to(repository_root)
+                    if candidate.is_dir():
+                        candidate = (candidate / "pom.xml").resolve()
+                        candidate.relative_to(repository_root)
                 except (OSError, ValueError):
                     invalid_path = True
             if invalid_path:
@@ -692,7 +797,7 @@ def _load_effective_pom(
     version = _child_text(root, "version") or parent_version
     inherited_management = parent_model.management if parent_model else ()
     inherited_dependencies = parent_model.dependencies if parent_model else ()
-    return _EffectivePom(
+    model = _EffectivePom(
         properties=inherited_properties,
         group_id=group_id,
         artifact_id=artifact_id,
@@ -706,6 +811,7 @@ def _load_effective_pom(
                 root,
                 "./{*}dependencyManagement/{*}dependencies/{*}dependency",
                 manifest,
+                positions,
             ),
         ),
         dependencies=(
@@ -714,29 +820,381 @@ def _load_effective_pom(
                 root,
                 "./{*}dependencies/{*}dependency",
                 manifest,
+                positions,
+            ),
+        ),
+        plugins=tuple(
+            p
+            for p in parent_model.plugins
+            if p.inherited.lower() != "false"
+            or (
+                p.metadata["maven_kind"] != "reporting-plugin"
+                and p.metadata["executions"]
+            )
+        )
+        if parent_model
+        else (),
+    )
+    return replace(
+        model,
+        plugins=(
+            *model.plugins,
+            *_pom_plugin_specs(
+                root, manifest, repository_root, positions, model, diagnostics
             ),
         ),
     )
 
 
-def _read_pom_root(manifest: Path) -> ET.Element:
+def _pom_plugin_specs(
+    root: ET.Element,
+    manifest: Path,
+    repository_root: Path,
+    positions: Mapping[int, SourceLocation],
+    model: _EffectivePom,
+    diagnostics: list[Diagnostic],
+) -> tuple[_MavenPluginSpec, ...]:
+    specs: list[_MavenPluginSpec] = []
+    properties: Mapping[str, str] | None = None
+    if root.find("./{*}build/{*}extensions/{*}extension") is not None:
+        diagnostics.append(
+            _diagnostic(
+                "manifest.maven-build-extensions-uncollected",
+                "Maven build extension inventory remains uncollected",
+                SourceLocation(manifest),
+                severity="warning",
+            )
+        )
+    scopes: list[tuple[ET.Element, dict[str, object] | None]] = [(root, None)]
+    for index, profile in enumerate(root.findall("./{*}profiles/{*}profile")):
+        if (
+            profile.find("./{*}dependencies/{*}dependency") is not None
+            or profile.find("./{*}dependencyManagement/{*}dependencies/{*}dependency")
+            is not None
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    "manifest.maven-profile-dependencies-uncollected",
+                    "Maven profile application dependencies and management remain uncollected; profile activation is unknown",
+                    positions.get(id(profile), SourceLocation(manifest)),
+                    severity="warning",
+                )
+            )
+        activation: dict[str, object] = {}
+        container = profile.find("{*}activation")
+        if container is not None:
+            for condition in container:
+                activation[_local_name(condition.tag)] = (
+                    {
+                        _local_name(child.tag): (child.text or "").strip()
+                        for child in condition
+                    }
+                    if len(condition)
+                    else (condition.text or "").strip()
+                )
+                allowed = {
+                    "activeByDefault": set(),
+                    "jdk": set(),
+                    "os": {"name", "family", "arch", "version"},
+                    "property": {"name", "value"},
+                    "file": {"exists", "missing"},
+                }
+                name = _local_name(condition.tag)
+                if name not in allowed or any(
+                    _local_name(child.tag) not in allowed[name] or len(child)
+                    for child in condition
+                ):
+                    activation["uncollected_conditions"] = True
+                    diagnostics.append(
+                        _diagnostic(
+                            "manifest.maven-profile-activation-uncollected",
+                            "Maven profile activation contains unsupported nested conditions; activation remains unknown",
+                            positions.get(id(condition), SourceLocation(manifest)),
+                            severity="warning",
+                        )
+                    )
+        scopes.append(
+            (
+                profile,
+                {
+                    "id": _child_text(profile, "id") or "",
+                    "index": index,
+                    "activation": activation,
+                },
+            )
+        )
+    for scope, profile_metadata in scopes:
+        for context, kind in (
+            ("build/plugins", "build-plugin"),
+            ("build/pluginManagement/plugins", "plugin-management"),
+            ("reporting/plugins", "reporting-plugin"),
+        ):
+            query = (
+                "./"
+                + "/".join(f"{{*}}{part}" for part in context.split("/"))
+                + "/{*}plugin"
+            )
+            for plugin in scope.findall(query):
+                if profile_metadata is None and properties is None:
+                    properties = _pom_properties(model)
+                extensions = _pom_flag(plugin, "extensions", "false")
+                inherited = _pom_flag(plugin, "inherited", "true")
+                executions = []
+                for execution in plugin.findall("./{*}executions/{*}execution"):
+                    executions.append(
+                        {
+                            "id": _child_text(execution, "id") or "",
+                            "phase": _child_text(execution, "phase") or "",
+                            "goals": [
+                                (goal.text or "").strip()
+                                for goal in execution.findall("./{*}goals/{*}goal")
+                            ],
+                            "inherited": _pom_flag(execution, "inherited", inherited),
+                            "inherited_explicit": execution.find("{*}inherited")
+                            is not None,
+                            "source": positions.get(
+                                id(execution), SourceLocation(manifest)
+                            ).to_dict(repository_root),
+                        }
+                    )
+                report_sets = [
+                    {
+                        "id": _child_text(report, "id") or "",
+                        "reports": [
+                            (node.text or "").strip()
+                            for node in report.findall("./{*}reports/{*}report")
+                        ],
+                        "inherited": _pom_flag(report, "inherited", inherited),
+                        "inherited_explicit": report.find("{*}inherited") is not None,
+                        "source": positions.get(
+                            id(report), SourceLocation(manifest)
+                        ).to_dict(repository_root),
+                    }
+                    for report in plugin.findall("./{*}reportSets/{*}reportSet")
+                ]
+                metadata: dict[str, Any] = {
+                    "maven_kind": kind,
+                    "plugin_context": context.replace("/", "."),
+                    "activation": "unknown",
+                    "effective_model": "not-evaluated",
+                    "classpath": "build-extension"
+                    if extensions.lower() == "true"
+                    else "plugin"
+                    if extensions.lower() == "false"
+                    else "unknown",
+                    "extensions": extensions,
+                    "configuration_present": plugin.find("{*}configuration")
+                    is not None,
+                    "configuration_collected": False,
+                    "executions": executions,
+                    "report_sets": report_sets,
+                    "property_context": "declaring-pom"
+                    if profile_metadata is None
+                    else "unevaluated-profile",
+                }
+                if profile_metadata is not None:
+                    metadata["profile"] = profile_metadata
+                group = _child_text(plugin, "groupId") or ""
+                if plugin.find("{*}groupId") is None:
+                    group = "org.apache.maven.plugins"
+                specs.append(
+                    _MavenPluginSpec(
+                        group,
+                        _child_text(plugin, "artifactId") or "",
+                        _child_text(plugin, "version") or "",
+                        inherited,
+                        positions.get(id(plugin), SourceLocation(manifest)),
+                        (properties or {}) if profile_metadata is None else {},
+                        metadata,
+                        _pom_dependency_specs(
+                            plugin,
+                            "./{*}dependencies/{*}dependency",
+                            manifest,
+                            positions,
+                        ),
+                    )
+                )
+    return tuple(specs)
+
+
+def _pom_flag(element: ET.Element, name: str, default: str) -> str:
+    child = element.find(f"{{*}}{name}")
+    return default if child is None else (child.text or "").strip()
+
+
+def _maven_plugin_declarations(
+    project: ProjectUnit,
+    manifest: Path,
+    repository_root: Path,
+    plugins: tuple[_MavenPluginSpec, ...],
+    diagnostics: list[Diagnostic],
+) -> list[DependencyDeclaration]:
+    declarations: list[DependencyDeclaration] = []
+    remaining = DEFAULT_MAX_BYTES
+    for plugin in plugins:
+        resolver = _PropertyResolver(plugin.properties)
+        group, artifact = (
+            resolver.substitute(plugin.group),
+            resolver.substitute(plugin.artifact),
+        )
+        if not _valid_maven_coordinate(group, artifact) or not all(
+            re.fullmatch(r"[A-Za-z0-9_.-]+", value) for value in (group, artifact)
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    "manifest.maven-plugin-identity-unresolved",
+                    "Maven plugin identity is missing, invalid or unresolved",
+                    plugin.source,
+                    severity="warning",
+                )
+            )
+            continue
+        coordinate = f"{group}:{artifact}"
+        metadata = dict(plugin.metadata)
+        metadata["inherited"] = plugin.inherited
+        metadata["source_relationship"] = (
+            "current-pom"
+            if plugin.source.path == manifest.resolve()
+            else "local-parent-assertion"
+        )
+        metadata["declaring_pom"] = plugin.source.to_dict(repository_root)["path"]
+        if plugin.source.path != manifest.resolve():
+            metadata["executions"] = [
+                e
+                for e in metadata["executions"]
+                if str(e["inherited"]).lower() != "false"
+            ]
+            metadata["report_sets"] = [
+                r
+                for r in metadata["report_sets"]
+                if str(r["inherited"]).lower() != "false"
+            ]
+        assertions = [(group, artifact, plugin.version, plugin.source, metadata)]
+        for dependency in plugin.dependencies:
+            dep_group, dep_artifact = (
+                resolver.substitute(dependency.group),
+                resolver.substitute(dependency.artifact),
+            )
+            if not _valid_maven_coordinate(dep_group, dep_artifact):
+                diagnostics.append(
+                    _diagnostic(
+                        "manifest.maven-plugin-identity-unresolved",
+                        "Maven plugin dependency identity is missing or unresolved",
+                        dependency.source,
+                        severity="warning",
+                    )
+                )
+                continue
+            dependency_metadata = {
+                key: metadata[key]
+                for key in (
+                    "plugin_context",
+                    "activation",
+                    "classpath",
+                    "property_context",
+                    "source_relationship",
+                    "declaring_pom",
+                    "profile",
+                )
+                if key in metadata
+            }
+            dependency_metadata.update(
+                {
+                    "maven_kind": "plugin-dependency",
+                    "owner_plugin": coordinate,
+                    "owner_plugin_kind": metadata["maven_kind"],
+                    "maven_scope": dependency.scope or "compile",
+                    "maven_type": dependency.packaging,
+                    "maven_classifier": dependency.classifier,
+                }
+            )
+            assertions.append(
+                (
+                    dep_group,
+                    dep_artifact,
+                    dependency.version,
+                    dependency.source,
+                    dependency_metadata,
+                )
+            )
+        for (
+            assertion_group,
+            assertion_artifact,
+            raw_version,
+            source,
+            assertion_metadata,
+        ) in assertions:
+            version = resolver.substitute(raw_version)
+            normalized = version if version and not _PROPERTY.search(version) else None
+            assertion_metadata["version_state"] = (
+                "asserted"
+                if normalized
+                else "unresolved-expression"
+                if raw_version
+                else "unspecified-or-managed"
+            )
+            remaining -= len(json.dumps(assertion_metadata).encode("utf-8")) + sum(
+                len(value.encode("utf-8"))
+                for value in (assertion_group, assertion_artifact, raw_version, version)
+            )
+            if remaining < 0:
+                diagnostics.append(
+                    _diagnostic(
+                        "manifest.maven-plugin-budget",
+                        "Maven plugin evidence expansion exceeded the bounded metadata budget; remaining assertions are uncollected",
+                        source,
+                        severity="warning",
+                    )
+                )
+                return declarations
+            declaration = DependencyDeclaration(
+                project.project_id,
+                _package_ref(f"{assertion_group}:{assertion_artifact}"),
+                VersionConstraint(raw_version, "maven", normalized),
+                source,
+                scope="build",
+                kind="conditional",
+                metadata=assertion_metadata,
+            )
+            declarations.append(declaration)
+    return declarations
+
+
+def _read_pom_root(manifest: Path) -> tuple[ET.Element, dict[int, SourceLocation]]:
     text = read_text(manifest)
     upper = text.upper()
     if "<!DOCTYPE" in upper or "<!ENTITY" in upper:
         raise StaticReadError(f"unsafe XML declarations are not allowed in {manifest}")
+    parser = expat.ParserCreate()
+    starts: list[SourceLocation] = []
+
+    def start(name: str, attrs: dict[str, str]) -> None:
+        if len(starts) >= 100_000:
+            raise StaticReadError(f"Maven XML element budget exceeded in {manifest}")
+        starts.append(
+            SourceLocation(
+                manifest, parser.CurrentLineNumber, parser.CurrentColumnNumber + 1
+            )
+        )
+
+    parser.StartElementHandler = start
     try:
+        parser.Parse(text, True)
         root = ET.fromstring(text)
-    except ET.ParseError as exc:
+    except (ET.ParseError, expat.ExpatError) as exc:
         raise StaticReadError(f"invalid XML in {manifest}: {exc}") from exc
     if _local_name(root.tag) != "project":
         raise StaticReadError(f"invalid Maven POM root in {manifest}: expected project")
-    return root
+    return root, {
+        id(element): source for element, source in zip(root.iter(), starts, strict=True)
+    }
 
 
 def _pom_dependency_specs(
     root: ET.Element,
     query: str,
     manifest: Path,
+    positions: Mapping[int, SourceLocation],
 ) -> tuple[_MavenDependencySpec, ...]:
     return tuple(
         _MavenDependencySpec(
@@ -747,7 +1205,7 @@ def _pom_dependency_specs(
             optional=(_child_text(dependency, "optional") or "").lower() == "true",
             packaging=_child_text(dependency, "type") or "jar",
             classifier=_child_text(dependency, "classifier") or "",
-            source=manifest,
+            source=positions.get(id(dependency), SourceLocation(manifest)),
         )
         for dependency in root.findall(query)
     )
@@ -813,7 +1271,7 @@ def _diagnose_maven_identity_expressions(
 def _diagnose_maven_expression(
     raw_version: str,
     version: str,
-    manifest: Path,
+    manifest: Path | SourceLocation,
     diagnostics: list[Diagnostic],
 ) -> None:
     if version and _PROPERTY.search(version):
@@ -847,49 +1305,71 @@ def _diagnose_parent_unavailable(
 def _parse_gradle(
     project: ProjectUnit,
     manifest: Path,
+    repository_root: Path,
 ) -> tuple[tuple[DependencyDeclaration, ...], list[Diagnostic]]:
-    text = read_text(manifest)
+    calls, diagnostics = literal_gradle_calls(
+        read_text(manifest), manifest, _GRADLE_CONFIGURATIONS
+    )
     declarations: list[DependencyDeclaration] = []
-    diagnostics: list[Diagnostic] = []
-    for line_number, raw_line in enumerate(text.splitlines(), start=1):
-        line = raw_line.split("//", 1)[0]
-        match = _GRADLE_LITERAL.match(line)
-        if match is not None and match.group(1) in _GRADLE_CONFIGURATIONS:
-            configuration, coordinate = match.groups()
-            parts = coordinate.split(":")
-            if len(parts) < 3 or not all(parts[:3]):
-                diagnostics.append(
-                    _diagnostic(
-                        "manifest.invalid-dependency",
-                        f"invalid Gradle coordinate: {coordinate}",
-                        manifest,
-                        severity="warning",
-                    )
-                )
-                continue
-            group, artifact, version = parts[:3]
-            declarations.append(
-                DependencyDeclaration(
-                    project_id=project.project_id,
-                    package=_package_ref(f"{group}:{artifact}"),
-                    constraint=VersionConstraint(version, "maven", version),
-                    source=SourceLocation(manifest, line_number, 1),
-                    scope=_GRADLE_CONFIGURATIONS[configuration],
-                    kind="direct",
-                    metadata={"configuration": configuration},
-                )
-            )
-            continue
-        call = _GRADLE_CALL.match(line)
-        if call is not None and call.group(1) in _GRADLE_CONFIGURATIONS:
+    for call in calls:
+        group, separator, remainder = call.notation.partition(":")
+        artifact, version_separator, version = remainder.partition(":")
+        if not separator or not _valid_maven_coordinate(group, artifact):
             diagnostics.append(
                 _diagnostic(
-                    "manifest.unsupported-expression",
-                    f"Gradle {call.group(1)} uses a non-literal dependency expression",
-                    manifest,
+                    "manifest.invalid-dependency",
+                    f"Unresolved Gradle coordinate identity: {call.notation[:160]}",
+                    call.source,
                     severity="warning",
                 )
             )
+            continue
+        classifier = extension = None
+        literal = call.literal and "$" not in call.notation
+        if literal:
+            version, extension_separator, extension_value = version.partition("@")
+            extension = extension_value if extension_separator else None
+            version, classifier_separator, classifier_value = version.partition(":")
+            classifier = classifier_value if classifier_separator else None
+        constraint = "constraints" in call.contexts
+        scope = _GRADLE_CONFIGURATIONS.get(call.configuration, "unknown")
+        if call.wrapper in {"platform", "enforcedPlatform"} or constraint:
+            scope = "build"
+        declarations.append(
+            DependencyDeclaration(
+                project.project_id,
+                _package_ref(f"{group}:{artifact}"),
+                VersionConstraint(
+                    version if version_separator else "",
+                    "gradle-required",
+                    version if version_separator and literal else None,
+                ),
+                call.source,
+                scope=scope,
+                kind="constraint" if constraint else "conditional",
+                metadata={
+                    "configuration": call.configuration,
+                    "gradle_kind": call.wrapper
+                    or ("constraint" if constraint else "dependency"),
+                    "notation": call.notation,
+                    "literal": literal,
+                    "activation": "unknown",
+                    "ownership": "lexical-script",
+                    "contexts": list(call.contexts),
+                    "call_source": call.call_source.to_dict(repository_root),
+                    **({"classifier": classifier} if classifier is not None else {}),
+                    **({"extension": extension} if extension is not None else {}),
+                },
+            )
+        )
+    diagnostics.append(
+        _diagnostic(
+            "manifest.gradle-evaluation-uncollected",
+            "Only bounded literal configuration calls are inventoried. Evaluated script ownership, settings, plugins, catalogs and custom build logic remain uncollected.",
+            manifest,
+            severity="warning",
+        )
+    )
     return tuple(declarations), diagnostics
 
 
@@ -897,32 +1377,67 @@ def _merge_gradle_lock(
     project: ProjectUnit,
     lock: Path,
     existing: Sequence[ResolvedDependency],
-) -> list[ResolvedDependency]:
-    by_name = {item.package.name: item for item in existing}
+) -> tuple[list[ResolvedDependency], list[Diagnostic]]:
+    resolved = list(existing)
+    diagnostics: list[Diagnostic] = []
+    occurrences: dict[str, int] = {}
     for line_number, raw_line in enumerate(read_text(lock).splitlines(), start=1):
-        coordinate = raw_line.split("=", 1)[0].strip()
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("empty="):
+            continue
+        coordinate, separator, raw_configurations = line.partition("=")
+        coordinate = coordinate.strip()
         parts = coordinate.split(":")
-        if len(parts) != 3 or not all(parts):
+        source = SourceLocation(
+            lock, line_number, len(raw_line) - len(raw_line.lstrip()) + 1
+        )
+        configurations = [name.strip() for name in raw_configurations.split(",")]
+        if (
+            len(parts) != 3
+            or not all(parts)
+            or not separator
+            or not all(configurations)
+            or not _valid_maven_coordinate(parts[0], parts[1])
+            or not _is_exact_version(parts[2])
+            or "$" in parts[2]
+        ):
+            if len(diagnostics) < 20:
+                diagnostics.append(
+                    _diagnostic(
+                        "lock.gradle-invalid-entry",
+                        "Malformed or unsupported Gradle lock assertion; no version was inferred.",
+                        source,
+                        severity="warning",
+                    )
+                )
             continue
         group, artifact, version = parts
         package = _package_ref(f"{group}:{artifact}")
-        by_name[package.name] = ResolvedDependency(
-            project.project_id,
-            package,
-            version,
-            SourceLocation(lock, line_number, 1),
-            direct=package.name in by_name,
+        key = hashlib.sha256(
+            json.dumps(
+                [lock.name, package.name, version, sorted(configurations)]
+            ).encode("utf-8")
+        ).hexdigest()[:24]
+        occurrences[key] = occurrences.get(key, 0) + 1
+        resolved.append(
+            ResolvedDependency(
+                project.project_id,
+                package,
+                version,
+                source,
+                instance_id=f"gradle-lock:{key}:{occurrences[key]}",
+                origin={
+                    "kind": "gradle-lock",
+                    "lock_kind": "buildscript"
+                    if lock.name.startswith("buildscript-")
+                    else "project",
+                    "configurations": configurations,
+                    "selection": "unknown",
+                    "installed": "unknown",
+                },
+            )
         )
-    return [by_name[name] for name in sorted(by_name)]
-
-
-def _package_ref(coordinate: str) -> PackageRef:
-    group, separator, artifact = coordinate.partition(":")
-    canonical = f"{group}:{artifact}" if separator else coordinate
-    purl = None
-    if separator and group and artifact:
-        purl = f"pkg:maven/{quote(group, safe='.')}/{quote(artifact, safe='-._~')}"
-    return PackageRef("Maven", canonical, coordinate, purl)
+    return resolved, diagnostics
 
 
 def _substitute_properties(value: str, properties: Mapping[str, str]) -> str:
@@ -1015,11 +1530,12 @@ def _source_scope(path: Path, root: Path) -> str:
 def _diagnostic(
     code: str,
     message: str,
-    path: Path,
+    path: Path | SourceLocation,
     *,
     severity: str = "error",
 ) -> Diagnostic:
-    return Diagnostic(code, severity, message, SourceLocation(path))
+    source = path if isinstance(path, SourceLocation) else SourceLocation(path)
+    return Diagnostic(code, severity, message, source)
 
 
 def _status(name: str, complete: bool) -> Capability:

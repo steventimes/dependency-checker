@@ -43,14 +43,23 @@ class _LockLoader(yaml.SafeLoader):
         return result
 
 
-def read_lock_yaml(text: str) -> dict[str, Any]:
+def read_lock_yaml(
+    text: str, *, key_locations: dict[str, tuple[int, int]] | None = None
+) -> dict[str, Any]:
     loader = _LockLoader(text)
     try:
-        document = loader.get_single_data()
+        node = loader.get_single_node()
+        document = loader.construct_document(node) if node is not None else None
     except (yaml.YAMLError, ValueError, RecursionError) as exc:
         raise StaticReadError(f"Invalid lockfile YAML: {exc}") from exc
     finally:
         loader.dispose()
     if not isinstance(document, dict):
         raise StaticReadError("Lockfile YAML root must be a mapping")
+    if key_locations is not None:
+        assert isinstance(node, yaml.MappingNode)
+        key_locations.update(
+            (key.value, (key.start_mark.line + 1, key.start_mark.column + 1))
+            for key, _value in node.value
+        )
     return document

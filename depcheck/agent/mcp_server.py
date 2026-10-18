@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
 from .service import DependencyAgentService
+from .paging import bounded_response
 
 try:
     from mcp.server.fastmcp import Context, FastMCP
@@ -83,9 +84,13 @@ def create_server(
         context: Context,
     ) -> DependencyAgentService:
         policy = fixed_policy or await _client_root_policy(context)
+        root = policy.resolve(project_root)
         return DependencyAgentService(
-            policy.resolve(project_root),
+            root,
             max_results=max_results,
+            authorized_root=next(
+                p for p in policy.allowed_roots if root == p or p in root.parents
+            ),
         )
 
     @server.tool(annotations=cache_refresh)
@@ -94,7 +99,9 @@ def create_server(
         context: Context = None,
     ) -> dict[str, Any]:
         """Refresh the local .depcheck cache; never modify source or manifests."""
-        return (await service(project_root, context)).index_repository()
+        return bounded_response(
+            (await service(project_root, context)).index_repository()
+        )
 
     @server.tool(annotations=cache_refresh)
     async def scan_repository(
@@ -102,7 +109,9 @@ def create_server(
         context: Context = None,
     ) -> dict[str, Any]:
         """Scan offline hygiene and refresh .depcheck cache; security is skipped."""
-        return (await service(project_root, context)).scan_repository()
+        return bounded_response(
+            (await service(project_root, context)).scan_repository()
+        )
 
     @server.tool(annotations=read_only)
     async def repository_context(
@@ -110,7 +119,9 @@ def create_server(
         context: Context = None,
     ) -> dict[str, Any]:
         """Return index freshness, completeness, Git HEAD, and evidence counts."""
-        return (await service(project_root, context)).repository_context()
+        return bounded_response(
+            (await service(project_root, context)).repository_context()
+        )
 
     @server.tool(annotations=read_only)
     async def query_dependencies(
@@ -120,15 +131,21 @@ def create_server(
         ecosystem: str | None = None,
         project_id: str | None = None,
         offset: int = 0,
+        evidence_limit: int = 20,
+        evidence_offset: int = 0,
         context: Context = None,
     ) -> dict[str, Any]:
         """Search inventory; follow next_offset for more matches without changing filters."""
-        return (await service(project_root, context)).query_dependencies(
-            query,
-            ecosystem=ecosystem,
-            project_id=project_id,
-            limit=limit,
-            offset=offset,
+        return bounded_response(
+            (await service(project_root, context)).query_dependencies(
+                query,
+                ecosystem=ecosystem,
+                project_id=project_id,
+                evidence_limit=evidence_limit,
+                evidence_offset=evidence_offset,
+                limit=limit,
+                offset=offset,
+            )
         )
 
     @server.tool(annotations=read_only)
@@ -137,13 +154,23 @@ def create_server(
         project_root: str = ".",
         ecosystem: str | None = None,
         project_id: str | None = None,
+        origin_limit: int = 20,
+        origin_depth: int = 32,
+        evidence_limit: int = 20,
+        evidence_offset: int = 0,
         context: Context = None,
     ) -> dict[str, Any]:
-        """Explain why a dependency is present with declarations and import evidence."""
-        return (await service(project_root, context)).explain_dependency(
-            package,
-            ecosystem=ecosystem,
-            project_id=project_id,
+        """Explain declarations, usages and bounded direct-owner paths (1..100 paths, depth 1..64)."""
+        return bounded_response(
+            (await service(project_root, context)).explain_dependency(
+                package,
+                ecosystem=ecosystem,
+                project_id=project_id,
+                evidence_limit=evidence_limit,
+                evidence_offset=evidence_offset,
+                origin_limit=origin_limit,
+                origin_depth=origin_depth,
+            )
         )
 
     @server.tool(annotations=read_only)
@@ -152,13 +179,23 @@ def create_server(
         project_root: str = ".",
         ecosystem: str | None = None,
         project_id: str | None = None,
+        origin_limit: int = 20,
+        origin_depth: int = 32,
+        evidence_limit: int = 20,
+        evidence_offset: int = 0,
         context: Context = None,
     ) -> dict[str, Any]:
-        """List files, scopes, usage count, and findings affected by a dependency."""
-        return (await service(project_root, context)).dependency_impact(
-            package,
-            ecosystem=ecosystem,
-            project_id=project_id,
+        """List affected usages/findings and bounded owner paths; unknown graph coverage stays qualified."""
+        return bounded_response(
+            (await service(project_root, context)).dependency_impact(
+                package,
+                ecosystem=ecosystem,
+                project_id=project_id,
+                evidence_limit=evidence_limit,
+                evidence_offset=evidence_offset,
+                origin_limit=origin_limit,
+                origin_depth=origin_depth,
+            )
         )
 
     @server.tool(annotations=read_only)
@@ -173,13 +210,201 @@ def create_server(
         context: Context = None,
     ) -> dict[str, Any]:
         """Preview requirements or explicit pyproject groups without writing manifests."""
-        return (await service(project_root, context)).plan_dependency_updates(
-            updates,
-            add_missing=add_missing,
-            target_file=target_file,
-            group=group,
-            ecosystem=ecosystem,
-            project_id=project_id,
+        return bounded_response(
+            (await service(project_root, context)).plan_dependency_updates(
+                updates,
+                add_missing=add_missing,
+                target_file=target_file,
+                group=group,
+                ecosystem=ecosystem,
+                project_id=project_id,
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def compare_dependency_snapshots(
+        before_file: str,
+        after_file: str,
+        project_root: str = ".",
+        limit: int = 20,
+        offset: int = 0,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Compare relative canonical scan JSON files; follow next_offset for each change collection. No remediation is verified."""
+        return bounded_response(
+            (await service(project_root, context)).compare_dependency_snapshots(
+                before_file, after_file, limit=limit, offset=offset
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def inspect_dependency_sbom(
+        sbom_file: str,
+        project_root: str = ".",
+        limit: int = 20,
+        offset: int = 0,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Inspect a relative CycloneDX JSON file; follow next_offset. SBOM assertions do not establish source usage or security."""
+        return bounded_response(
+            (await service(project_root, context)).inspect_dependency_sbom(
+                sbom_file, limit=limit, offset=offset
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def inspect_cmake_model(
+        index_file: str,
+        project_root: str = ".",
+        configuration: str | None = None,
+        target: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Inspect an explicit relative CMake File API index without configuring/building. Select configuration and optional target id; follow next_offset for every table. Paths and commands remain unexecuted assertions, not package identities."""
+        return bounded_response(
+            (await service(project_root, context)).inspect_cmake_model(
+                index_file,
+                configuration=configuration,
+                target=target,
+                limit=limit,
+                offset=offset,
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def inspect_evidence(
+        evidence_file: str,
+        kind: str,
+        project_root: str = ".",
+        artifact_file: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Inspect explicit relative cve/cwe/vex/attestation/callgraph/govulncheck/runtime/component-matches/behavior/abi/deps-dev/scorecard data. All remain external assertions; no finding suppression, execution, keys or network. artifact_file selects an attestation digest comparison only; follow next_offset for all tables."""
+        return bounded_response(
+            (await service(project_root, context)).inspect_evidence(
+                evidence_file,
+                kind,
+                artifact_file=artifact_file,
+                limit=limit,
+                offset=offset,
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def reevaluate_vulnerabilities(
+        inventory_file: str,
+        advisory_file: str,
+        project_root: str = ".",
+        limit: int = 20,
+        offset: int = 0,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Reevaluate an explicit relative scan/CycloneDX inventory against supplied OSV JSON. No network/cache writes. Nonmatches concern supplied records only, not global safety; original findings remain unchanged. Follow next_offset."""
+        return bounded_response(
+            (await service(project_root, context)).reevaluate_vulnerabilities(
+                inventory_file, advisory_file, limit=limit, offset=offset
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def analyze_python_calls(
+        analysis_file: str,
+        project_root: str = ".",
+        limit: int = 20,
+        offset: int = 0,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Analyze sources, module ownership and entries explicitly selected in a relative depcheck.python-call-analysis.v1 file. Static callable candidates include aliases/callbacks/returns; dynamic dispatch and native calls remain incomplete. No imports, execution, network or cache writes. Follow next_offset for all tables."""
+        return bounded_response(
+            (await service(project_root, context)).analyze_python_calls(
+                analysis_file, limit=limit, offset=offset
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def export_evidence(
+        snapshot_file: str,
+        kind: str,
+        project_root: str = ".",
+        input_files: list[str] | None = None,
+        configuration_file: str | None = None,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Export kind provenance (unsigned in-toto statement) or policy (unevaluated input). Hash only explicitly supplied relative inputs/configuration. No signatures, keys, evaluator, network or writes; captured hashes do not prove historical scan freshness."""
+        return bounded_response(
+            (await service(project_root, context)).export_evidence(
+                snapshot_file,
+                kind,
+                input_files=tuple(input_files or ()),
+                configuration_file=configuration_file,
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def compare_inventories(
+        before_file: str,
+        after_file: str,
+        project_root: str = ".",
+        limit: int = 20,
+        offset: int = 0,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Compare relative scan/CycloneDX inventories by explicit coordinates and multiplicity. Differences do not establish false positives/negatives; scope/path/instance alignment stays unknown. Follow next_offset."""
+        return bounded_response(
+            (await service(project_root, context)).compare_inventories(
+                before_file, after_file, limit=limit, offset=offset
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def compare_package_behavior(
+        before_file: str,
+        after_file: str,
+        project_root: str = ".",
+        limit: int = 20,
+        offset: int = 0,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Compare relative npm package JSON metadata and script capability candidates. Commands remain unexecuted configuration; shell/dataflow coverage and maliciousness are unknown. Follow next_offset."""
+        return bounded_response(
+            (await service(project_root, context)).compare_package_behavior(
+                before_file, after_file, limit=limit, offset=offset
+            )
+        )
+
+    @server.tool(annotations=read_only)
+    async def compare_package_names(
+        package: str,
+        references: list[str],
+        ecosystem: str,
+        project_root: str = ".",
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Compare explicit reference names for bounded typo/scope-omission signals. No registry requests, identity merges, replacements or maliciousness conclusions."""
+        return bounded_response(
+            (await service(project_root, context)).compare_package_names(
+                package, references, ecosystem
+            )
+        )
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
+    async def verify_registry_package(
+        ecosystem: str,
+        package: str,
+        project_root: str = ".",
+        version: str | None = None,
+        allow_network: bool = False,
+        context: Context = None,
+    ) -> dict[str, Any]:
+        """Explicit public PyPI/npm existence check; requires allow_network=true. Sends the supplied public package name/version to that fixed registry only. Do not use private or unknown-source names. No credentials, redirects, installation or safety/trust conclusions; 404 means not found at queried source."""
+        return bounded_response(
+            (await service(project_root, context)).verify_registry_package(
+                ecosystem, package, version=version, allow_network=allow_network
+            )
         )
 
     return server

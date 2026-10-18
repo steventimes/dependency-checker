@@ -29,7 +29,24 @@ class EvidenceAnalyzer:
     """Produce hygiene findings only from sufficiently strong mappings."""
 
     def analyze(self, bundle: EvidenceBundle) -> AnalysisReport:
+        if any(
+            item.code == "analysis.python-component-scope-ambiguous"
+            for item in bundle.diagnostics
+        ):
+            return AnalysisReport(
+                diagnostics=bundle.diagnostics,
+                import_mapping={
+                    item.reference: item.mapped_package.name
+                    for item in bundle.usages
+                    if item.mapped_package is not None
+                },
+            )
         declarations = self._declarations_by_key(bundle.declarations)
+        actionable = {
+            key: [item for item in items if item.kind == "direct"]
+            for key, items in declarations.items()
+        }
+        actionable = {key: items for key, items in actionable.items() if items}
         resolved = {
             item.package.key(item.project_id)
             for item in bundle.resolved
@@ -58,11 +75,11 @@ class EvidenceAnalyzer:
         findings = self._usage_findings(qualified, declarations)
         if not manifest_complete:
             findings = [item for item in findings if item.code != "dependency.missing"]
-        if unknown_count == 0 and usage_complete:
-            findings.extend(self._unused_findings(declarations, qualified, inferred))
-        findings.extend(self._unpinned_findings(declarations, resolved))
+        if unknown_count == 0 and usage_complete and manifest_complete:
+            findings.extend(self._unused_findings(actionable, qualified, inferred))
+        findings.extend(self._unpinned_findings(actionable, resolved))
         declaration_findings, declaration_diagnostics = self._declaration_findings(
-            declarations
+            actionable
         )
         findings.extend(declaration_findings)
         findings.sort(key=lambda item: (item.code, item.package.sort_key, item.message))
@@ -70,13 +87,24 @@ class EvidenceAnalyzer:
         diagnostics = list(bundle.diagnostics)
         diagnostics.extend(declaration_diagnostics)
         if unknown_count:
+            examples = []
+            first_source = None
+            for usage in bundle.usages:
+                if usage.mapping_confidence is MappingConfidence.UNKNOWN:
+                    if first_source is None:
+                        first_source = usage.source
+                    examples.append(usage.reference[:160])
+                    if len(examples) == 3:
+                        break
             diagnostics.append(
                 Diagnostic(
                     code="mapping.unresolved",
                     severity="warning",
                     message=(
-                        f"{unknown_count} source references could not be mapped safely."
+                        f"{bundle.project.project_id}: {unknown_count} source references "
+                        f"could not be mapped safely. Examples: {', '.join(examples)}"
                     ),
+                    source=first_source,
                 )
             )
 
@@ -97,7 +125,15 @@ class EvidenceAnalyzer:
     ) -> dict[DependencyKey, list[DependencyDeclaration]]:
         grouped: dict[DependencyKey, list[DependencyDeclaration]] = {}
         for item in declarations:
-            if item.kind != "direct" or item.scope == "build":
+            # Go's indirect marker still belongs to a manifest require directive.
+            go_requirement = (
+                item.package.ecosystem.lower() == "go"
+                and item.kind == "transitive"
+                and item.metadata.get("go_kind") == "require"
+            )
+            if (
+                item.kind not in {"direct", "conditional"} and not go_requirement
+            ) or item.scope == "build":
                 continue
             grouped.setdefault(item.package.key(item.project_id), []).append(item)
         return grouped
@@ -220,6 +256,8 @@ class EvidenceAnalyzer:
         usage: UsageEvidence,
         declaration: DependencyDeclaration,
     ) -> bool:
+        if declaration.kind == "conditional":
+            return True  # Availability and scope cannot be decided before activation.
         if usage.kind == "optional":
             return declaration.scope != "build"
         if usage.scope == "runtime":
@@ -295,6 +333,12 @@ class EvidenceAnalyzer:
             if len(direct) < 2:
                 continue
             if (
+                key[1] in {"cargo", "vcpkg"}
+                and len({(item.scope, item.marker) for item in direct}) > 1
+            ):
+                # These declarations can belong to different build/target contexts.
+                continue
+            if (
                 key[1] == "pypi"
                 and len(
                     {
@@ -313,7 +357,23 @@ class EvidenceAnalyzer:
                 (item.scope, str(item.metadata.get("group", item.scope)), item.marker)
                 for item in direct
             }
-            if len(contexts) < len(direct):
+            declaration_count = len(direct)
+            if key[1] == "pypi":
+                # Group expansion can reach one physical assertion repeatedly.
+                # Keep those occurrences in inventory without calling the source duplicated.
+                declaration_count = len(
+                    {
+                        (
+                            item.source,
+                            item.scope,
+                            str(item.metadata.get("group", item.scope)),
+                            item.marker,
+                            item.constraint.raw,
+                        )
+                        for item in direct
+                    }
+                )
+            if len(contexts) < declaration_count:
                 findings.append(
                     Finding(
                         code="declaration.duplicate",
@@ -326,58 +386,116 @@ class EvidenceAnalyzer:
                         details=details,
                     )
                 )
-            exact = {
-                version
-                for item in direct
-                if (version := cls._exact_version(item)) is not None
-            }
-            schemes = {item.constraint.scheme.lower() for item in direct}
-            conflict: bool | None
-            if len(exact) > 1:
-                conflict = True
-            elif len(schemes) != 1:
-                conflict = None
-            else:
-                scheme = next(iter(schemes))
-                if scheme == "pep440":
-                    conflict = cls._pep440_conflict(direct)
-                elif scheme == "semver":
-                    conflict = cls._range_conflict(direct, cls._semver_intervals)
-                elif scheme == "maven":
-                    conflict = cls._range_conflict(direct, cls._maven_intervals)
-                elif len(exact) == len(direct):
-                    conflict = False
-                else:
-                    conflict = None
-            if conflict:
-                findings.append(
-                    Finding(
-                        code="declaration.conflict",
-                        package=PackageIdentity(
-                            key[0], package.ecosystem, package.name, purl=package.purl
-                        ),
-                        severity="error",
-                        message=f"Package '{package.name}' has incompatible declarations.",
-                        locations=locations,
-                        details={
-                            **details,
-                            "constraints": [item.constraint.raw for item in direct],
-                        },
+            selections: dict[str | None, list[DependencyDeclaration]] = {}
+            if key[1] == "pypi" and any(item.scope == "development" for item in direct):
+                for item in direct:
+                    group = (
+                        str(item.metadata.get("group", item.scope))
+                        if item.scope == "development"
+                        else None
                     )
-                )
-            elif conflict is None:
+                    selections.setdefault(group, []).append(item)
+            else:
+                selections[None] = direct
+            group_conflicts = {
+                group: cls._constraint_conflict(items)
+                for group, items in selections.items()
+            }
+            for group, items in selections.items():
+                conflict = group_conflicts[group]
+                context_details = dict(details)
+                if group is not None:
+                    context_details["group"] = group
+                markers = {item.marker for item in items}
+                if len(markers) == 1 and next(iter(markers)):
+                    context_details["marker"] = str(next(iter(markers)))
+                if conflict:
+                    findings.append(
+                        Finding(
+                            code="declaration.conflict",
+                            package=PackageIdentity(
+                                key[0],
+                                package.ecosystem,
+                                package.name,
+                                purl=package.purl,
+                            ),
+                            severity="error",
+                            message=f"Package '{package.name}' has incompatible declarations"
+                            + (
+                                f" in declared group '{group[:160]}'"
+                                if group is not None
+                                else ""
+                            )
+                            + (
+                                " under the recorded marker."
+                                if "marker" in context_details
+                                else "."
+                            ),
+                            locations=tuple(item.source for item in items),
+                            details={
+                                **context_details,
+                                "constraints": [item.constraint.raw for item in items],
+                            },
+                        )
+                    )
+                elif conflict is None:
+                    diagnostics.append(
+                        Diagnostic(
+                            code="analysis.constraint-intersection-unknown",
+                            severity="error",
+                            message=f"Cannot prove whether duplicate constraints for {package.name} have a common version"
+                            + (
+                                f" in declared group '{group[:160]}'."
+                                if group is not None
+                                else "."
+                            ),
+                            source=items[0].source,
+                        )
+                    )
+            if (
+                len(selections) > 1
+                and not any(value is True for value in group_conflicts.values())
+                and cls._constraint_conflict(direct) is not False
+            ):
                 diagnostics.append(
                     Diagnostic(
-                        code="analysis.constraint-intersection-unknown",
+                        code="analysis.python-group-selection-unknown",
                         severity="error",
-                        message=(
-                            f"Cannot prove whether duplicate constraints for "
-                            f"{package.name} have a common version."
-                        ),
+                        message=f"Constraints for {package.name} differ across development groups or runtime scope. Co-selection, installer rules and the active environment are unknown; no installed conflict is established.",
                         source=direct[0].source,
                     )
                 )
         return findings, diagnostics
+
+    @classmethod
+    def _constraint_conflict(
+        cls, declarations: Sequence[DependencyDeclaration]
+    ) -> bool | None:
+        if len(declarations) < 2:
+            return False
+        schemes = {item.constraint.scheme.lower() for item in declarations}
+        marker_overlap_unknown = (
+            schemes == {"pep440"} and len({item.marker for item in declarations}) > 1
+        )
+        exact = {
+            version
+            for item in declarations
+            if (version := cls._exact_version(item)) is not None
+        }
+        if len(exact) > 1:
+            return None if marker_overlap_unknown else True
+        if len(schemes) != 1:
+            return None
+        scheme = next(iter(schemes))
+        if scheme == "pep440":
+            conflict = cls._pep440_conflict(declarations)
+            # Compatible requests remain compatible under any marker selection.
+            return None if conflict and marker_overlap_unknown else conflict
+        if scheme == "semver":
+            return cls._range_conflict(declarations, cls._semver_intervals)
+        if scheme == "maven":
+            return cls._range_conflict(declarations, cls._maven_intervals)
+        return False if len(exact) == len(declarations) else None
 
     @staticmethod
     def _exact_version(declaration: DependencyDeclaration) -> object | None:
@@ -400,7 +518,11 @@ class EvidenceAnalyzer:
                 return Version(item.version)
             except InvalidVersion:
                 return None
-        if scheme in {"semver", "go"}:
+        if scheme == "cargo":
+            if not raw.startswith("="):
+                return None
+            raw = raw[1:].strip()
+        if scheme in {"semver", "go", "cargo"}:
             match = _SEMVER_EXACT.fullmatch(raw)
             if match is None:
                 return None
@@ -430,8 +552,8 @@ class EvidenceAnalyzer:
                 return None
             return ("conan", raw)
         if scheme == "vcpkg":
-            # Current vcpkg declarations carry only explicit override versions.
-            return ("vcpkg", raw)
+            # Minimum constraints stay raw; only a selected override is a pin.
+            return ("vcpkg", constraint.normalized) if constraint.normalized else None
         return None
 
     @classmethod

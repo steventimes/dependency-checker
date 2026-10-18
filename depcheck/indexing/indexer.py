@@ -1,33 +1,60 @@
 from __future__ import annotations
 
+from depcheck.profiling import measured
+
+from depcheck.bounded_io import repository_operation, read_bytes, ReadLimitError
+
 import hashlib
 import json
+import os
 import subprocess
 from collections import defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from depcheck.model import AnalysisReport, ScanResult
+from depcheck.model import ANALYSIS_REVISION, AnalysisReport, ScanResult
 from depcheck.analyzer.import_scanner import ImportScanner
 from depcheck.config import DepcheckConfig, load_project_config
 from depcheck.ecosystems import create_default_registry
 from depcheck.ecosystems.analysis import EvidenceAnalyzer
 from depcheck.ecosystems.tool_usage import apply_tool_usage
+from depcheck.ecosystems.coverage import (
+    repository_coverage,
+    uncovered_manifest_files,
+)
+from depcheck.ecosystems.commands import apply_command_usage, discover_command_files
+from depcheck.ecosystems.tool_configs import (
+    apply_tool_config_usage,
+    discover_tool_config_files,
+)
 from depcheck.model import EvidenceBundle, ProjectUnit
 from depcheck.ecosystems.python import (
     adapt_python_bundle,
     create_python_pack,
     filter_python_manifest,
+    named_component_roots,
+    _uv_workspace_root,
 )
-from depcheck.ecosystems.static import discover_files, is_excluded
-from depcheck.path_policy import external_path_executable, require_within_project
+from depcheck.ecosystems.static import (
+    DEFAULT_EXCLUDED_DIRECTORIES,
+    discover_files,
+    is_excluded,
+)
+from depcheck.path_policy import (
+    default_index_path,
+    external_path_executable,
+    require_within_project,
+)
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
 from depcheck.ecosystems.python_manifest import (
     PythonManifestCollector,
     is_requirements_file,
+    parser_map,
+    IGNORED_DIRECTORIES as PYTHON_IGNORED_DIRECTORIES,
 )
+from depcheck.ecosystems.python_script import inline_script_files
 
 from .models import INDEX_SCHEMA, IndexRefreshResult
 from .store import IndexStore
@@ -36,6 +63,8 @@ from .store import IndexStore
 _ECOSYSTEM_MANIFEST_NAMES = frozenset(
     {
         "CMakeLists.txt",
+        "MODULE.bazel",
+        "MODULE.bazel.lock",
         "build.gradle",
         "build.gradle.kts",
         "conan.lock",
@@ -45,6 +74,7 @@ _ECOSYSTEM_MANIFEST_NAMES = frozenset(
         "go.sum",
         "gradle.lockfile",
         "npm-shrinkwrap.json",
+        ".npmrc",
         "package-lock.json",
         "package.json",
         "pnpm-lock.yaml",
@@ -52,14 +82,19 @@ _ECOSYSTEM_MANIFEST_NAMES = frozenset(
         "vcpkg-lock.json",
         "vcpkg.json",
         "yarn.lock",
+        "Cargo.toml",
+        "Cargo.lock",
     }
 )
 _ECOSYSTEM_SOURCE_SUFFIXES = frozenset(
     {
         ".astro",
+        ".bazel",
         ".c",
         ".cc",
         ".cpp",
+        ".cmake",
+        ".cmake.in",
         ".cxx",
         ".go",
         ".h",
@@ -77,6 +112,10 @@ _ECOSYSTEM_SOURCE_SUFFIXES = frozenset(
         ".tsx",
         ".vue",
         ".svelte",
+        ".css",
+        ".scss",
+        ".sass",
+        ".rs",
     }
 )
 
@@ -87,6 +126,7 @@ class RepositoryIndexer:
     def __init__(self, import_scanner: ImportScanner | None = None) -> None:
         self.import_scanner = import_scanner or ImportScanner()
 
+    @repository_operation("project_root")
     def refresh(
         self,
         project_root: Path,
@@ -108,7 +148,20 @@ class RepositoryIndexer:
                 "project_ids": "\0".join(selected_projects),
             }
         )
-        if selected_ecosystems or selected_projects:
+        component_roots = named_component_roots(
+            root,
+            {
+                "excluded_directories": config.excluded_directories,
+                "python_roots": config.python_roots,
+            },
+        )
+        if (
+            selected_ecosystems
+            or selected_projects
+            or any(p != Path(".") for p in component_roots)
+            or _uv_workspace_root(root, root) is not None
+            or inline_script_files(root, config.excluded_directories)
+        ):
             return self._refresh_filtered(
                 root,
                 config,
@@ -274,6 +327,18 @@ class RepositoryIndexer:
                     bundle, config.ignored_packages
                 )
                 bundle = apply_tool_usage(bundle, config.tool_usage, root)
+                bundle = apply_command_usage(
+                    bundle,
+                    root,
+                    (project,),
+                    {"excluded_directories": config.excluded_directories},
+                )
+                bundle = apply_tool_config_usage(
+                    bundle,
+                    root,
+                    (project,),
+                    {"excluded_directories": config.excluded_directories},
+                )
                 python_enabled = any(
                     item.lower() == "pypi" for item in config.enabled_ecosystems
                 )
@@ -288,11 +353,11 @@ class RepositoryIndexer:
                     }
                     for path in manifests.files
                 )
-                repository_reports = (
-                    [EvidenceAnalyzer().analyze(bundle)]
-                    if python_enabled and has_python_evidence
-                    else []
-                )
+                repository_reports = []
+                if python_enabled and has_python_evidence:
+                    python_report = EvidenceAnalyzer().analyze(bundle)
+                    bundle = replace(bundle, diagnostics=python_report.diagnostics)
+                    repository_reports.append(python_report)
                 repository_bundles = (
                     [bundle] if python_enabled and has_python_evidence else []
                 )
@@ -311,6 +376,15 @@ class RepositoryIndexer:
                     )
                     repository_reports.append(_report_from_scan(non_python))
                     repository_bundles.extend(non_python.bundles)
+                coverage, coverage_diagnostics = repository_coverage(
+                    root,
+                    tuple(repository_bundles),
+                    excluded_directories=config.excluded_directories,
+                )
+                if coverage_diagnostics:
+                    repository_reports.append(
+                        AnalysisReport(diagnostics=coverage_diagnostics)
+                    )
                 repository_report = _combine_reports(repository_reports)
                 evidence_complete = all(
                     item.complete for item in repository_reports
@@ -338,9 +412,11 @@ class RepositoryIndexer:
                         "indexed_at": datetime.now(UTC).isoformat(),
                         "workspace_digest": final_workspace_digest,
                         "topology_digest": topology_digest,
+                        "refresh_mode": "incremental",
                         "config_digest": config_digest,
                         "selection_digest": selection_digest,
                         "scope": json.dumps(scope, sort_keys=True),
+                        "coverage": json.dumps(coverage, sort_keys=True),
                         "import_mapping": json.dumps(
                             dict(repository_report.import_mapping), sort_keys=True
                         ),
@@ -386,7 +462,7 @@ class RepositoryIndexer:
                         ),
                         "import_location_count": str(
                             sum(
-                                usage.kind != "tool"
+                                usage.kind not in {"tool", "command", "configuration"}
                                 for item in repository_bundles
                                 for usage in item.usages
                             )
@@ -426,7 +502,16 @@ class RepositoryIndexer:
         project_ids: tuple[str, ...],
         scope: dict[str, Any],
         selection_digest: str,
+        scan_result: ScanResult | None = None,
+        scan_receipts: dict[Path, str] | None = None,
+        scan_guard: str | None = None,
     ) -> IndexRefreshResult:
+        freshness_cache_path = (
+            Path(index_path).resolve()
+            if index_path is not None
+            else default_index_path(root)
+        )
+        freshness_guard = _freshness_guard(root, config, freshness_cache_path)
         options = RepositoryScanOptions(
             security=False,
             compatibility=False,
@@ -434,11 +519,29 @@ class RepositoryIndexer:
             project_ids=project_ids,
             ignored_packages=config.ignored_packages,
         )
-        result = RepositoryScanner().scan(root, options)
+        result = (
+            scan_result
+            if scan_result is not None
+            else RepositoryScanner().scan(root, options)
+        )
         bundles = result.bundles
         report = _report_from_scan(result)
         config_digest = _config_digest(config)
         file_digests = _bundle_file_digests(root, bundles)
+        if scan_receipts is not None:
+            # Compare the fingerprints being stored with the bytes used by the
+            # scan. A separate check before fingerprinting leaves a race where
+            # new bytes can be fingerprinted alongside the old analysis.
+            changed = freshness_guard != scan_guard
+            for path, digest in scan_receipts.items():
+                actual = file_digests.get(_relative(root, path))
+                if actual is None:
+                    actual = _file_digest(path)
+                changed |= actual != digest
+            if changed:
+                raise RuntimeError(
+                    "repository evidence changed during scanning; index was not replaced"
+                )
         workspace_digest = _filtered_workspace_digest(
             file_digests,
             config_digest,
@@ -475,7 +578,12 @@ class RepositoryIndexer:
                 and metadata.get("workspace_digest") == workspace_digest
                 and metadata.get("config_digest") == config_digest
                 and metadata.get("selection_digest") == selection_digest
+                and (
+                    not scope["repository_complete"]
+                    or metadata.get("git_head", "") == (git_head or "")
+                )
             )
+            complete = bool(scope["repository_complete"] and evidence_complete)
             if unchanged:
                 return IndexRefreshResult(
                     index_path=store.path,
@@ -485,7 +593,7 @@ class RepositoryIndexer:
                     parsed_manifest_files=len(manifest_files),
                     reused_manifest_files=0,
                     removed_files=0,
-                    complete=False,
+                    complete=complete,
                     finding_count=int(metadata.get("finding_count", "0")),
                     diagnostic_count=int(metadata.get("diagnostic_count", "0")),
                     scope=scope,
@@ -504,13 +612,24 @@ class RepositoryIndexer:
                         "topology_digest": "",
                         "config_digest": config_digest,
                         "selection_digest": selection_digest,
+                        "refresh_mode": "scan",
+                        "freshness_guard": freshness_guard
+                        if freshness_guard
+                        == _freshness_guard(root, config, freshness_cache_path)
+                        else "",
+                        "freshness_files": json.dumps(file_digests, sort_keys=True),
                         "scope": json.dumps(scope, sort_keys=True),
+                        "coverage": json.dumps(
+                            result.metadata["coverage"], sort_keys=True
+                        ),
                         "import_mapping": json.dumps(
                             dict(report.import_mapping), sort_keys=True
                         ),
-                        "complete": "false",
+                        "complete": "true" if complete else "false",
                         "evidence_complete": ("true" if evidence_complete else "false"),
-                        "status": "incomplete",
+                        "status": "incomplete"
+                        if not complete
+                        else ("issues" if report.findings else "ok"),
                         "finding_count": str(len(report.findings)),
                         "diagnostic_count": str(len(report.diagnostics)),
                         "source_file_count": str(len(source_files)),
@@ -518,7 +637,7 @@ class RepositoryIndexer:
                         "manifest_file_count": str(len(manifest_files)),
                         "import_location_count": str(
                             sum(
-                                usage.kind != "tool"
+                                usage.kind not in {"tool", "command", "configuration"}
                                 for bundle in bundles
                                 for usage in bundle.usages
                             )
@@ -537,11 +656,36 @@ class RepositoryIndexer:
                 parsed_manifest_files=len(manifest_files),
                 reused_manifest_files=0,
                 removed_files=0,
-                complete=False,
+                complete=complete,
                 finding_count=len(report.findings),
                 diagnostic_count=len(report.diagnostics),
                 scope=scope,
             )
+
+    @repository_operation("project_root")
+    def refresh_from_scan(
+        self,
+        project_root: Path,
+        result: ScanResult,
+        receipts: dict[Path, str],
+        guard: str,
+    ) -> IndexRefreshResult:
+        root = Path(project_root).resolve()
+        if result.root != root:
+            raise ValueError("scan result belongs to a different repository")
+        config = load_project_config(root)
+        return self._refresh_filtered(
+            root,
+            config,
+            index_path=None,
+            ecosystems=(),
+            project_ids=(),
+            scope=_index_scope((), ()),
+            selection_digest=_mapping_digest({"ecosystems": "", "project_ids": ""}),
+            scan_result=result,
+            scan_receipts=receipts,
+            scan_guard=guard,
+        )
 
 
 class RepositoryIndex:
@@ -552,13 +696,10 @@ class RepositoryIndex:
         self.index_path = (
             Path(index_path).resolve()
             if index_path is not None
-            else require_within_project(
-                self.project_root,
-                self.project_root / ".depcheck" / "index.sqlite3",
-                operation="read dependency index",
-            )
+            else default_index_path(self.project_root)
         )
 
+    @repository_operation("self.project_root")
     def context(self) -> dict[str, Any]:
         context = self._context()
         capabilities = create_default_registry().runtime_capabilities()
@@ -600,13 +741,14 @@ class RepositoryIndex:
                 "projects": [],
                 "ecosystems": {},
                 "incomplete_reasons": ["index-missing"],
+                "coverage": {"scope": "missing", "uncovered": []},
                 "index": {"schema": INDEX_SCHEMA, "indexed": False},
             }
         with IndexStore(self.project_root, self.index_path, read_only=True) as store:
             metadata = store.metadata()
             scope = _scope_from_metadata(metadata)
             current_digest: str | None
-            if scope["repository_complete"]:
+            if scope["repository_complete"] and metadata.get("refresh_mode") != "scan":
                 current_digest = _current_workspace_digest(
                     self.project_root,
                     store.file_digests("manifest"),
@@ -615,6 +757,8 @@ class RepositoryIndex:
                 current_digest = _current_filtered_workspace_digest(
                     self.project_root,
                     scope,
+                    metadata,
+                    self.index_path,
                 )
             reasons: list[str] = []
             if metadata.get("workspace_digest") != current_digest:
@@ -634,6 +778,10 @@ class RepositoryIndex:
             )
             if not scope["repository_complete"]:
                 incomplete_reasons.append("index-selection")
+            coverage = json.loads(metadata.get("coverage", '{"uncovered": []}'))
+            incomplete_reasons.extend(
+                entry["reason"] for entry in coverage.get("uncovered", [])
+            )
             return {
                 "schema": metadata.get("schema"),
                 "root": metadata.get("root"),
@@ -648,7 +796,8 @@ class RepositoryIndex:
                 "scope": scope,
                 "projects": projects,
                 "ecosystems": store.ecosystem_summary(),
-                "incomplete_reasons": incomplete_reasons,
+                "incomplete_reasons": sorted(set(incomplete_reasons)),
+                "coverage": coverage,
                 "index": {
                     "schema": metadata.get("schema"),
                     "indexed": True,
@@ -675,6 +824,7 @@ class RepositoryIndex:
         with IndexStore(self.project_root, self.index_path, read_only=True) as store:
             return store.findings(package=package, limit=limit)
 
+    @measured("query.dependencies")
     def dependencies(
         self,
         *,
@@ -696,6 +846,51 @@ class RepositoryIndex:
                 offset=offset,
             )
 
+    def dependency_origins(
+        self, project_id: str, package: str, ecosystem: str, *, limit: int, depth: int
+    ) -> dict[str, Any]:
+        from depcheck.origins import dependency_origins
+
+        self._require_index()
+        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
+            return dependency_origins(
+                project_id,
+                package,
+                ecosystem,
+                store.dependency_graph(project_id),
+                limit=limit,
+                depth=depth,
+            )
+
+    def explanations(
+        self,
+        package: str,
+        ecosystem: str | None,
+        project_id: str | None,
+        *,
+        limit: int,
+        origin_limit: int,
+        origin_depth: int,
+    ) -> list[dict[str, Any]]:
+        from depcheck.origins import dependency_origins
+
+        self._require_index()
+        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
+            records = store.dependency_inventory(
+                package=package, ecosystem=ecosystem, project_id=project_id, limit=limit
+            )
+            if len(records) == 1:
+                record = records[0]
+                record["origins"] = dependency_origins(
+                    record["project_id"],
+                    record["package"],
+                    record["ecosystem"],
+                    store.dependency_graph(record["project_id"]),
+                    limit=origin_limit,
+                    depth=origin_depth,
+                )
+            return records
+
     def _require_index(self) -> None:
         if not self.index_path.is_file():
             raise FileNotFoundError(
@@ -710,8 +905,12 @@ class RepositoryIndex:
 def _current_filtered_workspace_digest(
     root: Path,
     scope: dict[str, Any],
+    metadata: dict[str, str],
+    index_path: Path,
 ) -> str | None:
     config = load_project_config(root)
+    if _freshness_unchanged(root, config, metadata, index_path):
+        return metadata.get("workspace_digest")
     ecosystems = tuple(str(item) for item in scope["ecosystems"])
     project_ids = tuple(str(item) for item in scope["project_ids"])
     try:
@@ -740,6 +939,86 @@ def _current_filtered_workspace_digest(
     )
 
 
+def _freshness_guard(root: Path, config: DepcheckConfig, index_path: Path) -> str:
+    """One topology walk, with content hashes for potential ownership controls."""
+    values = {"config": _config_digest(config)}
+    control_names = (
+        _ECOSYSTEM_MANIFEST_NAMES
+        | set(parser_map)
+        | {"pnpm-workspace.yaml", "uv.toml", "pytest.ini", ".pytest.ini", "tox.ini"}
+    )
+    ignored_cache = {
+        index_path,
+        *(Path(str(index_path) + suffix) for suffix in ("-wal", "-shm", "-journal")),
+    }
+    for current, directories, filenames in os.walk(
+        root, topdown=True, followlinks=False
+    ):
+        parent = Path(current)
+        directories[:] = sorted(
+            d
+            for d in directories
+            if not (
+                d in DEFAULT_EXCLUDED_DIRECTORIES
+                and (d.startswith(".") or d in PYTHON_IGNORED_DIRECTORIES)
+            )
+            and not is_excluded(
+                (parent / d).relative_to(root), config.excluded_directories
+            )
+        )
+        for directory in tuple(directories):
+            path = parent / directory
+            if path.is_symlink():
+                values["alias:" + path.relative_to(root).as_posix()] = os.readlink(path)
+                directories.remove(directory)
+        for filename in sorted(filenames):
+            path = parent / filename
+            if path in ignored_cache:
+                continue
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                values["alias:" + relative] = os.readlink(path)
+            else:
+                values["file:" + relative] = (
+                    _file_digest(path)
+                    if filename in control_names
+                    or is_requirements_file(path)
+                    or path.suffix.lower()
+                    in {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
+                    else "present"
+                )
+    return _mapping_digest(values)
+
+
+def _freshness_unchanged(
+    root: Path, config: DepcheckConfig, metadata: dict[str, str], index_path: Path
+) -> bool:
+    """Fall back to a full selected scan whenever topology or ownership may differ."""
+    if not metadata.get("freshness_guard"):
+        return False
+    try:
+        previous = json.loads(metadata.get("freshness_files", "null"))
+        if not isinstance(previous, dict) or not all(
+            isinstance(p, str) and isinstance(d, str) for p, d in previous.items()
+        ):
+            return False
+        if metadata["freshness_guard"] != _freshness_guard(root, config, index_path):
+            return False
+        for relative, digest in previous.items():
+            path = root / relative
+            require_within_project(root, path, operation="validate indexed evidence")
+            current = (
+                "symlink:" + os.readlink(path)
+                if path.is_symlink()
+                else _file_digest(path)
+            )
+            if current != digest:
+                return False
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) -> str:
     config = load_project_config(root)
     scanner = ImportScanner(config.excluded_directories)
@@ -762,7 +1041,7 @@ def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) ->
 def _config_digest(config: DepcheckConfig) -> str:
     payload = asdict(config)
     # 数据表结构未变时，也要使旧分析语义生成的缓存失效。
-    payload["analysis_revision"] = 11
+    payload["analysis_revision"] = ANALYSIS_REVISION
     payload["import_mapping"] = dict(sorted(config.import_mapping.items()))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
@@ -781,12 +1060,13 @@ def _manifest_digests(
     return result
 
 
+@measured("hashing.files")
 def _file_digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    try:
+        content = read_bytes(path, allow_aliases=True)
+    except ReadLimitError:
+        return "oversized"
+    return hashlib.sha256(content).hexdigest()
 
 
 def _mapping_digest(values: dict[str, str]) -> str:
@@ -867,6 +1147,16 @@ def _bundle_file_digests(
             continue
         if candidate.is_file():
             result[relative] = _file_digest(candidate)
+    result.update(_command_digests(root, load_project_config(root)))
+    result.update(
+        {
+            _relative(root, p): _file_digest(p)
+            for p in uncovered_manifest_files(
+                root, load_project_config(root).excluded_directories
+            )
+        }
+    )
+    result.update(_tool_config_digests(root, load_project_config(root)))
     return dict(sorted(result.items()))
 
 
@@ -913,7 +1203,44 @@ def _ecosystem_digests(
         suffixes=_ECOSYSTEM_SOURCE_SUFFIXES,
         excluded_directories=config.excluded_directories,
     )
-    return {_relative(root, path): _file_digest(path) for path in paths}
+    paths = (*paths, *uncovered_manifest_files(root, config.excluded_directories))
+    result = {_relative(root, path): _file_digest(path) for path in paths}
+    result.update(_tool_config_digests(root, config))
+    result.update(_command_digests(root, config))
+    return result
+
+
+def _tool_config_digests(root: Path, config: DepcheckConfig) -> dict[str, str]:
+    return {
+        p.relative_to(root).as_posix(): "symlink:" + os.readlink(p)
+        if p.is_symlink()
+        else _file_digest(p)
+        for p in discover_tool_config_files(
+            root, {"excluded_directories": config.excluded_directories}
+        )
+    }
+
+
+def _command_digests(root: Path, config: DepcheckConfig) -> dict[str, str]:
+    settings = {"excluded_directories": config.excluded_directories}
+    paths = discover_command_files(root, settings)
+    result = {}
+    for path in (root / ".github", root / ".github/workflows", *paths):
+        unsafe_parent = False
+        for parent in path.parents:
+            if parent == root:
+                break
+            if parent.is_symlink():
+                unsafe_parent = True
+                break
+        if unsafe_parent:
+            continue
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            result[relative] = "symlink:" + os.readlink(path)
+        elif path.is_file():
+            result[relative] = _file_digest(path)
+    return result
 
 
 def _report_from_scan(result: ScanResult) -> AnalysisReport:
@@ -949,7 +1276,10 @@ def _combine_reports(reports: list[AnalysisReport]) -> AnalysisReport:
 
 
 def _relative(root: Path, path: Path) -> str:
-    return Path(path).resolve().relative_to(root).as_posix()
+    relative = Path(os.path.relpath(Path(path).resolve(), root))
+    if relative.parts and relative.parts[0] == "..":
+        raise ValueError("path is outside the repository root")
+    return relative.as_posix()
 
 
 def _git_head(root: Path) -> str | None:

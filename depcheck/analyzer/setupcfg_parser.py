@@ -4,6 +4,7 @@ import configparser
 import logging
 
 from packaging.requirements import InvalidRequirement
+from depcheck.source_locations import SourcePositions
 
 from depcheck.model import (
     PythonRequirement,
@@ -41,8 +42,18 @@ class SetupCfgParser(BaseDependencyParser):
 
         config = configparser.ConfigParser()
         try:
-            with self.path.open(encoding="utf-8") as handle:
-                config.read_file(handle)
+            text = self._read_text()
+            config.read_string(text)
+            runtime = (
+                config.get("options", "install_requires")
+                if config.has_option("options", "install_requires")
+                else None
+            )
+            extras = (
+                config.items("options.extras_require")
+                if config.has_section("options.extras_require")
+                else []
+            )
         except (OSError, UnicodeError, configparser.Error) as exc:
             return ManifestParseResult(
                 diagnostics=(
@@ -56,20 +67,33 @@ class SetupCfgParser(BaseDependencyParser):
                 files=(self.path,),
             )
 
-        if config.has_option("options", "install_requires"):
+        resolved = (
+            {("options", "install_requires"): runtime} if runtime is not None else {}
+        )
+        resolved.update(
+            {("options.extras_require", group): value for group, value in extras}
+        )
+        positions = SourcePositions.ini(self.path, text, config, resolved)
+        if runtime is not None:
             self._append_lines(
-                config.get("options", "install_requires"),
+                runtime,
                 "runtime",
                 declarations,
                 diagnostics,
+                positions,
+                "options",
+                "install_requires",
             )
-        if config.has_section("options.extras_require"):
-            for group, value in config.items("options.extras_require"):
+        if extras:
+            for group, value in extras:
                 self._append_lines(
                     value,
                     f"optional:{group}",
                     declarations,
                     diagnostics,
+                    positions,
+                    "options.extras_require",
+                    group,
                 )
 
         return ManifestParseResult(
@@ -84,8 +108,11 @@ class SetupCfgParser(BaseDependencyParser):
         group: str,
         declarations: list[PythonRequirement],
         diagnostics: list[Diagnostic],
+        positions: SourcePositions,
+        section: str,
+        option: str,
     ) -> None:
-        for raw_line in value.splitlines():
+        for index, raw_line in enumerate(value.splitlines()):
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -93,7 +120,7 @@ class SetupCfgParser(BaseDependencyParser):
                 declarations.append(
                     PythonRequirement.from_requirement(
                         line,
-                        source=SourceLocation(self.path),
+                        source=positions.value(section, option, index),
                         group=group,
                     )
                 )
@@ -103,6 +130,6 @@ class SetupCfgParser(BaseDependencyParser):
                         code="manifest.invalid-requirement",
                         severity="error",
                         message=f"无效依赖声明 {line!r}：{exc}",
-                        source=SourceLocation(self.path),
+                        source=positions.value(section, option, index),
                     )
                 )

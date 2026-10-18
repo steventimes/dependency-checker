@@ -56,7 +56,7 @@ class PipInstallParser(BaseDependencyParser):
             return deps
 
         try:
-            text = self.path.read_text(encoding="utf-8")
+            text = self._read_text()
         except (OSError, UnicodeError) as exc:
             logger.error(f"Error parsing dependency hints {self.path}: {exc}")
             return deps
@@ -82,7 +82,7 @@ class PipInstallParser(BaseDependencyParser):
                 )
             )
         try:
-            text = self.path.read_text(encoding="utf-8")
+            text = self._read_text()
         except (OSError, UnicodeError) as exc:
             return ManifestParseResult(
                 diagnostics=(

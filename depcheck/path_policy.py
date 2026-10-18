@@ -35,3 +35,17 @@ def require_within_project(
             f"refusing to {operation} a path outside the project root"
         ) from exc
     return resolved
+
+
+def default_index_path(project_root: Path) -> Path:
+    """Default cache writes must not alias other files, even inside the root."""
+    root = Path(project_root).resolve()
+    cache = root / ".depcheck"
+    path = cache / "index.sqlite3"
+    if cache.is_symlink() or cache.resolve() != cache or path.is_symlink():
+        raise ProjectPathError("refusing aliased default dependency cache")
+    if path.exists() and path.stat().st_nlink > 1:
+        raise ProjectPathError("refusing hard-linked default dependency cache")
+    return require_within_project(
+        root, path, operation="access default dependency cache"
+    )

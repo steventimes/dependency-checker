@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from depcheck.profiling import measured
+
 import json
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
+
+from depcheck.model import SourceLocation
+from depcheck import bounded_io
 
 DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
     {
@@ -34,13 +39,18 @@ DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
         "venv",
     }
 )
-DEFAULT_MAX_BYTES = 8 * 1024 * 1024
+DEFAULT_MAX_BYTES = bounded_io.DEFAULT_MAX_BYTES
 
 
 class StaticReadError(ValueError):
     """A repository file cannot be consumed safely as bounded static data."""
 
+    def __init__(self, message: str, *, source: SourceLocation | None = None) -> None:
+        super().__init__(message)
+        self.source = source
 
+
+@measured("discovery.static")
 def discover_files(
     root: Path,
     *,
@@ -50,6 +60,7 @@ def discover_files(
 ) -> tuple[Path, ...]:
     repository_root = Path(root).resolve()
     configured = tuple(Path(str(item)) for item in excluded_directories if str(item))
+    suffix_endings = tuple(suffixes)
     found: list[Path] = []
     for current, directories, files in os.walk(
         repository_root,
@@ -69,13 +80,12 @@ def discover_files(
             and _inside(repository_root, current_path / directory)
         )
         for filename in sorted(files):
+            if filename not in names and not filename.lower().endswith(suffix_endings):
+                continue
             path = current_path / filename
             if path.is_symlink() or not _inside(repository_root, path):
                 continue
-            if names and filename in names:
-                found.append(path)
-            elif suffixes and path.suffix.lower() in suffixes:
-                found.append(path)
+            found.append(path)
     return tuple(found)
 
 
@@ -112,19 +122,11 @@ def read_text(
     *,
     max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> str:
-    candidate = Path(path)
-    if candidate.is_symlink():
-        raise StaticReadError(f"refusing to read symlinked evidence: {candidate}")
     try:
-        size = candidate.stat().st_size
-    except OSError as exc:
-        raise StaticReadError(f"cannot stat {candidate}: {exc}") from exc
-    if size > max_bytes:
-        raise StaticReadError(f"{candidate} exceeds {max_bytes} bytes")
-    try:
-        return candidate.read_text(encoding="utf-8")
+        content = bounded_io.read_bytes(path, max_bytes=max_bytes)
+        return content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     except (OSError, UnicodeError) as exc:
-        raise StaticReadError(f"cannot read {candidate}: {exc}") from exc
+        raise StaticReadError(f"cannot read {path}: {exc}") from exc
 
 
 def read_json(
@@ -132,10 +134,22 @@ def read_json(
     *,
     max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> dict[str, Any]:
+    return parse_json(read_text(path, max_bytes=max_bytes), path)
+
+
+@measured("parsing.json")
+def parse_json(text: str, path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(read_text(path, max_bytes=max_bytes))
+        value = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise StaticReadError(f"invalid JSON in {path}: {exc}") from exc
+        raise StaticReadError(
+            f"invalid JSON in {path}: {exc}",
+            source=SourceLocation(path, exc.lineno, exc.colno),
+        ) from exc
+    except RecursionError as exc:
+        raise StaticReadError(
+            f"JSON nesting exceeds the parser limit in {path}"
+        ) from exc
     if not isinstance(value, dict):
         raise StaticReadError(f"JSON root in {path} must be an object")
     return value
@@ -143,10 +157,10 @@ def read_json(
 
 def _inside(root: Path, path: Path) -> bool:
     try:
-        path.resolve().relative_to(root)
+        common = os.path.commonpath((path.resolve(), root))
     except (OSError, ValueError):
         return False
-    return True
+    return os.path.normcase(common) == os.path.normcase(str(root))
 
 
 def _configured_exclusion(

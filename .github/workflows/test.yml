@@ -138,6 +138,10 @@
           "run": "uv run --frozen --extra test python -m build --outdir \"${{ runner.temp }}/depcheck-dist\""
         },
         {
+          "name": "Check native filesystem boundaries",
+          "run": "uv run --frozen --extra test python -m pytest test/test_engineering.py -q -k 'bounded or anchored or default_cache or default_sqlite or journal_links or windows_atomic or symlink_repository or python_encoding or preview_limits or regular_file_requirement or maven_parent_directory or maven_directory_parent'"
+        },
+        {
           "name": "Smoke test installed wheel without extras",
           "run": "uv run --frozen --extra test python -c \"from pathlib import Path; import subprocess, sys; wheels = list(Path(r'${{ runner.temp }}/depcheck-dist').glob('*.whl')); assert len(wheels) == 1, wheels; subprocess.run([sys.executable, 'scripts/check_wheel_install.py', '--wheel', str(wheels[0])], check=True)\""
         }

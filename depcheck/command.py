@@ -13,6 +13,7 @@ from depcheck._version import __version__
 from depcheck.agent import DependencyAgentService
 from depcheck.config import load_project_config
 from depcheck.policy_codes import normalize_fail_on
+from depcheck.profiling import capture_profile, profile_payload
 from depcheck.engine import RepositoryScanOptions, RepositoryScanner
 from depcheck.output import (
     build_cyclonedx,
@@ -34,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--version", action="version", version=f"depcheck {__version__}"
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Write local inclusive phase measurements to stderr",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -57,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resolve Python compatibility using PyPI metadata",
     )
     scan.add_argument("--python-version")
+    scan.add_argument(
+        "--dependency-group",
+        action="append",
+        default=[],
+        help="Explicit Python compatibility group, e.g. dev:test or optional:docs",
+    )
     scan.add_argument("--ecosystem", action="append", default=[])
     scan.add_argument("--project", action="append", default=[])
     scan.add_argument("--ignore", action="append", default=[])
@@ -78,6 +90,8 @@ def build_parser() -> argparse.ArgumentParser:
     _root_argument(query)
     query.add_argument("package", nargs="?")
     _identity_options(query)
+    query.add_argument("--evidence-limit", type=int, default=20)
+    query.add_argument("--evidence-offset", type=int, default=0)
     query.add_argument("--limit", type=int, default=20)
     query.add_argument("--offset", type=int, default=0)
 
@@ -85,11 +99,19 @@ def build_parser() -> argparse.ArgumentParser:
     _root_argument(explain)
     explain.add_argument("package")
     _identity_options(explain)
+    explain.add_argument("--evidence-limit", type=int, default=20)
+    explain.add_argument("--evidence-offset", type=int, default=0)
+    explain.add_argument("--origin-limit", type=int, default=20)
+    explain.add_argument("--origin-depth", type=int, default=32)
 
     impact = commands.add_parser("impact", help="Show dependency usage impact")
     _root_argument(impact)
     impact.add_argument("package")
     _identity_options(impact)
+    impact.add_argument("--evidence-limit", type=int, default=20)
+    impact.add_argument("--evidence-offset", type=int, default=0)
+    impact.add_argument("--origin-limit", type=int, default=20)
+    impact.add_argument("--origin-depth", type=int, default=32)
 
     update = commands.add_parser(
         "update",
@@ -108,6 +130,115 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = commands.add_parser("doctor", help="Inspect local integration state")
     _root_argument(doctor)
+    compare = commands.add_parser(
+        "compare", help="Compare two canonical scan snapshots without writing"
+    )
+    _root_argument(compare)
+    compare.add_argument("before_file")
+    compare.add_argument("after_file")
+    compare.add_argument("--limit", type=int, default=20)
+    compare.add_argument("--offset", type=int, default=0)
+    sbom = commands.add_parser(
+        "sbom", help="Inspect an external CycloneDX JSON inventory"
+    )
+    _root_argument(sbom)
+    sbom.add_argument("sbom_file")
+    sbom.add_argument("--limit", type=int, default=20)
+    sbom.add_argument("--offset", type=int, default=0)
+    cmake = commands.add_parser(
+        "cmake-model", help="Inspect a supplied CMake File API reply"
+    )
+    _root_argument(cmake)
+    cmake.add_argument("index_file")
+    cmake.add_argument("--configuration")
+    cmake.add_argument(
+        "--target", help="Exact target id within the selected configuration"
+    )
+    cmake.add_argument("--limit", type=int, default=20)
+    cmake.add_argument("--offset", type=int, default=0)
+    evidence = commands.add_parser(
+        "evidence", help="Inspect supplied security, call, runtime or artifact evidence"
+    )
+    _root_argument(evidence)
+    evidence.add_argument(
+        "kind",
+        choices=(
+            "cve",
+            "cwe",
+            "vex",
+            "attestation",
+            "callgraph",
+            "govulncheck",
+            "runtime",
+            "component-matches",
+            "behavior",
+            "abi",
+            "deps-dev",
+            "scorecard",
+        ),
+    )
+    evidence.add_argument("evidence_file")
+    evidence.add_argument("--artifact-file")
+    evidence.add_argument("--limit", type=int, default=20)
+    evidence.add_argument("--offset", type=int, default=0)
+    reevaluate = commands.add_parser(
+        "reevaluate",
+        help="Match supplied inventory against supplied offline OSV records",
+    )
+    _root_argument(reevaluate)
+    reevaluate.add_argument("inventory_file")
+    reevaluate.add_argument("advisory_file")
+    reevaluate.add_argument("--limit", type=int, default=20)
+    reevaluate.add_argument("--offset", type=int, default=0)
+    calls = commands.add_parser(
+        "python-calls", help="Analyze selected Python sources and explicit call entries"
+    )
+    _root_argument(calls)
+    calls.add_argument("analysis_file")
+    calls.add_argument("--limit", type=int, default=20)
+    calls.add_argument("--offset", type=int, default=0)
+    export = commands.add_parser(
+        "export-evidence",
+        help="Export unsigned provenance or policy input from a saved scan",
+    )
+    _root_argument(export)
+    export.add_argument("kind", choices=("provenance", "policy"))
+    export.add_argument("snapshot_file")
+    export.add_argument("--input-file", action="append", default=[])
+    export.add_argument("--configuration-file")
+    inventory_compare = commands.add_parser(
+        "compare-inventories",
+        help="Compare saved scan/CycloneDX inventories across producers",
+    )
+    _root_argument(inventory_compare)
+    inventory_compare.add_argument("before_file")
+    inventory_compare.add_argument("after_file")
+    inventory_compare.add_argument("--limit", type=int, default=20)
+    inventory_compare.add_argument("--offset", type=int, default=0)
+    behavior = commands.add_parser(
+        "package-behavior",
+        help="Compare supplied npm package metadata and script capabilities",
+    )
+    _root_argument(behavior)
+    behavior.add_argument("before_file")
+    behavior.add_argument("after_file")
+    behavior.add_argument("--limit", type=int, default=20)
+    behavior.add_argument("--offset", type=int, default=0)
+    names = commands.add_parser(
+        "package-names", help="Compare a package with explicit reference names"
+    )
+    _root_argument(names)
+    names.add_argument("ecosystem", choices=("PyPI", "npm"))
+    names.add_argument("package")
+    names.add_argument("references", nargs="+")
+    registry = commands.add_parser(
+        "registry", help="Explicit public registry existence check; no installation"
+    )
+    _root_argument(registry)
+    registry.add_argument("ecosystem", choices=("PyPI", "npm"))
+    registry.add_argument("package")
+    registry.add_argument("--package-version")
+    registry.add_argument("--allow-network", action="store_true")
     return parser
 
 
@@ -132,10 +263,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"depcheck: repository is not a directory: {root}", file=sys.stderr)
         return 2
     try:
-        if arguments.command == "scan":
-            return _scan(root, arguments)
-        service = DependencyAgentService(root)
-        payload = _service_command(service, arguments)
+        with capture_profile(enabled=arguments.profile) as measurements:
+            if arguments.command == "scan":
+                status = _scan(root, arguments)
+                if arguments.profile:
+                    print(
+                        json.dumps(profile_payload(measurements), sort_keys=True),
+                        file=sys.stderr,
+                    )
+                return status
+            service = DependencyAgentService(root)
+            payload = _service_command(service, arguments)
+        if arguments.profile:
+            print(
+                json.dumps(profile_payload(measurements), sort_keys=True),
+                file=sys.stderr,
+            )
     except (
         KeyError,
         OSError,
@@ -178,6 +321,7 @@ def _scan(root: Path, arguments: argparse.Namespace) -> int:
             ignored_packages=tuple(arguments.ignore),
             import_mapping=_parse_updates(arguments.mappings, option="--map"),
             python_version=arguments.python_version,
+            dependency_groups=tuple(arguments.dependency_group),
         ),
     )
     evaluation = evaluate_policy(result, policy)
@@ -214,6 +358,76 @@ def _service_command(
     arguments: argparse.Namespace,
 ) -> dict[str, Any]:
     command = arguments.command
+    if command == "compare-inventories":
+        return service.compare_inventories(
+            arguments.before_file,
+            arguments.after_file,
+            limit=arguments.limit,
+            offset=arguments.offset,
+        )
+    if command == "package-behavior":
+        return service.compare_package_behavior(
+            arguments.before_file,
+            arguments.after_file,
+            limit=arguments.limit,
+            offset=arguments.offset,
+        )
+    if command == "package-names":
+        return service.compare_package_names(
+            arguments.package, arguments.references, arguments.ecosystem
+        )
+    if command == "registry":
+        return service.verify_registry_package(
+            arguments.ecosystem,
+            arguments.package,
+            version=arguments.package_version,
+            allow_network=arguments.allow_network,
+        )
+    if command == "python-calls":
+        return service.analyze_python_calls(
+            arguments.analysis_file, limit=arguments.limit, offset=arguments.offset
+        )
+    if command == "export-evidence":
+        return service.export_evidence(
+            arguments.snapshot_file,
+            arguments.kind,
+            input_files=tuple(arguments.input_file),
+            configuration_file=arguments.configuration_file,
+        )
+    if command == "evidence":
+        return service.inspect_evidence(
+            arguments.evidence_file,
+            arguments.kind,
+            artifact_file=arguments.artifact_file,
+            limit=arguments.limit,
+            offset=arguments.offset,
+        )
+    if command == "reevaluate":
+        return service.reevaluate_vulnerabilities(
+            arguments.inventory_file,
+            arguments.advisory_file,
+            limit=arguments.limit,
+            offset=arguments.offset,
+        )
+    if command == "compare":
+        return service.compare_dependency_snapshots(
+            arguments.before_file,
+            arguments.after_file,
+            limit=arguments.limit,
+            offset=arguments.offset,
+        )
+    if command == "sbom":
+        return service.inspect_dependency_sbom(
+            arguments.sbom_file, limit=arguments.limit, offset=arguments.offset
+        )
+    if command == "cmake-model":
+        return service.inspect_cmake_model(
+            arguments.index_file,
+            configuration=arguments.configuration,
+            target=arguments.target,
+            limit=arguments.limit,
+            offset=arguments.offset,
+        )
     if command == "index":
         return service.index_repository(
             ecosystems=tuple(arguments.ecosystem),
@@ -226,6 +440,8 @@ def _service_command(
             arguments.package,
             ecosystem=arguments.ecosystem,
             project_id=arguments.project_id,
+            evidence_limit=arguments.evidence_limit,
+            evidence_offset=arguments.evidence_offset,
             limit=arguments.limit,
             offset=arguments.offset,
         )
@@ -234,12 +450,20 @@ def _service_command(
             arguments.package,
             ecosystem=arguments.ecosystem,
             project_id=arguments.project_id,
+            evidence_limit=arguments.evidence_limit,
+            evidence_offset=arguments.evidence_offset,
+            origin_limit=arguments.origin_limit,
+            origin_depth=arguments.origin_depth,
         )
     if command == "impact":
         return service.dependency_impact(
             arguments.package,
             ecosystem=arguments.ecosystem,
             project_id=arguments.project_id,
+            evidence_limit=arguments.evidence_limit,
+            evidence_offset=arguments.evidence_offset,
+            origin_limit=arguments.origin_limit,
+            origin_depth=arguments.origin_depth,
         )
     if command == "update":
         return service.plan_dependency_updates(

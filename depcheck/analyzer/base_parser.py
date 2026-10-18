@@ -1,12 +1,20 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from depcheck.bounded_io import read_text, read_python
+
 from packaging.requirements import InvalidRequirement, Requirement
 
 
 class BaseDependencyParser(ABC):
     def __init__(self, path: Path):
         self.path = Path(path)
+
+    def _read_text(self) -> str:
+        return read_text(self.path, allow_aliases=True)
+
+    def _read_python(self) -> str:
+        return read_python(self.path, allow_aliases=True)
 
     @staticmethod
     def parse_line(line: str) -> tuple[str, str | None]:

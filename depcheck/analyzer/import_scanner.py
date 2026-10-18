@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+from depcheck.bounded_io import repository_operation
+
 import ast
 import json
 import logging
 import os
 import sys
-import tokenize
+from depcheck.bounded_io import read_python, read_text
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import ClassVar
 
 from depcheck.model import Diagnostic, ImportEvidence, ImportScanResult, SourceLocation
 from depcheck.path_policy import require_within_project
+from depcheck.source_locations import SourcePositions, parse_python_ast
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,18 @@ class _ImportVisitor(ast.NodeVisitor):
         self.diagnostics: list[Diagnostic] = []
         self.import_modules = {"importlib"}
         self.import_functions = {"__import__"}
+        self.positions: SourcePositions | None = None
+        self.line_offset = 0
+
+    def _source(self, node: ast.AST) -> SourceLocation:
+        if self.positions is None:
+            return SourceLocation(self.path)
+        position = self.positions.ast_node(node)
+        return SourceLocation(
+            self.path,
+            position.line + self.line_offset if position.line is not None else None,
+            position.column,
+        )
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -100,9 +115,7 @@ class _ImportVisitor(ast.NodeVisitor):
                         code="usage.dynamic",
                         severity="warning",
                         message="Non-literal Python module load could not be mapped statically.",
-                        source=SourceLocation(
-                            self.path, node.lineno, node.col_offset + 1
-                        ),
+                        source=self._source(node),
                     )
                 )
         self.generic_visit(node)
@@ -114,11 +127,7 @@ class _ImportVisitor(ast.NodeVisitor):
         self.imports.append(
             ImportEvidence(
                 module=top_level,
-                source=SourceLocation(
-                    self.path,
-                    line=getattr(node, "lineno", None),
-                    column=(getattr(node, "col_offset", 0) + 1),
-                ),
+                source=self._source(node),
                 scope=self.scope,
                 kind=self.kind if self.kind != "regular" else (kind or "regular"),
             )
@@ -187,6 +196,7 @@ class ImportScanner:
         """公开稳定的文件发现边界，供增量索引复用。"""
         return tuple(self._iter_python_files(Path(root)))
 
+    @repository_operation("root")
     def scan_files(self, root: Path, paths: list[Path]) -> ImportScanResult:
         """只解析调用方指定的文件，同时保持完整扫描的过滤语义。"""
         project_root = Path(root)
@@ -233,6 +243,7 @@ class ImportScanner:
 
         return ImportScanResult(tuple(unique), tuple(diagnostics), tuple(files))
 
+    @repository_operation("path")
     def scan_detailed(self, path: Path) -> ImportScanResult:
         root = Path(path)
         local_modules = self._get_local_modules(root)
@@ -340,9 +351,8 @@ class ImportScanner:
         if path.suffix == ".ipynb":
             return self._scan_notebook_detailed(path, scope)
         try:
-            # tokenize.open 遵循 PEP 263，避免把合法的非 UTF-8 Python 文件误判为损坏。
-            with tokenize.open(path) as handle:
-                tree = ast.parse(handle.read(), filename=str(path))
+            text = read_python(path)
+            tree = parse_python_ast(text)
         except SyntaxError as exc:
             return [], [
                 Diagnostic(
@@ -363,6 +373,7 @@ class ImportScanner:
             ]
 
         visitor = _ImportVisitor(path, scope)
+        visitor.positions = SourcePositions(path, text)
         visitor.visit(tree)
         return visitor.imports, visitor.diagnostics
 
@@ -370,7 +381,7 @@ class ImportScanner:
         self, path: Path, scope: str
     ) -> tuple[list[ImportEvidence], list[Diagnostic]]:
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(read_text(path))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             return [], [
                 Diagnostic(
@@ -416,26 +427,30 @@ class ImportScanner:
                 line_offset += 2
                 continue
 
+            source = source.replace("\r\n", "\n").replace("\r", "\n")
             sanitized = _sanitize_notebook_source(source)
             try:
-                tree = ast.parse(sanitized, filename=str(path))
-            except SyntaxError as exc:
+                tree = parse_python_ast(sanitized)
+            except (SyntaxError, UnicodeError) as exc:
+                line = getattr(exc, "lineno", None)
+                column = getattr(exc, "offset", None)
                 diagnostics.append(
                     Diagnostic(
                         code="source.notebook-syntax-error",
                         severity="error",
                         message=(
-                            f"notebook 第 {cell_number} 个代码单元语法错误：{exc.msg}"
+                            f"notebook 第 {cell_number} 个代码单元语法错误：{getattr(exc, 'msg', str(exc))}"
                         ),
                         source=SourceLocation(
                             path,
-                            line=line_offset + (exc.lineno or 1),
-                            column=exc.offset,
+                            line=line_offset + (line or 1),
+                            column=column,
                         ),
                     )
                 )
             else:
-                ast.increment_lineno(tree, line_offset)
+                visitor.positions = SourcePositions(path, sanitized)
+                visitor.line_offset = line_offset
                 visitor.visit(tree)
             line_offset += max(source.count("\n") + 1, 1) + 1
         return visitor.imports, [*diagnostics, *visitor.diagnostics]

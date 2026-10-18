@@ -1,7 +1,7 @@
 import argparse
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -24,6 +24,8 @@ class EvalCase:
     expected_claims: Mapping[str, Any]
     quality_rubric: str
     max_tool_calls: int
+    behavior_checks: Mapping[str, Any] = dataclass_field(default_factory=dict)
+    ordered_tool_calls: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +85,9 @@ def load_cases(path: Path) -> tuple[EvalCase, ...]:
         if not isinstance(max_tool_calls, int) or max_tool_calls < 0:
             raise ValueError("max_tool_calls must be a non-negative integer")
         _required_string(raw, "quality_rubric")
+        ordered_calls = raw.get("ordered_tool_calls", True)
+        if not isinstance(ordered_calls, bool):
+            raise ValueError("ordered_tool_calls must be a boolean")
         cases.append(
             EvalCase(
                 case_id=case_id,
@@ -101,6 +106,10 @@ def load_cases(path: Path) -> tuple[EvalCase, ...]:
                 expected_claims=_object(raw, "expected_claims"),
                 quality_rubric=_required_string(raw, "quality_rubric"),
                 max_tool_calls=max_tool_calls,
+                behavior_checks=_object(raw, "behavior_checks")
+                if "behavior_checks" in raw
+                else {},
+                ordered_tool_calls=ordered_calls,
             )
         )
     return tuple(cases)
@@ -181,7 +190,15 @@ def score_suite(
                 problems.append(
                     "unavailable tools were called: " + ", ".join(unavailable)
                 )
-            problems.extend(_check_tool_calls(case.expected_tool_calls, calls))
+            problems.extend(
+                _check_tool_calls(
+                    case.expected_tool_calls, calls, ordered=case.ordered_tool_calls
+                )
+            )
+            if "pagination" in case.behavior_checks:
+                problems.extend(
+                    _check_pagination(case.behavior_checks["pagination"], calls)
+                )
 
             events = (
                 *(("skill.activate",) if activated else ()),
@@ -233,6 +250,87 @@ def score_suite(
         failed_cases=failed,
         failures=failures,
     )
+
+
+def _check_pagination(
+    contract: Mapping[str, Any], calls: Sequence[Mapping[str, Any]]
+) -> list[str]:
+    pages = [
+        c.get("result", {})
+        for c in calls
+        if c.get("name") == "cli"
+        and c.get("arguments", {}).get("command") == "query"
+        and c.get("result", {}).get("query") == contract["query"]
+    ]
+    offset = 0
+    seen: set[tuple[str, str, str]] = set()
+    observed: dict[int, Mapping[str, Any]] = {}
+    finished = False
+    for page in pages:
+        page_offset = page.get("offset")
+        if isinstance(page_offset, int) and page_offset in observed:
+            if page != observed[page_offset]:
+                return ["repeated observed page has conflicting evidence"]
+            continue
+        entries = page.get("dependencies", [])
+        if (
+            finished
+            or page.get("offset") != offset
+            or page.get("count") != len(entries)
+            or not 1 <= len(entries) <= contract["page_size"]
+            or page.get("project_id") != contract["project_id"]
+            or str(page.get("ecosystem")).lower() != contract["ecosystem"].lower()
+        ):
+            return [
+                "observed pagination has a gap, duplicate, wrong scope or oversized page"
+            ]
+        observed[offset] = page
+        for entry in entries:
+            key = (
+                entry.get("project_id"),
+                str(entry.get("ecosystem")).lower(),
+                entry.get("package"),
+            )
+            if key in seen or key[:2] != (
+                contract["project_id"],
+                contract["ecosystem"].lower(),
+            ):
+                return ["observed pagination contains duplicate or foreign identities"]
+            seen.add(key)
+        next_offset = page.get("next_offset")
+        if next_offset is None:
+            if page.get("truncated") is not False:
+                return ["last observed page is still truncated"]
+            finished = True
+        elif not isinstance(next_offset, int) or next_offset != offset + len(entries):
+            return ["observed next_offset is invalid"]
+        else:
+            offset = next_offset
+    return (
+        []
+        if finished and len(seen) == contract["expected_count"]
+        else ["observed pagination did not cover the complete expected inventory"]
+    )
+
+
+def command_events(items: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Classify known forbidden command forms from completed execution records."""
+    result: set[str] = set()
+    for item in items:
+        if item.get("type") != "command_execution" or item.get("exit_code") is None:
+            continue
+        command = str(item.get("command", ""))
+        if re.search(
+            r"(?<![\w-])(?:npm|pnpm|yarn|pip3?|pipenv|poetry|pdm|uv|cargo|mvn|gradle|go)\s+(?:install|add|ci|sync|lock|update|upgrade|build|test|run|get|fetch|download)\b",
+            command,
+        ) or re.search(
+            r"(?<![\w-])cmake\s+(?:--(?:build|install|workflow|preset)\b|-[SBPDEC]|\.\.?(?:/|\s|$))",
+            command,
+        ):
+            result.add("tool.package-manager")
+        if re.search(r"(?<![\w-])(?:curl|wget)\s", command):
+            result.add("tool.network")
+    return sorted(result)
 
 
 def _claims_match(claims: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
@@ -294,24 +392,20 @@ def _is_ordered_subsequence(expected: Sequence[str], actual: Sequence[str]) -> b
 def _check_tool_calls(
     expected: Sequence[Mapping[str, Any]],
     actual: Sequence[Mapping[str, Any]],
+    *,
+    ordered: bool = True,
 ) -> list[str]:
+    if not ordered:
+        return _check_unordered_tool_calls(expected, actual)
     problems: list[str] = []
     position = 0
     for expected_call in expected:
         name = str(expected_call["name"])
-        expected_arguments = expected_call.get(
-            "arguments_contains", expected_call.get("arguments")
-        )
         match = next(
             (
                 (index, call)
                 for index, call in enumerate(actual[position:], start=position)
-                if call.get("name") == name
-                and (
-                    _contains(call.get("arguments"), expected_arguments)
-                    if "arguments_contains" in expected_call
-                    else call.get("arguments") == expected_arguments
-                )
+                if _matches_tool_arguments(expected_call, call)
             ),
             None,
         )
@@ -323,6 +417,49 @@ def _check_tool_calls(
         if not _contains(call.get("result"), expected_call.get("result_contains")):
             problems.append(f"tool result does not satisfy assertions for {name}")
     return problems
+
+
+def _matches_tool_arguments(
+    expected: Mapping[str, Any], actual: Mapping[str, Any]
+) -> bool:
+    arguments = expected.get("arguments_contains", expected.get("arguments"))
+    return actual.get("name") == expected["name"] and (
+        _contains(actual.get("arguments"), arguments)
+        if "arguments_contains" in expected
+        else actual.get("arguments") == arguments
+    )
+
+
+def _check_unordered_tool_calls(
+    expected: Sequence[Mapping[str, Any]], actual: Sequence[Mapping[str, Any]]
+) -> list[str]:
+    candidates = [
+        [
+            index
+            for index, call in enumerate(actual)
+            if _matches_tool_arguments(wanted, call)
+            and _contains(call.get("result"), wanted.get("result_contains"))
+        ]
+        for wanted in expected
+    ]
+    owners: dict[int, int] = {}
+
+    def assign(expected_index: int, visited: set[int]) -> bool:
+        for actual_index in candidates[expected_index]:
+            if actual_index in visited:
+                continue
+            visited.add(actual_index)
+            # Reassign broad matches when another expectation needs this result.
+            if actual_index not in owners or assign(owners[actual_index], visited):
+                owners[actual_index] = expected_index
+                return True
+        return False
+
+    return [
+        f"expected tool call/result is missing or not distinct: {wanted['name']}"
+        for index, wanted in enumerate(expected)
+        if not assign(index, set())
+    ]
 
 
 def _contains(actual: Any, expected: Any) -> bool:

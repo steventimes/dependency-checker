@@ -1,2 +1,3 @@
 recursive-include test/fixtures *.yaml *.txt *.json
+include REFERENCES.md
 prune .tmp

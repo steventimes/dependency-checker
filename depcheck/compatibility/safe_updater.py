@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
-import stat
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +10,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import NormalizedName, canonicalize_name
 
 from depcheck.path_policy import require_within_project
+from depcheck.bounded_io import read_bytes, atomic_write, ContentChangedError
 
 
 @dataclass(frozen=True)
@@ -38,10 +36,13 @@ class ConcurrentModificationError(RuntimeError):
 
 
 class RequirementsUpdater:
-    def __init__(self, project_root: Path | None = None) -> None:
+    def __init__(
+        self, project_root: Path | None = None, *, allow_aliases: bool = True
+    ) -> None:
         self.project_root = (
             Path(project_root).resolve() if project_root is not None else None
         )
+        self.allow_aliases = allow_aliases
 
     def plan(
         self,
@@ -57,7 +58,9 @@ class RequirementsUpdater:
             path,
             operation="read requirements update target",
         )
-        original_bytes = path.read_bytes()
+        original_bytes = read_bytes(
+            path, project_root=project_root, allow_aliases=self.allow_aliases
+        )
         original = original_bytes.decode("utf-8")
         normalized: dict[NormalizedName, str] = {
             canonicalize_name(name, validate=True): self._normalize_spec(spec)
@@ -142,7 +145,7 @@ class RequirementsUpdater:
             path,
             operation="read requirements update target",
         )
-        current = path.read_bytes()
+        current = read_bytes(path, project_root=project_root, allow_aliases=True)
         if self._digest(current) != plan.original_digest:
             raise ConcurrentModificationError(
                 f"{path} changed after the update plan was created"
@@ -154,7 +157,16 @@ class RequirementsUpdater:
                 path,
                 operation="write requirements update target",
             )
-            self._atomic_write(path, plan.updated_content.encode("utf-8"))
+            try:
+                atomic_write(
+                    path,
+                    plan.updated_content.encode("utf-8"),
+                    project_root=project_root,
+                    allow_aliases=True,
+                    expected_digest=plan.original_digest,
+                )
+            except ContentChangedError as exc:
+                raise ConcurrentModificationError(str(exc)) from exc
         return RequirementUpdate(path, dict(plan.updated), dict(plan.added))
 
     def apply(
@@ -231,18 +243,4 @@ class RequirementsUpdater:
 
     @staticmethod
     def _atomic_write(path: Path, content: bytes) -> None:
-        mode = stat.S_IMODE(path.stat().st_mode)
-        descriptor, temp_name = tempfile.mkstemp(
-            prefix=".depcheck-",
-            dir=path.parent,
-        )
-        try:
-            with os.fdopen(descriptor, "wb") as handle:
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temp_name, mode)
-            os.replace(temp_name, path)
-        finally:
-            if os.path.exists(temp_name):
-                os.unlink(temp_name)
+        atomic_write(path, content, project_root=path.parent, allow_aliases=True)

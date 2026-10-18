@@ -12,6 +12,7 @@ from packaging.utils import canonicalize_name
 
 from depcheck._version import USER_AGENT
 from depcheck.model import Diagnostic
+from depcheck.snapshots import parse_evidence_json
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class PyPIFetchResult:
 
 
 class PyPIClient:
+    MAX_RESPONSE_BYTES = 8 * 1024 * 1024
     DEFAULT_HEADERS: ClassVar[dict[str, str]] = {
         "Accept": "application/json",
         "User-Agent": USER_AGENT,
@@ -42,6 +44,8 @@ class PyPIClient:
     ) -> None:
         self.timeout_s = timeout_s
         self.session = session or requests.Session()
+        if session is None:
+            self.session.trust_env = False
         self.max_attempts = max(1, max_attempts)
         self.sleep = sleep
         self._metadata_cache: dict[str, dict[str, Any]] = {}
@@ -59,22 +63,26 @@ class PyPIClient:
         last_error: Exception | None = None
         for attempt in range(self.max_attempts):
             try:
-                response = self.session.get(
+                with self.session.get(
                     url,
                     timeout=self.timeout_s,
                     headers=self.DEFAULT_HEADERS,
-                )
-                response.raise_for_status()
-                data = response.json()
-                if not isinstance(data, dict):
-                    return PyPIFetchResult(
-                        None,
-                        Diagnostic(
-                            code="pypi.invalid-response",
-                            severity="error",
-                            message=f"PyPI 元数据不是 JSON 对象：{normalized}",
-                        ),
-                    )
+                    stream=True,
+                    allow_redirects=False,
+                ) as response:
+                    response.raise_for_status()
+                    if response.status_code != 200:
+                        raise ValueError(
+                            "Unexpected PyPI response; redirects are not followed"
+                        )
+                    size = 0
+                    chunks = []
+                    for chunk in response.iter_content(65536):
+                        size += len(chunk)
+                        if size > self.MAX_RESPONSE_BYTES:
+                            raise ValueError("PyPI response exceeds its byte budget")
+                        chunks.append(chunk)
+                    data = parse_evidence_json(b"".join(chunks))
                 self._metadata_cache[key] = data
                 return PyPIFetchResult(data)
             except (requests.RequestException, OSError) as exc:

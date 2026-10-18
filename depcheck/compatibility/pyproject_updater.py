@@ -18,6 +18,7 @@ from depcheck.compatibility.safe_updater import (
 )
 from depcheck.model import Diagnostic, SourceLocation
 from depcheck.path_policy import require_within_project
+from depcheck.bounded_io import read_bytes
 
 
 @dataclass(frozen=True)
@@ -31,8 +32,9 @@ class PyprojectPreview:
 class PyprojectUpdater:
     """Preview static PEP 621 dependencies without writing the manifest."""
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, *, allow_aliases: bool = True) -> None:
         self.project_root = Path(project_root).resolve()
+        self.allow_aliases = allow_aliases
 
     def plan(
         self, file_path: Path, updates: dict[str, str], *, group: str | None = None
@@ -50,7 +52,11 @@ class PyprojectUpdater:
             )
 
         try:
-            original_bytes = path.read_bytes()
+            original_bytes = read_bytes(
+                path if self.allow_aliases else Path(file_path),
+                project_root=self.project_root,
+                allow_aliases=self.allow_aliases,
+            )
             original = original_bytes.decode("utf-8")
             document = tomlkit.parse(original)
             normalized = {
