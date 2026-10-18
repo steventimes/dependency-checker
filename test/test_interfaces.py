@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2131,7 +2132,7 @@ def test_schema3_query_is_read_only_and_refresh_rebuilds_source_evidence(tmp_pat
     (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
     RepositoryIndexer().refresh(tmp_path)
     path = tmp_path / ".depcheck/index.sqlite3"
-    with sqlite3.connect(path) as c:
+    with closing(sqlite3.connect(path)) as c, c:
         c.execute("UPDATE metadata SET value='depcheck.index.v3' WHERE key='schema'")
     before = path.read_bytes()
     with pytest.raises(RuntimeError, match="incompatible"):

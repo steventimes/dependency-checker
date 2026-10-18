@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import tomllib
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -432,7 +433,7 @@ def test_default_sqlite_ignores_attacker_controlled_temporary_directory(
     outside = tmp_path / "outside"
     outside.mkdir()
     victim = outside / "index.sqlite3"
-    with sqlite3.connect(victim) as connection:
+    with closing(sqlite3.connect(victim)) as connection, connection:
         connection.execute("CREATE TABLE valuable_data(value TEXT)")
     before = victim.read_bytes()
     with IndexStore(root):
@@ -656,7 +657,7 @@ def test_sqlite_rebuild_cannot_follow_repository_journal_links(tmp_path):
     cache = root / ".depcheck"
     cache.mkdir(parents=True)
     database = cache / "index.sqlite3"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT)")
         connection.execute("INSERT INTO metadata VALUES ('schema', 'old')")
     outside = tmp_path / "private.bin"
