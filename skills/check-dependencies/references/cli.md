@@ -17,6 +17,11 @@ explain, impact, and update print JSON without a format flag.
 | `inspect_dependency_sbom` | `depcheck sbom "<root>" .tmp/bom.json --limit 20 --offset 0` |
 | `inspect_cmake_model` | `depcheck cmake-model "<root>" build/.cmake/api/v1/reply/index-selected.json --configuration Debug --limit 20 --offset 0` |
 
+For the other tools' CLI equivalents and input formats, read
+[External evidence](external-evidence.md). That reference covers evidence
+inspection, offline OSV reevaluation, Python calls, comparisons, exports, and
+explicit registry checks.
+
 For an explicit pyproject preview, use
 `depcheck update "<root>" 'requests==2.32.4' --file pyproject.toml --group project`;
 optional groups use

@@ -83,10 +83,12 @@ vulnerability or its fix evidence. `reported` does not establish exhaustive
 weakness coverage. Missing CWE data must not become a claim of no weaknesses.
 
 CVE identifies a vulnerability record; CWE describes a weakness type. The
-backend does not fetch the current CVE/CWE records, verify their existence or
-status, or collect taxonomy names and relationships. A URL is a lookup link,
-not evidence that a record was checked. These fields add no network requests
-and do not establish exploitation, source reachability or runtime use.
+OSV metadata path does not fetch the current CVE/CWE records, verify their
+existence or status, or collect taxonomy names and relationships. A URL is a
+lookup link, not evidence that a record was checked. These fields add no network
+requests and do not establish exploitation, source reachability or runtime use.
+For explicitly supplied CVE records or CWE classification catalogs, use the
+separate read-only inspector described in [External evidence](external-evidence.md).
 
 ## Configuring tool usage
 

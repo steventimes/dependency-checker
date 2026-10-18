@@ -27,6 +27,8 @@
 
 ### Evidence and diagnostics
 
+- Close SQLite fixture connections explicitly after their transactions so native
+  Windows filesystem checks do not fail on handles retained by the tests.
 - Inspect explicitly selected CMake File API codemodel v2 replies through the
   CLI and read-only MCP tool. Retain configuration/target identities, abstract
   and imported flags, separate relationship kinds, source assertions, input
@@ -34,7 +36,7 @@
   and budgets without executing commands, reading source paths or changing
   the index. Source freshness and build execution remain unknown; package
   mapping and security remain unsupported/skipped. This additive external
-  projection leaves analysis revision 54, schema v4 and version 0.4.0 unchanged.
+  projection does not change the source index tables or package version.
 - Collect bounded literal Rust crate references with Cargo alias candidates,
   Unicode positions and explicit conditional/unknown scope. Skip comments and
   literals; preserve unknown owners for known shadows and conflicting origins.
@@ -101,7 +103,8 @@
   raw section provenance. Apply literal edition and canonical-table precedence,
   including inherited editions and the `[project]` package alias. Keep ignored or
   rejected requests as configuration inventory without direct lock associations;
-  unknown editions retain a manifest gap. Rust usage remains unsupported.
+  unknown editions retain a manifest gap. Active target/feature selection remains
+  unknown; literal Rust crate-reference candidates are collected separately.
 - Match unordered evaluator expectations against distinct recorded calls using
   both arguments and results. Reverse-order explanations for different projects
   and overlapping expectations no longer fail through greedy result pairing.
@@ -179,7 +182,7 @@
 - Qualify C/C++ build selection and installation. Distinguish native vcpkg
   registry locks from supplied dependency inventory; preserve root dependency
   conditions, feature assertions, minimum versions and override origins.
-- Report uncollected vcpkg feature dependency lists and ambiguous overrides.
+- Report ambiguous vcpkg overrides.
   Incomplete manifests no longer support unused-dependency findings. Bound JSON
   location traversal, discard replaced subtrees and keep budget-limited spans file-only.
 - Recognize GoogleTest-style C/C++ `*_unittest` filenames as test scope,
@@ -200,7 +203,8 @@
   coverage metadata; include their changes in index freshness checks.
 - Add Cargo manifests and v3/v4 lock inventory with workspace inheritance,
   source-qualified instances, conditional metadata, safe links, OSV coordinates
-  and CycloneDX components. Rust usage and active lock selection remain unknown.
+  and CycloneDX components. Compiler-resolved Rust usage and active lock selection
+  remain unknown.
 - Retain rejected symlink diagnostic locations without following outside files.
 - Reject default-cache aliases and hard-linked databases before opening SQLite,
   preventing refresh from modifying other files inside the selected root.
@@ -265,7 +269,7 @@
   and literal setup.py sequences; qualify unmatched/interpolated locations.
 - Preserve Pipenv private and ambiguous index identities, report invalid INI
   interpolation and reject duplicate Pipfile.lock keys.
-- Invalidate old cached evidence with analysis revision 28 and schema v4.
+- Invalidate old cached evidence with analysis revision 57 and schema v4.
   Queries remain read-only; indexing rebuilds incompatible derived caches.
 
 ### Performance
@@ -282,6 +286,8 @@
 
 ### Documentation
 
+- Distinguish the published 0.4.0 bundle from current source capabilities and
+  correct outdated coverage limits, cache revisions and maintenance records.
 - Split the Skill's backend, transport and ecosystem details into linked references.
   Keep shared boundaries and reporting rules in the entrypoint so focused tasks
   can load the relevant guidance. Include references in copied or bundled Skills.

@@ -334,8 +334,8 @@ dependency identity. Actual member IDs and parsed source metadata survive in
 Group candidates must satisfy every comparable source; unavailable or
 unconfirmed evidence remains unknown, and aggregate budgets retain errors.
 Related/upstream records and different projects, versions or instances do not
-merge. Source withdrawal is still record-scoped. Analysis revision 48 is current;
-schema v4 and package 0.4.0 are unchanged. Verification lives in
+merge. Source withdrawal is still record-scoped. That iteration used analysis
+revision 48; schema v4 and package 0.4.0 are unchanged. Verification lives in
 `.tmp/osv-aliases-20261017/`.
 
 The CVE/CWE metadata iteration retains canonical CVE identifiers and provider CWE
@@ -345,8 +345,8 @@ Missing, malformed, over-budget or unavailable classifications stay qualified;
 optional classification warnings do not discard vulnerability matches or fix
 evidence. Current CVE/CWE records, taxonomy relationships, existence and status
 are not fetched or validated, and no new network path is added. Experiments and
-verification live in `.tmp/cve-cwe-20261017/`. Analysis revision 49 is current;
-schema v4 and package 0.4.0 are unchanged.
+verification live in `.tmp/cve-cwe-20261017/`. That iteration used analysis
+revision 49; schema v4 and package 0.4.0 are unchanged.
 
 The npm origin iteration collects bounded repository `.npmrc` registry assertions
 and retains declaration/lock sources across npm and pnpm evidence. Known
@@ -356,8 +356,8 @@ cover registry configuration changes. Authentication settings are omitted and
 new origin URL fields remove credentials, queries and fragments. Public defaults
 remain static assertions; package visibility, user/global/environment/CLI settings,
 workspace precedence and active installation remain unverified. Experiments and
-verification live in `.tmp/npm-origins-20261017/`. Analysis revision 50 is current;
-schema v4 and package 0.4.0 are unchanged.
+verification live in `.tmp/npm-origins-20261017/`. That iteration used analysis
+revision 50; schema v4 and package 0.4.0 are unchanged.
 
 The npm version iteration replaces the permissive lock-version regex with the
 existing SemVer parser plus node-semver's text and release-component bounds.
@@ -366,8 +366,8 @@ do not supply public advisory coordinates. Raw npm inventory and valid build
 metadata remain intact; invalid pnpm nodes retain gaps and readable neighbors.
 Requests, tags, publication and installation are not resolved. Development-only
 Node comparisons do not introduce a backend Node dependency. Verification lives
-in `.tmp/npm-semver-20261017/`. Analysis revision 51 is current; schema v4 and
-package 0.4.0 are unchanged.
+in `.tmp/npm-semver-20261017/`. That iteration used analysis revision 51;
+schema v4 and package 0.4.0 are unchanged.
 
 The Yarn inventory iteration collects Modern format 8/10 lock records in independent
 physical `npm:yarn-lock:<root>` scopes, including standalone files. Grouped/repeated
@@ -377,7 +377,7 @@ application edges. Registry selection, workspace/application ownership, peer
 virtualization, PnP, installation and source usage remain unknown. Classic/other
 formats, invalid records and entry/context/diagnostic budgets retain gaps. Official
 source/data trials and verification live in `.tmp/yarn-inventory-20261017/`.
-Analysis revision 52 is current; schema v4 and package 0.4.0 are unchanged.
+That iteration used analysis revision 52; schema v4 and package 0.4.0 are unchanged.
 
 The SARIF location iteration preserves diagnostic positions and symbolic
 `%SRCROOT%` bases whose mapping omits the checkout directory. Diagnostic messages
@@ -483,15 +483,15 @@ link/compile/object relationships, configuration/target identities, abstract and
 imported flags, source assertions and JSON-pointer provenance. Input hashes do not
 authenticate the producer or establish source freshness. Build execution remains
 unknown, package mapping unsupported and security skipped. This separate external
-projection does not change cached analyzer evidence: analysis revision 54,
-schema v4 and package 0.4.0 remain unchanged. Local verification is recorded in
+projection does not change cached analyzer evidence or schema v4. Package 0.4.0
+remains unchanged. Local verification is recorded in
 `.tmp/cmake-file-api-20261018/`; native macOS/Windows and remote CI remain separate.
 
 ## 待参考项目
 
 完整的用户参考清单及逐项状态见 [REFERENCES.md](REFERENCES.md)。
 
-2026-10-17 登记。本次仅加入清单，暂不调研或执行。
+2026-10-17 登记时仅加入清单，2026-10-18 按后续要求阅读公开资料。实际范围如下。
 
 | 项目 | 链接 | 状态 |
 | --- | --- | --- |
@@ -508,9 +508,8 @@ script ownership and separately scoped external evidence operations. Schema v4
 and package 0.4.0 remain unchanged. External claims, static call candidates,
 registry existence and unsigned hashes never establish exploitation, source
 trust, installation or ABI/API compatibility. Default scans do not acquire new
-network behavior. Keep the ignored report's previous verified baseline separate
-from this batch until the required checks complete. Do not run tests until the
-implementation, integration and review phase is complete.
+network behavior. The batch completed implementation, integration, and review
+before concentrated verification. Keep its results separate from later revisions.
 
 The revision 55 checkpoint passed 1006 tests with one skip on Python 3.11 and
 3.12 and all 16 local workflow steps; these are historical results, not evidence
@@ -525,6 +524,15 @@ qualifies unavailable marker contexts without dropping root declarations or
 querying public metadata for unknown root selection. Analysis revision 57
 invalidates older evidence; schema v4 and package 0.4.0 remain unchanged.
 The user's 2026-10-18 closing instruction ends the ongoing optimization goal after
-code review, documentation and concentrated local verification. Keep the final
-report and checks in `.tmp/solver-final-20261018/`; remote CI and native
-macOS/Windows remain separate verification boundaries.
+code review, documentation and concentrated local verification. The progress
+record is `.tmp/implementation-report-20261018.md`; the local closing checks are
+in `.tmp/solver-final-20261018/`.
+
+The subsequent Windows CI fixture fix was pushed as `6a6e98a` (`test fix`). All
+six jobs in [run 39090540656](https://github.com/steventimes/dependency-checker/actions/runs/39090540656)
+passed, including Ubuntu/macOS/Windows build, native filesystem and installed-wheel
+checks. Full pytest runs remain on Linux with Python 3.11 and 3.12; the platform
+jobs run selected boundary checks. The task cleanup removed temporary environments,
+source copies, raw logs and unpublished check bundles. Retained JSON summaries
+record historical verification; recreate environments from the lockfile and CI
+commands when rerunning checks. Reports and trial material remain outside commits.

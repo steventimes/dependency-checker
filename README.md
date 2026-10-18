@@ -26,12 +26,12 @@ Download the
 [v0.4.0 bundle](https://github.com/steventimes/dependency-checker/releases/download/v0.4.0/dependency-checker-0.4.0.zip)
 and check it against
 [SHA256SUMS](https://github.com/steventimes/dependency-checker/releases/download/v0.4.0/SHA256SUMS).
-Extract it and use your agent host's skill or plugin loader. The bundle contains:
+Extract it and use your agent host's skill or plugin loader. The published
+0.4.0 bundle contains:
 
 | Entry | Purpose |
 | --- | --- |
 | `skills/check-dependencies/SKILL.md` | Dependency audit workflow and reporting rules |
-| `skills/check-dependencies/references/` | Backend, transport and ecosystem guidance loaded for the requested task |
 | `skills/check-dependencies/agents/openai.yaml` | Skill display metadata |
 | `.codex-plugin/plugin.json`, `plugin.json` | Plugin descriptors |
 | `.mcp.json`, `mcp.json` | MCP server launch configuration |
@@ -65,9 +65,13 @@ present and what an update would affect. The Skill checks coverage and follows
 inventory pagination before drawing conclusions. If MCP is unavailable, it can
 use the installed CLI.
 
-The Skill entry links to shared workflow and task-specific references. Keep the
-whole Skill directory when copying or bundling it. Reference paths are relative
-to that directory, even when the audited repository is elsewhere. This follows
+The current source checkout additionally includes
+`skills/check-dependencies/references/`. Its Skill entry links to shared workflow
+and task-specific guidance there. Keep the whole Skill directory when copying
+or bundling the current source. The published 0.4.0 Skill predates this split and
+keeps its guidance in the entry file. Reference paths in the current Skill are
+relative to its directory, even when the audited repository is elsewhere. This
+follows
 [OpenAI's skill guidance](https://learn.chatgpt.com/docs/build-skills) on loading
 instructions and supporting resources as needed.
 
@@ -709,6 +713,10 @@ so it also removes that package from security checks and SBOM output.
 - `vulnerabilities`: issues keyed by full package identity.
 - `metadata`: structured optional-stage results such as compatibility.
 
+The current source uses analysis revision 57 and index schema
+`depcheck.index.v4`, while the package version remains 0.4.0. Rebuild older
+indexes with `depcheck index .`; queries do not migrate them.
+
 Index refresh discards and rebuilds incompatible SQLite caches. Queries open the
 cache read-only and report when a rebuild is needed. Source files and manifests
 are never changed by scanning or indexing.
@@ -733,7 +741,9 @@ scan can pass its configured policy while reporting skipped security.
 
 ## MCP and agent integration
 
-The stdio server exports eighteen tools:
+The current source's stdio server exports eighteen tools. The published 0.4.0
+bundle has the original seven tools, from `index_repository` through
+`plan_dependency_updates`. Use the development setup for the additional tools.
 
 - `index_repository`
 - `scan_repository`
@@ -792,10 +802,12 @@ Oversized evidence is rejected with a diagnostic or operation error; partial
 bytes are not treated as a complete file. YAML and commands have additional
 limits. There is no total repository size or processing-time budget.
 
-OSV is the only default network path and receives an ecosystem, package name,
-and exact version. Python compatibility analysis additionally accesses PyPI
-when enabled by `--compatibility` or configuration. Use `--offline` to disable
-both OSV and PyPI queries.
+When security is enabled, scans send qualified ecosystem, package name and exact
+version coordinates to OSV. Python compatibility analysis accesses PyPI when
+enabled by `--compatibility` or configuration. Use `--offline` to disable both
+scan stages' network queries. The separate `registry` command requires explicit
+`--allow-network`; its request is limited to the selected public PyPI/npm
+coordinate. Supplied-evidence inspection does not fetch linked resources.
 
 Context checks can run installed Git and GitNexus executables. depcheck rejects
 executables inside the scanned repository and limits their runtime, but these
@@ -924,8 +936,8 @@ handling; multiple dependency-bearing roots produce
 `analysis.python-component-scope-ambiguous`. uv members keep component IDs and
 `resolution.uv-workspace-activation-unknown`; the shared lock inventory does not
 establish a member's active graph. See [uv workspaces](https://docs.astral.sh/uv/concepts/projects/workspaces/).
-This unreleased evidence change uses analysis revision 28 to invalidate old caches. After updating scoped configuration,
-run `depcheck index .` to rebuild the derived cache. A failed refresh leaves the
+After updating scoped configuration, run `depcheck index .` to rebuild the
+derived cache with the current analysis revision. A failed refresh leaves the
 previous cache intact; queries reject it while it is stale. Index refresh replaces old
 project rows; schema v4 stores Python requirement/resolution origins. Queries
 reject older schemas without writing them; indexing rebuilds the derived cache.
@@ -1008,7 +1020,9 @@ retain their source fields. See [Pipenv index restrictions](https://pipenv.pypa.
 Maven versions inherited from unavailable parents or BOMs remain unresolved.
 Literal child declarations survive a mismatched local parent, while the evidence
 stays incomplete. Review local reactor SNAPSHOT versions in their build context.
-Maven build plugins and parts of Java namespace ownership are not collected.
+Declared Maven build/reporting plugins are collected as conditional configuration
+inventory. Effective plugin merges, lifecycle/profile activation, execution, and
+parts of Java namespace ownership remain unknown.
 
 Declaration locations in `pyproject.toml`, Pipfile, supported Python locks,
 `setup.cfg`, literal `setup.py` lists/tuples, `package.json`, and `pom.xml` retain
@@ -1170,7 +1184,9 @@ links are provider assertions: the backend does not fetch or validate the
 current CVE/CWE records, their status, weakness names or taxonomy relationships.
 See the [CVE List](https://github.com/CVEProject/cvelistV5) and
 [CWE API guide](https://github.com/CWE-CAPEC/REST-API-wg/blob/main/Quick%20Start.md).
-OSV remains the only default network path; this metadata adds no requests.
+Extracting these advisory identifiers adds no network requests. Supplied CVE/CWE
+files can be inspected separately through the external evidence interface;
+inspection does not fetch or authenticate the current upstream records.
 
 ## Development
 
