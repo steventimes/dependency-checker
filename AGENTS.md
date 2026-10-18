@@ -10,10 +10,14 @@ publish only within the user's requested scope.
 The project is an Agent Skill with an MCP server and CLI backend.
 [v0.4.0](https://github.com/steventimes/dependency-checker/releases/tag/v0.4.0)
 was published on 2026-10-07 from `c23742c0e3961390beacb78d94fb68b39c57a944`.
-The package and plugin metadata use 0.4.0. Next-update preparation does not
-change that version until a new release is selected.
+The user selected 0.5.0 on 2026-10-18. Package and plugin metadata now use 0.5.0,
+with analysis revision 57 and index schema v4. The
+[0.5.0 release](https://github.com/steventimes/dependency-checker/releases/tag/v0.5.0)
+includes the full Skill tree and backend; the earlier 0.4.0 results below remain
+historical evidence. Future preparation does not change the package version until
+another release is selected.
 
-The published baseline passed 301 tests on Python 3.11 and 3.12 and all six
+The 0.4.0 published baseline passed 301 tests on Python 3.11 and 3.12 and all six
 [CI jobs](https://github.com/steventimes/dependency-checker/actions/runs/37683267157).
 Those are release results. Check current source, CI, and test collection before
 reporting counts or verification for later changes.
@@ -35,6 +39,11 @@ reporting counts or verification for later changes.
   `depcheck/_version.py`, both plugin descriptors, and the lockfile at release.
 
 ## Next updates
+
+The following entries record the iterations prepared between 0.4.0 and 0.5.0.
+Their version, revision, and verification statements describe those checkpoints.
+The 0.5.0 release includes these changes; use the release metadata and current CI
+for its final state.
 
 The first local iteration implements TOML/npm JSON/Maven XML declaration
 positions, source-focused uncertainty diagnostics, and a path-check optimization.

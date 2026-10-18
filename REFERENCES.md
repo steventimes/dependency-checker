@@ -37,7 +37,7 @@
 输入要求见 [README](README.md) 和
 [外部证据说明](skills/check-dependencies/references/external-evidence.md)。
 这些实现没有部署参考项目的分析引擎，外部断言也不等于已安装状态、实际执行
-或漏洞可利用性。能力仍属于未发布的源码更新，0.4.0 发布包不包含本轮新增入口。
+或漏洞可利用性。这些能力已纳入 0.5.0，较早的 0.4.0 发布包不包含本轮新增入口。
 
 2026-10-18 补充核对 [cargo-machete](https://github.com/bnjbvr/cargo-machete)
 的固定提交 `135555c9cd9f3b4723dee2766f0cacb99aac092b`：阅读引用匹配实现，

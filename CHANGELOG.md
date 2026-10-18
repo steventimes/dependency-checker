@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-10-18
+
+[Release](https://github.com/steventimes/dependency-checker/releases/tag/v0.5.0) ·
+[Changes since 0.4.0](https://github.com/steventimes/dependency-checker/compare/v0.4.0...v0.5.0)
+
+This release expands the Agent Skill, CLI, and MCP backend with additional static
+ecosystem evidence, bounded Python metadata resolution and explicit external
+evidence operations. Analysis revision 57 and index schema v4 require rebuilding
+older caches with `depcheck index .`. Python 3.11 or newer and uv 0.12.4 remain
+the supported backend setup.
+
 - Preserve base dependency constraints when resolving Python extras, including
   conflicts and backtracking across extra selections. Report unavailable marker
   contexts and unsupported comparisons as incomplete evidence; retain affected

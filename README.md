@@ -13,25 +13,25 @@ run its package managers.
 [Reference backlog](REFERENCES.md)
 
 The published version is
-[v0.4.0](https://github.com/steventimes/dependency-checker/releases/tag/v0.4.0).
+[v0.5.0](https://github.com/steventimes/dependency-checker/releases/tag/v0.5.0).
 The release includes the Agent Skill bundle and its SHA-256 checksum.
 
-Some capabilities below are unreleased source changes; the published 0.4.0
-bundle predates them. Use the [development setup](#development) for the current
-checkout.
+See the [changelog](CHANGELOG.md) for changes since 0.4.0. Use the
+[development setup](#development) to work from a source checkout.
 
 ## Use with a coding agent
 
 Download the
-[v0.4.0 bundle](https://github.com/steventimes/dependency-checker/releases/download/v0.4.0/dependency-checker-0.4.0.zip)
+[v0.5.0 bundle](https://github.com/steventimes/dependency-checker/releases/download/v0.5.0/dependency-checker-0.5.0.zip)
 and check it against
-[SHA256SUMS](https://github.com/steventimes/dependency-checker/releases/download/v0.4.0/SHA256SUMS).
+[SHA256SUMS](https://github.com/steventimes/dependency-checker/releases/download/v0.5.0/SHA256SUMS).
 Extract it and use your agent host's skill or plugin loader. The published
-0.4.0 bundle contains:
+0.5.0 bundle contains:
 
 | Entry | Purpose |
 | --- | --- |
 | `skills/check-dependencies/SKILL.md` | Dependency audit workflow and reporting rules |
+| `skills/check-dependencies/references/` | Backend, transport, and ecosystem guidance loaded for the requested task |
 | `skills/check-dependencies/agents/openai.yaml` | Skill display metadata |
 | `.codex-plugin/plugin.json`, `plugin.json` | Plugin descriptors |
 | `.mcp.json`, `mcp.json` | MCP server launch configuration |
@@ -65,13 +65,11 @@ present and what an update would affect. The Skill checks coverage and follows
 inventory pagination before drawing conclusions. If MCP is unavailable, it can
 use the installed CLI.
 
-The current source checkout additionally includes
-`skills/check-dependencies/references/`. Its Skill entry links to shared workflow
-and task-specific guidance there. Keep the whole Skill directory when copying
-or bundling the current source. The published 0.4.0 Skill predates this split and
-keeps its guidance in the entry file. Reference paths in the current Skill are
-relative to its directory, even when the audited repository is elsewhere. This
-follows
+The Skill entry links to shared workflow and task-specific guidance in
+`skills/check-dependencies/references/`. Keep the whole Skill directory when
+copying or bundling it. The earlier 0.4.0 Skill predates this split and keeps its
+guidance in the entry file. Reference paths are relative to the Skill directory,
+even when the audited repository is elsewhere. This follows
 [OpenAI's skill guidance](https://learn.chatgpt.com/docs/build-skills) on loading
 instructions and supporting resources as needed.
 
@@ -292,8 +290,8 @@ script scope after indexing:
 depcheck query . Catch2 --ecosystem CMake --project cmake:cmake-script:.
 ```
 
-CMake/Cargo/Bzlmod collection, Astro/CSS imports, static command evidence, and the coverage fields below are
-unreleased source changes. The published 0.4.0 ZIP predates them.
+CMake/Cargo/Bzlmod collection, Astro/CSS imports, static command evidence, and
+the coverage fields below were added in 0.5.0. The earlier 0.4.0 ZIP predates them.
 
 Bzlmod inventory uses `ecosystem: Bazel` and `bazel:bzlmod:<root>` project IDs.
 Each physical `MODULE.bazel` defines a separate declaration scope; native root
@@ -714,7 +712,7 @@ so it also removes that package from security checks and SBOM output.
 - `metadata`: structured optional-stage results such as compatibility.
 
 The current source uses analysis revision 57 and index schema
-`depcheck.index.v4`, while the package version remains 0.4.0. Rebuild older
+`depcheck.index.v4`, with package version 0.5.0. Rebuild older
 indexes with `depcheck index .`; queries do not migrate them.
 
 Index refresh discards and rebuilds incompatible SQLite caches. Queries open the
@@ -741,9 +739,9 @@ scan can pass its configured policy while reporting skipped security.
 
 ## MCP and agent integration
 
-The current source's stdio server exports eighteen tools. The published 0.4.0
-bundle has the original seven tools, from `index_repository` through
-`plan_dependency_updates`. Use the development setup for the additional tools.
+The 0.5.0 stdio server exports eighteen tools. The earlier 0.4.0 bundle has the
+original seven tools, from `index_repository` through `plan_dependency_updates`.
+Upgrade the backend and Skill together to use the additional tools.
 
 - `index_repository`
 - `scan_repository`
