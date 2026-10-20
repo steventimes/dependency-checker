@@ -11,7 +11,6 @@ import platform
 import subprocess
 import shutil
 import sys
-import resource
 import tempfile
 import time
 import statistics
@@ -388,6 +387,8 @@ def _peak_rss() -> tuple[int, str]:
                 fields = line.split()
                 if len(fields) >= 2 and fields[1].isdigit():
                     return max(1, int(fields[1])), "proc-status-vmhwm"
+    import resource
+
     value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     return (value if value > 0 else 1), "getrusage"
 

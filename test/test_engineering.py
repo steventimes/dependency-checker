@@ -1232,11 +1232,16 @@ def test_package_import_change_invalidates_full_and_filtered_indexes(
 
 
 @pytest.mark.parametrize("ecosystem", ["PyPI", "npm"])
-def test_benchmark_mutation_preserves_rebuild_equivalence(tmp_path, ecosystem):
-    from scripts.benchmark_monorepo import build_fixture, measure_mutation
+def test_benchmark_mutation_preserves_rebuild_equivalence(
+    tmp_path, ecosystem, monkeypatch
+):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    benchmark = runpy.run_path(str(ROOT / "scripts/benchmark_monorepo.py"))
 
-    build_fixture(tmp_path, projects=1, files_per_project=2, seed=1729, depth=1)
-    result = measure_mutation(tmp_path, ecosystem)
+    benchmark["build_fixture"](
+        tmp_path, projects=1, files_per_project=2, seed=1729, depth=1
+    )
+    result = benchmark["measure_mutation"](tmp_path, ecosystem)
     assert result["rebuild_equivalent"] is True
     assert result["ecosystem"] == ecosystem
     assert result["status"] == "updated"
