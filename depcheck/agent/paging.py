@@ -30,7 +30,7 @@ def bounded_response(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def evidence_page(
-    payload: dict[str, Any], *, limit: int, offset: int
+    payload: dict[str, Any], *, limit: int, offset: int, derivation: bool = False
 ) -> dict[str, Any]:
     if not 1 <= limit <= 100 or offset < 0:
         raise ValueError(
@@ -63,6 +63,10 @@ def evidence_page(
                 "truncated": more,
                 "next_offset": offset + limit if more else None,
             }
+            if derivation:
+                from .derivation import explain_derivation
+
+                record["derivation"] = explain_derivation(record)
         more = any(r["evidence_page"]["truncated"] for r in records)
         if "dependencies" in result:
             result["inventory_truncated"] = bool(payload.get("truncated"))

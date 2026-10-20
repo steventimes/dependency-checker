@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/steventimes/dependency-checker/schemas/provenance.v1.json",
+  "title": "Depcheck provenance v1 producer contract",
+  "description": "Additive fields are allowed. Validate semantic consistency separately; external assertions do not establish source authenticity or current safety.",
+  "type": "object",
+  "properties": {
+    "_type": {
+      "const": "https://in-toto.io/Statement/v1"
+    },
+    "subject": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/input"
+      },
+      "minItems": 1,
+      "maxItems": 1
+    },
+    "predicateType": {
+      "const": "https://github.com/steventimes/dependency-checker/evidence/v1"
+    },
+    "predicate": {
+      "$ref": "#/$defs/provenance"
+    }
+  },
+  "required": [
+    "_type",
+    "subject",
+    "predicateType",
+    "predicate"
+  ],
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "sha256"
+      ]
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "name",
+        "digest"
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "exporter": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "depcheck"
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "analysis_revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "name",
+            "version",
+            "analysis_revision"
+          ]
+        },
+        "snapshot_tool": {},
+        "snapshot_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/input"
+          }
+        },
+        "input_completeness": {
+          "const": "explicitly-selected-only"
+        },
+        "source_authenticity": {
+          "const": "unverified"
+        },
+        "signature_status": {
+          "const": "unsigned"
+        },
+        "input_freshness": {
+          "const": "not-compared-to-snapshot-capture"
+        },
+        "invocation_exit_status": {
+          "const": "not-captured"
+        }
+      },
+      "required": [
+        "exporter",
+        "snapshot_tool",
+        "snapshot_path",
+        "snapshot_sha256",
+        "configuration",
+        "inputs",
+        "input_completeness",
+        "source_authenticity",
+        "signature_status",
+        "input_freshness",
+        "invocation_exit_status"
+      ]
+    }
+  }
+}

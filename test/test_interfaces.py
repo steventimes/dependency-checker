@@ -1,16 +1,24 @@
+"""CLI and MCP contracts, dependency services, and external evidence operations."""
+
 import asyncio
 import json
 import sys
 from contextlib import closing
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from depcheck.agent import DependencyAgentService, mcp_server
 from depcheck.agent.mcp_server import create_server
 from depcheck.command import main
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+from depcheck.security.advisories import match_affected_version
+from depcheck.security.offline import reevaluate_vulnerabilities
+from depcheck.security.osv_client import OSVClient
 
 
 def make_python_project(root: Path) -> None:
@@ -2957,3 +2965,184 @@ def test_offline_osv_withdrawal_retains_submicrosecond_order(
         "bom.json", "osv.json"
     )
     assert result["observations"][0]["status"] == status
+
+
+def test_packaged_contracts_validate_real_scans_and_reject_semantic_upgrades(
+    tmp_path, capsys
+):
+    from copy import deepcopy
+
+    from jsonschema import Draft202012Validator
+
+    from depcheck.contracts import output_schema, validate_scan_export
+
+    make_python_project(tmp_path)
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\nunused-demo>=1\n")
+    scan = (
+        RepositoryScanner()
+        .scan(tmp_path, RepositoryScanOptions(security=False, compatibility=False))
+        .to_dict()
+    )
+    validate_scan_export(scan)
+    (tmp_path / "scan.json").write_text(json.dumps(scan))
+    service = DependencyAgentService(tmp_path)
+    for name, payload in (
+        ("scan", scan),
+        ("policy-input", service.export_evidence("scan.json", "policy")),
+        ("provenance", service.export_evidence("scan.json", "provenance")),
+    ):
+        schema = output_schema(name)
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(schema).validate(payload)
+        assert main(["schema", name]) == 0
+        assert json.loads(capsys.readouterr().out) == schema
+    for mutation in (
+        "complete",
+        "counts",
+        "boolean-count",
+        "project",
+        "truncated",
+        "missing-state",
+    ):
+        invalid = deepcopy(scan)
+        if mutation == "complete":
+            invalid["summary"].update(complete=True, status="pass")
+        elif mutation == "counts":
+            invalid["inventory"]["declaration_count"] += 1
+        elif mutation == "boolean-count":
+            code = next(iter(invalid["summary"]["counts"]))
+            invalid["summary"]["counts"][code] = True
+        elif mutation == "project":
+            invalid["inventory"]["declarations"][0]["project_id"] = "other"
+        elif mutation == "truncated":
+            invalid["truncated"] = True
+        else:
+            invalid["capabilities"]["security"] = {}
+        (tmp_path / "invalid.json").write_text(json.dumps(invalid))
+        with pytest.raises(ValueError):
+            service.export_evidence("invalid.json", "policy")
+
+
+def test_derivation_references_preserve_repetition_and_page_identity(tmp_path):
+    (tmp_path / "requirements.txt").write_text("requests>=2\nrequests>=2\n")
+    (tmp_path / "app.py").write_text("import requests\nimport requests\n")
+    service = DependencyAgentService(tmp_path)
+    service.index_repository()
+    index = tmp_path / ".depcheck/index.sqlite3"
+    before = (index.read_bytes(), index.stat().st_mtime_ns)
+    first = service.explain_dependency("requests", evidence_limit=1)
+    second = service.explain_dependency("requests", evidence_limit=1, evidence_offset=1)
+    whole = service.explain_dependency("requests", evidence_limit=20)
+    a, b = first["derivation"], second["derivation"]
+    assert a["activation"] == "not-established" and not a["minimal_proof"]
+    assert a["finding_support"].startswith("not-captured")
+    assert a["truncated"] and not b["truncated"]
+    assert {f["id"] for f in a["facts"]}.isdisjoint(f["id"] for f in b["facts"])
+    assert {f["id"] for f in a["facts"] + b["facts"]} == {
+        f["id"] for f in whole["derivation"]["facts"]
+    }
+    assert [
+        f["where"]["line"]
+        for f in whole["derivation"]["facts"]
+        if f["assertion_pointer"].startswith("/declarations/")
+    ] == [1, 2]
+    assert len(whole["derivation"]["claims"][0]["support_alternatives"]) == 2
+    assert before == (index.read_bytes(), index.stat().st_mtime_ns)
+
+
+@settings(
+    max_examples=32,
+    deadline=None,
+)
+@given(
+    lo=st.integers(0, 20),
+    width=st.integers(1, 10),
+    queried=st.integers(0, 31),
+    inclusive=st.booleans(),
+    ecosystem=st.sampled_from(["PyPI", "npm"]),
+)
+def test_generated_osv_transport_and_offline_membership_against_integer_oracle(
+    lo, width, queried, inclusive, ecosystem
+):
+    hi = lo + width
+    expected = lo <= queried <= hi if inclusive else lo <= queried < hi
+
+    def version(n):
+        return f"{n}.0.0"
+
+    detail = {
+        "id": "OSV-GENERATED",
+        "modified": "2026-10-18T00:00:00Z",
+        "affected": [
+            {
+                "package": {"name": "demo", "ecosystem": ecosystem},
+                "ranges": [
+                    {
+                        "type": "ECOSYSTEM" if ecosystem == "PyPI" else "SEMVER",
+                        "events": [
+                            {"introduced": version(lo)},
+                            {"last_affected" if inclusive else "fixed": version(hi)},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    assert match_affected_version(detail, "demo", ecosystem, version(queried))[0] == (
+        "affected" if expected else "not-affected"
+    )
+
+    class Response:
+        def __init__(self, data):
+            self.data = data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.data
+
+    class Session:
+        def post(self, url, **kwargs):
+            assert kwargs["json"]["queries"][0]["version"] == version(queried)
+            return Response(
+                {"results": [{"vulns": [{"id": detail["id"]}] if expected else []}]}
+            )
+
+        def get(self, url, **kwargs):
+            return Response(detail)
+
+    online = OSVClient(session=Session()).scan_ecosystem(
+        {"demo": version(queried)}, ecosystem
+    )
+    assert online.complete and bool(online.vulnerabilities.get("demo")) is expected
+    with TemporaryDirectory(prefix="depcheck-generated-osv-") as directory:
+        root = Path(directory)
+        inventory = {
+            "schema": "depcheck.scan.v1",
+            "inventory": {
+                "resolved_dependencies": [
+                    {
+                        "identity": {
+                            "project_id": "generated",
+                            "ecosystem": ecosystem,
+                            "package": "demo",
+                            "version": version(queried),
+                        },
+                        "origin": {"public": True},
+                    }
+                ]
+            },
+        }
+        (root / "inventory.json").write_text(json.dumps(inventory))
+        (root / "osv.json").write_text(json.dumps(detail))
+        result = reevaluate_vulnerabilities(
+            root, "inventory.json", "osv.json", limit=20
+        )
+        row = result["observations"][0]
+        assert (row["status"] == "matched") is expected
+        if expected:
+            assert (
+                row["vulnerabilities"][0]["fix_version"]
+                == online.vulnerabilities["demo"][0]["fix_version"]
+            )

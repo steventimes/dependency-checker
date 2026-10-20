@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 from collections import Counter
+from importlib.metadata import distributions
 import json
+import os
 import random
 import platform
 import subprocess
@@ -12,12 +14,15 @@ import sys
 import resource
 import tempfile
 import time
+import statistics
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
 from depcheck.indexing import RepositoryIndexer, RepositoryIndex
 from depcheck.security.osv_client import OSVScanResult
+from depcheck.bounded_io import capture_reads
+from depcheck.profiling import capture_profile, profile_payload
 
 
 class CountingOSV:
@@ -164,10 +169,11 @@ def run_benchmark(
 
         osv = CountingOSV()
         scan_started = time.perf_counter()
-        scan = RepositoryScanner(osv_client=osv).scan(
-            root,
-            RepositoryScanOptions(security=True),
-        )
+        with capture_profile() as profile, capture_reads():
+            scan = RepositoryScanner(osv_client=osv).scan(
+                root,
+                RepositoryScanOptions(security=True),
+            )
         scan_seconds = time.perf_counter() - scan_started
         ecosystems = sorted({bundle.project.ecosystem for bundle in scan.bundles})
         projects_by_ecosystem = dict(
@@ -207,6 +213,9 @@ def run_benchmark(
         hot_started = time.perf_counter()
         hot = indexer.refresh(root)
         hot_seconds = time.perf_counter() - hot_started
+        query_started = time.perf_counter()
+        stable_inventory = _stable_index(root)
+        query_seconds = time.perf_counter() - query_started
         cold_scanned = cold.scanned_python_files + cold.parsed_manifest_files
         hot_reused = hot.reused_python_files + hot.reused_manifest_files
         if cold_scanned < 1:
@@ -239,6 +248,17 @@ def run_benchmark(
                 "machine": platform.machine(),
                 "os": platform.platform(),
                 "python": sys.version.split()[0],
+                "executable": sys.executable,
+                "pid": os.getpid(),
+                "cpu": platform.processor(),
+                "cpu_count": os.cpu_count(),
+                "dependencies": dict(
+                    sorted(
+                        (d.metadata["Name"], d.version)
+                        for d in distributions()
+                        if d.metadata.get("Name")
+                    )
+                ),
                 "head": subprocess.check_output(
                     ["git", "rev-parse", "HEAD"],
                     cwd=Path(__file__).resolve().parents[1],
@@ -257,6 +277,12 @@ def run_benchmark(
                 "ecosystems": ecosystems,
                 "project_count": len(scan.bundles),
                 "projects_by_ecosystem": projects_by_ecosystem,
+                "index_evidence_sha256": hashlib.sha256(
+                    stable_inventory.encode()
+                ).hexdigest(),
+                "scan_summary": scan.summary,
+                "capabilities": {c.name: c.to_dict() for c in scan.capabilities},
+                "diagnostics": [d.to_dict(root) for d in scan.diagnostics],
             },
             "fixture": {
                 "scanned_files": len(fixture_files),
@@ -272,8 +298,10 @@ def run_benchmark(
                 "osv_measurement": "offline simulated request count; no service latency",
                 "npm_duplicate_version_packages": npm_duplicate_versions,
                 "npm_dependency_edges": npm_dependency_edges,
+                "profile": profile_payload(profile),
             },
             "index": {
+                "unchanged_query_seconds": query_seconds,
                 "counter_scope": "Python source/manifests only; other ecosystem parse reuse counts not available",
                 "cold": {
                     "wall_seconds": cold_seconds,
@@ -294,6 +322,62 @@ def run_benchmark(
                 ),
             },
         }
+
+
+def run_repeated(options: argparse.Namespace) -> dict[str, Any]:
+    """Fresh fixture/cache and interpreter per sample; OS page cache is uncontrolled."""
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--worker",
+        "--projects",
+        str(options.projects),
+        "--files-per-project",
+        str(options.files_per_project),
+        "--seed",
+        str(options.seed),
+        "--depth",
+        str(options.depth),
+    ]
+    samples = []
+    warmups = []
+    for index in range(options.warmups + options.repeats):
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=options.timeout,
+        )
+        if completed.returncode:
+            raise RuntimeError(
+                f"Benchmark worker exited {completed.returncode}:\n{completed.stderr}"
+            )
+        sample = json.loads(completed.stdout)
+        (warmups if index < options.warmups else samples).append(sample)
+    signatures = {json.dumps(s["correctness"], sort_keys=True) for s in samples}
+    if len(signatures) != 1:
+        raise RuntimeError("Repeated workers produced different evidence")
+    seconds = [s["scan"]["wall_seconds"] for s in samples]
+    return {
+        "schema": "depcheck.benchmark-series.v1",
+        "cohort": options.cohort,
+        "sampling": {
+            "processes": options.repeats,
+            "discarded_warmup_processes": options.warmups,
+            "cache": "fresh derived cache per worker; warm refresh follows cold refresh",
+            "os_page_cache": "uncontrolled; no system cache reset",
+            "timing": "instrumented operation wall time; excludes process startup and imports",
+            "seed_selection": "fixed before measurement; every retained sample reported",
+        },
+        "scan_seconds": {
+            "median": statistics.median(seconds),
+            "min": min(seconds),
+            "max": max(seconds),
+        },
+        "warmups": warmups,
+        "samples": samples,
+    }
 
 
 def _peak_rss() -> tuple[int, str]:
@@ -438,14 +522,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--files-per-project", type=int, default=25)
     parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument("--depth", type=int, default=8)
+    parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument("--warmups", type=int, default=0)
+    parser.add_argument(
+        "--cohort", choices=("development", "evaluation"), default="development"
+    )
+    parser.add_argument("--timeout", type=int, default=300)
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.projects < 1 or args.files_per_project < 1 or args.depth < 1:
         parser.error("projects, files-per-project, and depth must be positive")
-    result = run_benchmark(
-        projects=args.projects,
-        files_per_project=args.files_per_project,
-        seed=args.seed,
-        depth=args.depth,
+    if not 1 <= args.repeats <= 50 or not 0 <= args.warmups <= 10 or args.timeout < 1:
+        parser.error("repeats must be 1..50, warmups 0..10, and timeout positive")
+    if args.cohort == "evaluation" and args.seed == 1729:
+        parser.error("Choose a separate --seed for the evaluation cohort")
+    result = (
+        run_benchmark(
+            projects=args.projects,
+            files_per_project=args.files_per_project,
+            seed=args.seed,
+            depth=args.depth,
+        )
+        if args.worker
+        else run_repeated(args)
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

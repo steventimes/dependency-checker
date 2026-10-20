@@ -1,0 +1,498 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/steventimes/dependency-checker/schemas/scan.v1.json",
+  "title": "Depcheck scan v1 producer contract",
+  "description": "Additive fields are allowed. Validate semantic consistency separately; external assertions do not establish source authenticity or current safety.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "depcheck.scan.v1"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilities"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "properties": {
+        "source_file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "manifest_file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "manifest_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "declaration_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "declarations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "project_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "package": {
+                "$ref": "#/$defs/package"
+              },
+              "constraint": {
+                "type": "object",
+                "properties": {
+                  "raw": {
+                    "type": "string"
+                  },
+                  "scheme": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "normalized": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "raw",
+                  "scheme",
+                  "normalized"
+                ]
+              },
+              "location": {
+                "$ref": "#/$defs/location"
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "marker": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "metadata": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "project_id",
+              "package",
+              "constraint",
+              "location",
+              "scope",
+              "kind",
+              "marker",
+              "metadata"
+            ]
+          }
+        },
+        "resolved_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resolved_dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "identity": {
+                "$ref": "#/$defs/identity"
+              },
+              "direct": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "integrity": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "origin": {
+                "type": "object"
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "required": [
+              "identity",
+              "direct",
+              "integrity",
+              "dependencies"
+            ]
+          }
+        },
+        "usage_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source_file_count",
+        "source_files",
+        "manifest_file_count",
+        "manifest_files",
+        "declaration_count",
+        "declarations",
+        "resolved_count",
+        "resolved_dependencies",
+        "usage_count"
+      ]
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "root": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ecosystem": {
+            "type": "string",
+            "minLength": 1
+          },
+          "manager": {
+            "type": "string",
+            "minLength": 1
+          },
+          "manifests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "locks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source_file_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "declaration_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resolved_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "usage_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "capabilities": {
+            "$ref": "#/$defs/capabilities"
+          }
+        },
+        "required": [
+          "project_id",
+          "root",
+          "language",
+          "ecosystem",
+          "manager",
+          "manifests",
+          "locks",
+          "source_file_count",
+          "declaration_count",
+          "resolved_count",
+          "usage_count",
+          "capabilities"
+        ]
+      }
+    },
+    "ecosystems": {
+      "type": "object"
+    },
+    "vulnerabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "identity": {
+            "$ref": "#/$defs/identity"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "identity",
+          "issues"
+        ]
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "summary",
+    "capabilities",
+    "findings",
+    "diagnostics",
+    "inventory",
+    "projects",
+    "ecosystems",
+    "vulnerabilities",
+    "metadata"
+  ],
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "complete",
+            "incomplete",
+            "skipped",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ecosystem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string"
+        },
+        "instance": {
+          "type": "string"
+        },
+        "purl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "ecosystem",
+        "package"
+      ]
+    },
+    "package": {
+      "type": "object",
+      "properties": {
+        "ecosystem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "ecosystem",
+        "name",
+        "display_name"
+      ]
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "type": "string"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "severity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/location"
+          }
+        },
+        "details": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "code",
+        "identity",
+        "severity",
+        "message",
+        "locations",
+        "details"
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "incomplete"
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "risk_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "diagnostic_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "status",
+        "complete",
+        "risk_count",
+        "diagnostic_count",
+        "counts"
+      ]
+    }
+  }
+}

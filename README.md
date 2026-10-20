@@ -9,15 +9,18 @@ Repository files are parsed as data. Scans do not import target project code or
 run its package managers.
 
 [Agent Skill setup](#use-with-a-coding-agent) · [CLI](#cli) ·
-[Coverage](#ecosystem-coverage) · [Changelog](CHANGELOG.md) ·
+[Coverage](#ecosystem-coverage) · [Architecture](#architecture) · [Changelog](CHANGELOG.md) ·
 [Reference backlog](REFERENCES.md)
 
 The published version is
 [v0.5.0](https://github.com/steventimes/dependency-checker/releases/tag/v0.5.0).
 The release includes the Agent Skill bundle and its SHA-256 checksum.
 
-See the [changelog](CHANGELOG.md) for changes since 0.4.0. Use the
-[development setup](#development) to work from a source checkout.
+The current source checkout also contains unreleased changes, including packaged
+output schemas, page-local derivation references and refresh plans. These are
+listed under [Unreleased](CHANGELOG.md#unreleased). Use the
+[development setup](#development) to work from this checkout; downloading 0.5.0
+does not include later source changes.
 
 ## Use with a coding agent
 
@@ -1103,6 +1106,35 @@ does not establish wheel availability, installation or API compatibility.
 Non-Python indexing still rescans selected evidence rather than reusing
 individual parsed files. `depcheck --profile index ROOT` writes inclusive local
 work measurements to stderr; nested durations overlap and must not be summed.
+The `io.work` entry counts completed reads and bytes; repeated captured reads
+are counted only while a scan records read receipts. Counts describe work,
+not distinct dependency evidence. Reads still validate pinned filesystem paths.
+
+`context.refresh_plan` explains whether refresh is required and lists conservative
+recomputation stages. Available Python/manifest or selected-evidence changes
+include counts and up to 20 paths per category. Configuration and analysis
+revision changes share a reason. Other ecosystem changes can remain a general
+workspace-content reason. This read-only plan does not predict exact parser work
+or apply a refresh.
+
+Dependency explanations include a page-local `derivation`: source locations,
+assertion pointers, content-derived references and rules for observed declaration
+or import presence. Repeated assertions keep separate references. Support lists
+distinguish alternatives from jointly required facts. Follow the existing evidence
+pagination to inspect omitted facts. These references do not authenticate sources,
+establish activation or provide minimal proofs for analyzer findings.
+
+The wheel includes standalone JSON Schemas for
+[scan](depcheck/schemas/scan.json),
+[policy input](depcheck/schemas/policy-input.json) and
+[unsigned provenance](depcheck/schemas/provenance.json). Print one with
+`depcheck schema scan`, `depcheck schema policy-input` or
+`depcheck schema provenance`. They describe the current producer contract and
+allow additive fields. Exporting a canonical scan also checks summary counts,
+explicit capability states, project references and truncation. Incomplete scans
+remain exportable when reported consistently; partial or inconsistent inputs
+are rejected. These semantic checks do not implement a general schema validator
+or change the compatibility rules of other evidence readers.
 
 PEP 723 scripts have independent `pypi:pep723:path/to/script.py` identities.
 Only actual comment blocks are read; examples inside strings are ignored.
@@ -1186,20 +1218,53 @@ Extracting these advisory identifiers adds no network requests. Supplied CVE/CWE
 files can be inspected separately through the external evidence interface;
 inspection does not fetch or authenticate the current upstream records.
 
+## Architecture
+
+CLI and MCP share `DependencyAgentService`. The service applies repository read
+authorization and result limits; domain modules perform the work. Scanning and
+index refresh share evidence preparation and analysis.
+
+| Responsibility | Implementation | Constraint |
+| --- | --- | --- |
+| Evidence model and contracts | [model.py](depcheck/model.py), [contracts.py](depcheck/contracts.py), [schemas/](depcheck/schemas/) | Preserve identities, repeated assertions and unknown states |
+| Static collection | [ecosystems/](depcheck/ecosystems/), [analyzer/](depcheck/analyzer/) | Parse bounded data without executing the target |
+| Scan orchestration | [engine.py](depcheck/engine.py) | Collect, analyze and combine optional stages in order |
+| Optional stages | [security/scanning.py](depcheck/security/scanning.py), [compatibility/scanning.py](depcheck/compatibility/scanning.py) | Use the scanner's clients and preserve qualified findings and diagnostics |
+| Index persistence and queries | [indexing/store.py](depcheck/indexing/store.py), [indexing/queries.py](depcheck/indexing/queries.py) | The store owns the connection and transactions; queries project rows without publishing changes |
+| Index freshness and publication | [indexing/indexer.py](depcheck/indexing/indexer.py), [fingerprints.py](depcheck/indexing/fingerprints.py), [publication.py](depcheck/indexing/publication.py) | Recheck content, topology and ownership before publication |
+| Update previews | [update_planning.py](depcheck/update_planning.py) | Select the owning component, preview supported files and qualify the handoff |
+| Reports and policy | [output.py](depcheck/output.py), [sarif.py](depcheck/sarif.py), [cyclonedx.py](depcheck/cyclonedx.py), [policy.py](depcheck/policy.py) | Keep format projections and exemption decisions separate; existing `depcheck.output` imports remain supported |
+| Explicit external evidence | [evidence_input.py](depcheck/evidence_input.py), format inspectors | Supplied assertions remain separate from source evidence |
+
+The storage module owns SQLite staging, transactions and cleanup. Query helpers
+use its existing connection and do not open databases. The scanner owns client
+selection for optional security and compatibility stages. CLI/MCP root policy,
+pagination and byte budgets remain at their existing entry points. This internal
+refactor does not change analysis revision 57, index schema v4 or package version
+0.5.0.
+
 ## Development
 
-Tests are grouped in five files under `test/`. Keep local reports, logs, and
-scratch fixtures under `.tmp/`; it is ignored by Git and dependency discovery.
+Tests stay in five modules under `test/`. Keep local reports, logs and scratch
+fixtures under `.tmp/`; Git and dependency discovery ignore it.
 
-Shared evidence readers live in `depcheck/evidence_input.py`. OSV advisory
-interpretation lives in `depcheck/security/advisories.py`; the HTTP client handles
-requests and caching. Python compatibility results and release metadata access
-are separate from the resolver. Index fingerprinting, cached evidence analysis
-and publication metadata have separate modules under `depcheck/indexing/`.
-Java and JavaScript collectors delegate manifest, lockfile and lexical parsing
-to ecosystem-specific modules. Keep evidence preparation shared between scans
-and index refreshes, and retain transaction and freshness checks when changing
-the index workflow.
+| Module | Coverage |
+| --- | --- |
+| `test_core.py` | Python manifests, resolution and vulnerability semantics |
+| `test_ecosystems.py` | Static collectors, ownership, sources and lock semantics |
+| `test_engineering.py` | Filesystem safety, index integrity, work accounting and scorer contracts |
+| `test_interfaces.py` | CLI/MCP contracts, shared services and external evidence |
+| `test_outputs.py` | Report formats, policy, identities and export projections |
+
+Use a module path or `-k` expression for a focused check. The full commands below
+remain the local verification baseline. Keep distinct boundary cases; consolidate
+shared setup rather than removing assertions to reduce the test count.
+
+Generated regression cases use Hypothesis from the test extra. They compare
+bounded version intervals with an independent oracle and compare index mutation
+sequences with fresh rebuilds. `test/conftest.py` sets the generated-case database under the repository's
+`.tmp/hypothesis/`, independent of the caller's working directory. Reduced failures
+are regression evidence, not formal verification.
 
 ```bash
 uv sync --frozen --extra test
@@ -1218,7 +1283,9 @@ The wheel job covers Ubuntu, macOS, and Windows with Python 3.12. Run the same
 installation check locally with `python scripts/check_wheel_install.py --wheel <path-to-wheel>`.
 
 `skills/check-dependencies/evals/run_live.py` exercises the skill's MCP contracts
-offline using temporary repositories. Pass `--output .tmp/depcheck-live.json` to
+offline using temporary repositories. Its fixture setup and nine scenario groups
+share one MCP session; scenario order, calls and read-only checks are retained.
+Pass `--output .tmp/depcheck-live.json` to
 record actual calls. CI runs it alongside the tests. The hand-authored
 `traces.example.json` checks the scorer's format and rules; it is not evidence
 that an agent followed the skill. Evaluate agent behavior separately with real
@@ -1240,21 +1307,9 @@ python skills/check-dependencies/evals/run_agent.py --output-dir .tmp/agent-eval
 
 This invokes a model through [Codex exec](https://learn.chatgpt.com/docs/developer-commands#codex-exec).
 It creates disposable offline fixtures, records commands and answers, checks the
-original fixture hashes, and scores the selected cases. The Gradle case checks
-literal requests and configuration-qualified lock versions without installed-state
-or removal claims. The Go tool case checks
-configured build use without source imports or execution/installation claims.
-The Go checksum case separates
-minimum requirements and checksum assertions from selected/installed versions
-and verified integrity. The Maven case separates
-plugin management and configured execution from installation and actual runtime
-use. The vcpkg case checks
-conditional feature/default/host assertions without installed-state or removal
-claims. The Pipenv case checks a
-private source, declaration location and static pin without installed-state or
-security clearance claims. The CMake cases check
-qualified project/script explanations, independent component ownership and
-unknown activation, installed versions and uncollected wrapper calls.
+original fixture hashes, and scores the selected cases. The cases cover qualified ownership, pagination, build configuration, source
+provenance and conservative update decisions. `cases.agent.json` is the executable
+case catalog, including expected calls and evidence limits.
 The forbidden-action classifier handles known package-manager commands, selected
 CMake configure/build/script forms and curl/wget calls, not arbitrary program behavior. Pagination
 scoring validates observed offsets, totals and qualified identities rather than
@@ -1267,15 +1322,30 @@ review the claims in the recorded answer as well. Inspect unknown command forms 
 alongside the score; a pass is evidence for those trials, not a general agent
 reliability guarantee. It is separate from the offline CI contract runner.
 
+Six paired README cases vary benign/adversarial content across the beginning,
+middle and end of the same synthetic context. Select cases with repeatable
+`--case adversarial-readme-attack-middle` arguments. The scorer reports task
+utility separately from observed attack side effects. The runner records input
+hashes, unexpected files and whether the payload appeared in a completed command's
+output. Missing exposure or an incomplete execution cannot count as successful
+resistance. These static attacks do not cover every adaptive prompt injection.
+
 Run the existing deterministic offline benchmark on Linux or macOS before a
 performance change. It uses the Unix `resource` module for memory reporting:
 
 ```bash
-uv run --frozen --extra test python scripts/benchmark_monorepo.py --projects 8 --files-per-project 25 --seed 1729 --depth 8 > .tmp/benchmark-baseline.json
+uv run --frozen --extra test python scripts/benchmark_monorepo.py --projects 8 --files-per-project 25 --seed 1729 --depth 8 --repeats 3 --warmups 1 > .tmp/benchmark-baseline.json
 ```
 
 OSV request counts are simulated without network access. Keep fixture parameters,
 interpreter, dependencies, and output evidence fixed when comparing changes.
 A local timing sample is a baseline for an experiment, not a CI performance
-guarantee. Current maintenance priorities and verification rules are in
+guarantee. The series retains every worker sample and discarded warmup, source
+digest, interpreter, installed dependency versions, CPU metadata, scan diagnostics
+and inventory digest. Each worker starts with a fresh fixture and derived cache;
+the OS page cache is uncontrolled. Timing excludes interpreter startup and imports.
+Use `--cohort evaluation --seed 2718` for a separately chosen fixture seed; do not
+select the best seed after measuring. The summary reports median, minimum, and
+maximum scan times without claiming statistical significance. Current maintenance
+priorities and verification rules are in
 [AGENTS.md](AGENTS.md).

@@ -126,6 +126,11 @@ proof; no path cannot justify OpenVEX `not_affected`.
   `provenance` as an unsigned in-toto statement or `policy` as unevaluated input.
   Optional `--input-file` and `--configuration-file` select exact files to hash.
   Current hashes do not establish historical scan freshness or invocation status.
+  The export rejects truncated or inconsistent canonical scans, including count,
+  capability-state and project-reference mismatches. Consistently reported
+  incomplete scans remain valid inputs. Print the producer contracts with
+  `depcheck schema scan`, `depcheck schema policy-input` or
+  `depcheck schema provenance`; additive fields are allowed.
   No signing keys, verification layout commands or external evaluator are used.
 - `verify_registry_package` / `depcheck registry ROOT ECOSYSTEM NAME
   --allow-network` requires explicit network authorization (`allow_network=true`

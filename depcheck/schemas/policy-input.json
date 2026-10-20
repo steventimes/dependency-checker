@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/steventimes/dependency-checker/schemas/policy-input.v1.json",
+  "title": "Depcheck policy-input v1 producer contract",
+  "description": "Additive fields are allowed. Validate semantic consistency separately; external assertions do not establish source authenticity or current safety.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "depcheck.policy-input.v1"
+    },
+    "read_only": {
+      "const": true
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilities"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "vulnerabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "identity": {
+            "$ref": "#/$defs/identity"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "identity",
+          "issues"
+        ]
+      }
+    },
+    "coverage": {},
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "evaluation_status": {
+      "const": "not-evaluated"
+    },
+    "external_evaluator_invoked": {
+      "const": false
+    }
+  },
+  "required": [
+    "schema",
+    "read_only",
+    "provenance",
+    "summary",
+    "capabilities",
+    "findings",
+    "vulnerabilities",
+    "coverage",
+    "diagnostics",
+    "evaluation_status",
+    "external_evaluator_invoked"
+  ],
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "complete",
+            "incomplete",
+            "skipped",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ecosystem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string"
+        },
+        "instance": {
+          "type": "string"
+        },
+        "purl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "ecosystem",
+        "package"
+      ]
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "type": "string"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "severity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/location"
+          }
+        },
+        "details": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "code",
+        "identity",
+        "severity",
+        "message",
+        "locations",
+        "details"
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "incomplete"
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "risk_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "diagnostic_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "status",
+        "complete",
+        "risk_count",
+        "diagnostic_count",
+        "counts"
+      ]
+    },
+    "digest": {
+      "type": "object",
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "sha256"
+      ]
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "name",
+        "digest"
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "exporter": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "depcheck"
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "analysis_revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "name",
+            "version",
+            "analysis_revision"
+          ]
+        },
+        "snapshot_tool": {},
+        "snapshot_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/input"
+          }
+        },
+        "input_completeness": {
+          "const": "explicitly-selected-only"
+        },
+        "source_authenticity": {
+          "const": "unverified"
+        },
+        "signature_status": {
+          "const": "unsigned"
+        },
+        "input_freshness": {
+          "const": "not-compared-to-snapshot-capture"
+        },
+        "invocation_exit_status": {
+          "const": "not-captured"
+        }
+      },
+      "required": [
+        "exporter",
+        "snapshot_tool",
+        "snapshot_path",
+        "snapshot_sha256",
+        "configuration",
+        "inputs",
+        "input_completeness",
+        "source_authenticity",
+        "signature_status",
+        "input_freshness",
+        "invocation_exit_status"
+      ]
+    }
+  }
+}

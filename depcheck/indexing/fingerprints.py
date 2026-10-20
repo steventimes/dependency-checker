@@ -230,16 +230,15 @@ def _bundle_file_digests(
             continue
         if candidate.is_file():
             result[relative] = _file_digest(candidate)
-    result.update(_command_digests(root, load_project_config(root)))
+    config = load_project_config(root)
+    result.update(_command_digests(root, config))
     result.update(
         {
             _relative(root, p): _file_digest(p)
-            for p in uncovered_manifest_files(
-                root, load_project_config(root).excluded_directories
-            )
+            for p in uncovered_manifest_files(root, config.excluded_directories)
         }
     )
-    result.update(_tool_config_digests(root, load_project_config(root)))
+    result.update(_tool_config_digests(root, config))
     return dict(sorted(result.items()))
 
 

@@ -8,6 +8,7 @@ from typing import Any
 
 from depcheck._version import __version__
 from depcheck.bounded_io import read_bytes
+from depcheck.contracts import validate_scan_export
 from depcheck.evidence_input import read_evidence_json
 from depcheck.model import ANALYSIS_REVISION
 from depcheck.path_policy import require_within_project
@@ -22,8 +23,7 @@ def export_evidence(
     configuration_file: str | None = None,
 ) -> dict[str, Any]:
     snapshot, digest = read_evidence_json(root, snapshot_file)
-    if snapshot.get("schema") != "depcheck.scan.v1":
-        raise ValueError("Evidence export requires a canonical depcheck scan")
+    validate_scan_export(snapshot)
     if len(input_files) > 512 or len(set(input_files)) != len(input_files):
         raise ValueError(
             "Explicit input paths must be unique and within the 512-file budget"

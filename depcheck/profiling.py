@@ -16,6 +16,15 @@ _PROFILE: ContextVar[dict[str, dict[str, Any]] | None] = ContextVar(
 )
 
 
+def count_work(name: str, **counts: int) -> None:
+    """Record additive work units separately from inclusive phase durations."""
+    profile = _PROFILE.get()
+    if profile is not None:
+        record = profile.setdefault(name, {})
+        for key, value in counts.items():
+            record[key] = record.get(key, 0) + value
+
+
 @contextmanager
 def capture_profile(*, enabled: bool = True) -> Iterator[dict[str, dict[str, Any]]]:
     measurements: dict[str, dict[str, Any]] = {}

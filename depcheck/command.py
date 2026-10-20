@@ -12,6 +12,7 @@ from typing import Any
 from depcheck._version import __version__
 from depcheck.agent import DependencyAgentService
 from depcheck.config import load_project_config
+from depcheck.contracts import SCHEMA_NAMES, output_schema
 from depcheck.policy_codes import normalize_fail_on
 from depcheck.profiling import capture_profile, profile_payload
 from depcheck.engine import RepositoryScanOptions, RepositoryScanner
@@ -42,6 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write local inclusive phase measurements to stderr",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+
+    schema = commands.add_parser("schema", help="Print a packaged output JSON Schema")
+    schema.add_argument("kind", choices=SCHEMA_NAMES)
+    schema.set_defaults(root=Path("."))
 
     scan = commands.add_parser("scan", help="Scan a repository")
     _root_argument(scan)
@@ -358,6 +363,8 @@ def _service_command(
     arguments: argparse.Namespace,
 ) -> dict[str, Any]:
     command = arguments.command
+    if command == "schema":
+        return output_schema(arguments.kind)
     if command == "compare-inventories":
         return service.compare_inventories(
             arguments.before_file,

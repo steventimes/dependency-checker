@@ -48,6 +48,12 @@
    In CLI use `--evidence-offset`/`--evidence-limit`. Main `next_offset` traverses
    dependencies; `inventory_truncated` and `evidence_truncated` distinguish them.
    Overall `truncated` can be true with a null main `next_offset`.
+   Explanations also include page-local `derivation` facts with source locations,
+   assertion pointers and content-derived references. Outer support lists are
+   alternatives; each inner list contains jointly required facts. Repeated facts
+   remain separate. Missing page support is not proof of absence. Analyzer finding
+   support is not fully captured; do not describe this projection as a minimal
+   proof, source authentication, activation, or call reachability.
    The returned effective evidence limit may shrink to fit the 256 KiB response
    budget. A `response.budget-exceeded` error omits an oversized tool result;
    a scan/index may already have refreshed its cache. Inspect context and use a

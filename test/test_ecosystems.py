@@ -1,3 +1,5 @@
+"""Static ecosystem collectors, ownership, source evidence, and lock semantics."""
+
 import json
 from pathlib import Path
 from types import SimpleNamespace

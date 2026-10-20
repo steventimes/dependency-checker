@@ -546,24 +546,30 @@ class RepositoryIndex:
                 "incomplete_reasons": ["index-missing"],
                 "coverage": {"scope": "missing", "uncovered": []},
                 "index": {"schema": INDEX_SCHEMA, "indexed": False},
+                "refresh_plan": _refresh_plan(["index-missing"], {}),
             }
         with IndexStore(self.project_root, self.index_path, read_only=True) as store:
             metadata = store.metadata()
             scope = _scope_from_metadata(metadata)
             current_digest: str | None
             if scope["repository_complete"] and metadata.get("refresh_mode") != "scan":
-                current_digest = _current_workspace_digest(
+                current_digest, changes = _workspace_freshness(
                     self.project_root,
                     store.file_digests("manifest"),
+                    previous_python=store.file_digests("python"),
                 )
             else:
-                current_digest = _current_filtered_workspace_digest(
+                current_digest, changes = _filtered_workspace_freshness(
                     self.project_root,
                     scope,
                     metadata,
                     self.index_path,
                 )
             reasons: list[str] = []
+            if metadata.get("config_digest") != _config_digest(
+                load_project_config(self.project_root)
+            ):
+                reasons.append("configuration-or-analysis-revision")
             if metadata.get("workspace_digest") != current_digest:
                 reasons.append("workspace-content")
             if scope["repository_complete"]:
@@ -594,6 +600,9 @@ class RepositoryIndex:
                 "git_head": metadata.get("git_head") or None,
                 "stale": bool(reasons),
                 "stale_reasons": reasons,
+                "refresh_plan": _refresh_plan(
+                    reasons, changes, mode=metadata.get("refresh_mode", "unknown")
+                ),
                 "complete": metadata.get("complete") == "true",
                 "status": metadata.get("status"),
                 "scope": scope,
@@ -705,15 +714,34 @@ class RepositoryIndex:
             )
 
 
-def _current_filtered_workspace_digest(
+def _refresh_plan(
+    reasons: list[str], changes: dict[str, Any], *, mode: str | None = None
+) -> dict[str, Any]:
+    plan = {
+        "required": bool(reasons),
+        "applied": False,
+        "reasons": list(reasons),
+        "input_changes": changes,
+        "stages": ["collect", "analyze", "publish-derived-cache"] if reasons else [],
+        "precision": "conservative; no selected cache exists",
+    }
+    if mode is not None:
+        plan["mode"] = mode
+        plan["precision"] = (
+            "conservative; Python refresh may reuse unchanged files; other selected evidence is rescanned; removals invalidate analysis"
+        )
+    return plan
+
+
+def _filtered_workspace_freshness(
     root: Path,
     scope: dict[str, Any],
     metadata: dict[str, str],
     index_path: Path,
-) -> str | None:
+) -> tuple[str | None, dict[str, Any]]:
     config = load_project_config(root)
     if _freshness_unchanged(root, config, metadata, index_path):
-        return metadata.get("workspace_digest")
+        return metadata.get("workspace_digest"), {}
     ecosystems = tuple(str(item) for item in scope["ecosystems"])
     project_ids = tuple(str(item) for item in scope["project_ids"])
     try:
@@ -728,21 +756,44 @@ def _current_filtered_workspace_digest(
             ),
         )
     except (KeyError, OSError, TypeError, ValueError):
-        return None
+        return None, {}
     selection_digest = _mapping_digest(
         {
             "ecosystems": "\0".join(ecosystems),
             "project_ids": "\0".join(project_ids),
         }
     )
-    return _filtered_workspace_digest(
-        _bundle_file_digests(root, result.bundles),
+    current = _bundle_file_digests(root, result.bundles)
+    previous = json.loads(metadata.get("freshness_files", "{}"))
+    digest = _filtered_workspace_digest(
+        current,
         _config_digest(config),
         selection_digest,
     )
+    return digest, {"selected_evidence": _input_changes(previous, current)}
 
 
-def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) -> str:
+def _input_changes(previous: dict[str, str], current: dict[str, str]) -> dict[str, Any]:
+    categories = {
+        "added": sorted(current.keys() - previous.keys()),
+        "removed": sorted(previous.keys() - current.keys()),
+        "modified": sorted(
+            k for k in current.keys() & previous.keys() if current[k] != previous[k]
+        ),
+    }
+    return {
+        "counts": {name: len(paths) for name, paths in categories.items()},
+        "paths": {name: paths[:20] for name, paths in categories.items()},
+        "truncated": any(len(paths) > 20 for paths in categories.values()),
+    }
+
+
+def _workspace_freshness(
+    root: Path,
+    previous_manifests: dict[str, str],
+    *,
+    previous_python: dict[str, str],
+) -> tuple[str, dict[str, Any]]:
     config = load_project_config(root)
     scanner = ImportScanner(config.excluded_directories)
     python_digests = {
@@ -753,12 +804,17 @@ def _current_workspace_digest(root: Path, previous_manifests: dict[str, str]) ->
     discovered = {_relative(root, path) for path in reporter.find_dependency_file()}
     candidates = discovered | set(previous_manifests)
     manifest_digests = _manifest_digests(root, candidates, config.excluded_directories)
-    return _state_digest(
+    changes = {
+        "python": _input_changes(previous_python, python_digests),
+        "manifests": _input_changes(previous_manifests, manifest_digests),
+    }
+    digest = _state_digest(
         python_digests,
         manifest_digests,
         _config_digest(config),
         _ecosystem_digests(root, config),
     )
+    return digest, changes
 
 
 def _canonical_ecosystems(values: tuple[str, ...]) -> tuple[str, ...]:

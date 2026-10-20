@@ -7,6 +7,22 @@
   Offline advisory reevaluation no longer constructs an HTTP session. CLI and
   MCP contracts, analysis revision 57 and index schema v4 are unchanged.
 
+- Publish standalone JSON Schemas for scan, policy-input and provenance output
+  through `depcheck schema`. Validate exported scan semantics before deriving
+  policy or provenance evidence.
+- Add page-local derivation references to explanations, qualified refresh plans
+  to repository context and local read-work counters. These do not establish
+  minimal proofs, active installations or source authenticity.
+- Extend reproducible benchmark records and generated regression cases. Add
+  paired benign/adversarial README consumer trials with separate task utility,
+  observed exposure and side-effect results.
+- Separate optional scan stages, update planning, SQLite query projections,
+  report formats and policy evaluation. Keep CLI/MCP contracts and existing
+  `depcheck.output` imports compatible. Group live MCP scenarios and consolidate
+  scorer setup while retaining distinct regression assertions.
+- Update architecture and test documentation. Clarify which features belong
+  to the unreleased source checkout.
+
 ## 0.5.0 — 2026-10-18
 
 [Release](https://github.com/steventimes/dependency-checker/releases/tag/v0.5.0) ·

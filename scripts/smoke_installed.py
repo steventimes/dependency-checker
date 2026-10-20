@@ -43,6 +43,11 @@ def main() -> None:
             return result.stdout
 
         check(run("--version").startswith("depcheck "), "Unexpected CLI version output")
+        for name in ("scan", "policy-input", "provenance"):
+            schema = json.loads(run("schema", name))
+            check(
+                schema["$schema"].endswith("2020-12/schema"), "Packaged schema missing"
+            )
         scan = json.loads(run("scan", ".", "--offline", "--format", "json"))
         check(scan["schema"] == "depcheck.scan.v1", "Unexpected scan schema")
         check(

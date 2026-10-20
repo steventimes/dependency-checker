@@ -1,3 +1,5 @@
+"""Python manifests, compatibility resolution, and vulnerability semantics."""
+
 from pathlib import Path
 from types import SimpleNamespace
 

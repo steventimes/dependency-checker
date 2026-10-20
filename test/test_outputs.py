@@ -1,3 +1,5 @@
+"""Report formats, policy decisions, qualified identities, and export projections."""
+
 import json
 from dataclasses import replace
 from datetime import date

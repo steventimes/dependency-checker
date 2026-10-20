@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from depcheck.profiling import measured
+from depcheck.profiling import count_work, measured
 
 from contextlib import contextmanager, ExitStack, nullcontext
 from contextvars import ContextVar
@@ -220,6 +220,7 @@ def read_bytes(
         descriptor = parent.open(name, os.O_RDONLY)
         try:
             content = read_descriptor(descriptor, candidate, max_bytes)
+            count_work("io.work", reads=1, bytes=len(content))
             receipts = _READ_RECEIPTS.get()
             if receipts is not None:
                 key = Path(os.path.abspath(candidate))
@@ -228,6 +229,8 @@ def read_bytes(
                     raise ContentChangedError(
                         "repository evidence changed during scanning"
                     )
+                if key in receipts:
+                    count_work("io.work", repeated_captured_reads=1)
                 receipts[key] = digest
             return content
         finally:
