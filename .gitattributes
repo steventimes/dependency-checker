@@ -1,0 +1,2 @@
+# Provenance digests refer to original fixture bytes, including line endings.
+/test/fixtures/** -text

@@ -1076,7 +1076,7 @@ def test_multilingual_pdm_instances_context_and_compatibility_remain_conditional
     shutil.copytree(fixtures / "pdm-2.16.1", tmp_path, dirs_exist_ok=True)
     case = next(
         case
-        for case in json.loads((fixtures / "truth.json").read_text())["cases"]
+        for case in json.loads((fixtures / "truth.json").read_bytes())["cases"]
         if case["id"] == "pdm-2.16.1"
     )
     scan = RepositoryScanner().scan(

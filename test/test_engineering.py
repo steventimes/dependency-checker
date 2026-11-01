@@ -114,7 +114,7 @@ def test_multilingual_corpus_rejects_unpinned_or_empty_inputs(tmp_path, fault):
         (corpus / "poetry-1.8.3/extra.toml").write_text("new=true\n")
     elif fault == "empty-cases":
         path = corpus / "truth.json"
-        document = json.loads(path.read_text())
+        document = json.loads(path.read_bytes())
         document["cases"] = []
         path.write_text(json.dumps(document))
     elif fault == "empty-overrides":
@@ -125,7 +125,7 @@ def test_multilingual_corpus_rejects_unpinned_or_empty_inputs(tmp_path, fault):
         path.write_text(json.dumps(document), encoding="utf-8")
     else:
         path = corpus / "provenance.json"
-        document = json.loads(path.read_text())
+        document = json.loads(path.read_bytes())
         omitted = next(
             entry
             for entry in document["retained_fixtures"]
