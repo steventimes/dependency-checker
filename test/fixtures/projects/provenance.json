@@ -1,0 +1,74 @@
+{
+  "schema": "depcheck.project-corpus-provenance.v1",
+  "retrieved_at": "2026-10-23",
+  "retained": "Unmodified UTF-8 upstream manifest, lock and license bytes; Git blob identity and SHA256 checked. No project code, installation or build executed. LICENSE files renamed locally to .txt only.",
+  "retained_fixtures": [
+    {
+      "path": "lodash-4.17.20/package.json",
+      "repository": "lodash/lodash",
+      "commit": "ded9bc66583ed0b4e3b7dc906206d40757b4a90a",
+      "original_path": "package.json",
+      "source": "https://raw.githubusercontent.com/lodash/lodash/ded9bc66583ed0b4e3b7dc906206d40757b4a90a/package.json",
+      "license": "MIT",
+      "bytes": 2046,
+      "git_blob_sha1": "3671d5266448a92427f278b1f9f5df4657df5468",
+      "sha256": "9d2bf980f3ce2409b5e30162442e161d4c6c0e4dd897a6354fd2e90e58bdf333"
+    },
+    {
+      "path": "lodash-4.17.20/package-lock.json",
+      "repository": "lodash/lodash",
+      "commit": "ded9bc66583ed0b4e3b7dc906206d40757b4a90a",
+      "original_path": "package-lock.json",
+      "source": "https://raw.githubusercontent.com/lodash/lodash/ded9bc66583ed0b4e3b7dc906206d40757b4a90a/package-lock.json",
+      "license": "MIT",
+      "bytes": 206804,
+      "git_blob_sha1": "d7c89292258b784071cf07f663f8ecb1fbbfe3b3",
+      "sha256": "3edafd369d3cec4b3c73c4c81d84760a4571bf92f53216e1677400dcece85b55"
+    },
+    {
+      "path": "lodash-4.17.20/LICENSE.txt",
+      "repository": "lodash/lodash",
+      "commit": "ded9bc66583ed0b4e3b7dc906206d40757b4a90a",
+      "original_path": "LICENSE",
+      "source": "https://raw.githubusercontent.com/lodash/lodash/ded9bc66583ed0b4e3b7dc906206d40757b4a90a/LICENSE",
+      "license": "MIT",
+      "bytes": 1952,
+      "git_blob_sha1": "77c42f1408a38a0609cac12c887616cb21bfb736",
+      "sha256": "f71e8ed126b46346494aad5486874cd8f0aafe95092ed67d2e3cb6110f939abc"
+    },
+    {
+      "path": "npm-registry-fetch-12.0.0/package.json",
+      "repository": "npm/npm-registry-fetch",
+      "commit": "ccbaf9da1cda5a2cc9926d607ef18524fe391c9f",
+      "original_path": "package.json",
+      "source": "https://raw.githubusercontent.com/npm/npm-registry-fetch/ccbaf9da1cda5a2cc9926d607ef18524fe391c9f/package.json",
+      "license": "ISC",
+      "bytes": 1387,
+      "git_blob_sha1": "31258ba50db0363630a9c708fe133236653477a0",
+      "sha256": "6dc49d292c5d6da1269c3fef63865ae85e5507d464b99fb7d5cc639a67b04e80"
+    },
+    {
+      "path": "npm-registry-fetch-12.0.0/package-lock.json",
+      "repository": "npm/npm-registry-fetch",
+      "commit": "ccbaf9da1cda5a2cc9926d607ef18524fe391c9f",
+      "original_path": "package-lock.json",
+      "source": "https://raw.githubusercontent.com/npm/npm-registry-fetch/ccbaf9da1cda5a2cc9926d607ef18524fe391c9f/package-lock.json",
+      "license": "ISC",
+      "bytes": 368294,
+      "git_blob_sha1": "ea4537bc500e96bd2ac90939a126088a676f2d1f",
+      "sha256": "529ecdcbf9c686e3312491978c8c026489a0f5352357c543172a6688caee6c46"
+    },
+    {
+      "path": "npm-registry-fetch-12.0.0/LICENSE.txt",
+      "repository": "npm/npm-registry-fetch",
+      "commit": "ccbaf9da1cda5a2cc9926d607ef18524fe391c9f",
+      "original_path": "LICENSE.md",
+      "source": "https://raw.githubusercontent.com/npm/npm-registry-fetch/ccbaf9da1cda5a2cc9926d607ef18524fe391c9f/LICENSE.md",
+      "license": "ISC",
+      "bytes": 798,
+      "git_blob_sha1": "5fc208ff122e08e2ca9777f80b0551617b30ba2a",
+      "sha256": "27d998b503b18cdb16c49e93da04069a99ba8a1d7e18d67146de8e242f9a6d21"
+    }
+  ],
+  "advisory_source": "../security/provenance.json; GHSA-35jh-r3h4-6jhm.json reused without modification"
+}

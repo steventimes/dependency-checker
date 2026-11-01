@@ -148,6 +148,9 @@
               "origin": {
                 "type": "object"
               },
+              "metadata": {
+                "type": "object"
+              },
               "dependencies": {
                 "type": "array",
                 "items": {

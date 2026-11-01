@@ -1,0 +1,44 @@
+
+[package]
+name = "ambient_terrain"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ambient_sys = { path = "../sys" }
+ambient_app = { path = "../app" }
+ambient_native_std = { path = "../native_std" }
+ambient_ecs = { path = "../ecs" }
+ambient_gpu = { path = "../gpu" }
+ambient_gpu_ecs = { path = "../gpu_ecs" }
+ambient_core = { path = "../core" }
+ambient_meshes = { path = "../meshes" }
+ambient_element = { path = "../../shared_crates/element" }
+ambient_renderer = { path = "../renderer" }
+ambient_ui_native = { path = "../ui_native" }
+ambient_network = { path = "../network" }
+ambient_intent = { path = "../intent" }
+ambient_physics = { path = "../physics" }
+ambient_editor_derive = { path = "../../shared_crates/editor_derive" }
+physxx = { path = "../../libs/physxx" }
+wgpu = { workspace = true }
+serde = { workspace = true }
+futures = { workspace = true }
+glam = { workspace = true }
+async-trait = { workspace = true }
+ndarray = { workspace = true }
+itertools = { workspace = true }
+bytemuck = { workspace = true }
+serde_json = { workspace = true }
+closure = { workspace = true }
+profiling = { workspace = true }
+rand = { workspace = true }
+rand_pcg = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+hotload-includes = ['ambient_native_std/hotload-includes']

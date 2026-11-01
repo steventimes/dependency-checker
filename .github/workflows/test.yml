@@ -1,161 +1,147 @@
-{
-  "name": "depcheck CI",
-  "on": {
-    "push": {
-      "branches": [
-        "main"
-      ]
-    },
-    "pull_request": {
-      "branches": [
-        "main"
-      ]
-    }
-  },
-  "jobs": {
-    "test": {
-      "runs-on": "ubuntu-latest",
-      "strategy": {
-        "fail-fast": false,
-        "matrix": {
-          "python-version": [
-            "3.11",
-            "3.12"
-          ]
-        }
-      },
-      "steps": [
-        {
-          "name": "Checkout repository",
-          "uses": "actions/checkout@v4"
-        },
-        {
-          "name": "Set up Python",
-          "uses": "actions/setup-python@v5",
-          "with": {
-            "python-version": "${{ matrix.python-version }}"
-          }
-        },
-        {
-          "name": "Set up uv",
-          "uses": "astral-sh/setup-uv@v6",
-          "with": {
-            "version": "0.12.4"
-          }
-        },
-        {
-          "name": "Install declared test environment",
-          "run": "uv sync --frozen --extra test"
-        },
-        {
-          "name": "Run tests",
-          "run": "uv run --frozen --extra test python -m pytest test -q"
-        }
-      ]
-    },
-    "quality": {
-      "runs-on": "ubuntu-latest",
-      "steps": [
-        {
-          "name": "Checkout repository",
-          "uses": "actions/checkout@v4"
-        },
-        {
-          "name": "Set up Python",
-          "uses": "actions/setup-python@v5",
-          "with": {
-            "python-version": "3.12"
-          }
-        },
-        {
-          "name": "Set up uv",
-          "uses": "astral-sh/setup-uv@v6",
-          "with": {
-            "version": "0.12.4"
-          }
-        },
-        {
-          "name": "Install declared test environment",
-          "run": "uv sync --frozen --extra test"
-        },
-        {
-          "name": "Lint",
-          "run": "uv run --frozen --extra test python -m ruff check depcheck test scripts/smoke_installed.py scripts/check_wheel_install.py"
-        },
-        {
-          "name": "Check formatting",
-          "run": "uv run --frozen --extra test python -m ruff format --check depcheck test scripts/smoke_installed.py scripts/check_wheel_install.py"
-        },
-        {
-          "name": "Check lockfile",
-          "run": "uv lock --check --offline"
-        },
-        {
-          "name": "Type check typed core",
-          "run": "uv run --frozen --extra test python -m mypy"
-        },
-        {
-          "name": "Check skill evaluation scripts",
-          "run": "uv run --frozen --extra test python -m ruff check skills/check-dependencies/evals\nuv run --frozen --extra test python -m ruff format --check skills/check-dependencies/evals"
-        },
-        {
-          "name": "Exercise skill MCP contracts offline",
-          "run": "uv run --frozen --extra test python skills/check-dependencies/evals/run_live.py"
-        }
-      ]
-    },
-    "build": {
-      "runs-on": "${{ matrix.os }}",
-      "steps": [
-        {
-          "name": "Checkout repository",
-          "uses": "actions/checkout@v4"
-        },
-        {
-          "name": "Set up Python",
-          "uses": "actions/setup-python@v5",
-          "with": {
-            "python-version": "3.12"
-          }
-        },
-        {
-          "name": "Set up uv",
-          "uses": "astral-sh/setup-uv@v6",
-          "with": {
-            "version": "0.12.4"
-          }
-        },
-        {
-          "name": "Install declared test environment",
-          "run": "uv sync --frozen --extra test"
-        },
-        {
-          "name": "Check MCP stdio and client roots",
-          "run": "uv run --frozen --extra test python -m pytest test/test_interfaces.py -q -k 'mcp_stdio or client_roots'"
-        },
-        {
-          "name": "Build package",
-          "run": "uv run --frozen --extra test python -m build --outdir \"${{ runner.temp }}/depcheck-dist\""
-        },
-        {
-          "name": "Check native filesystem boundaries",
-          "run": "uv run --frozen --extra test python -m pytest test/test_engineering.py -q -k 'bounded or anchored or default_cache or default_sqlite or journal_links or windows_atomic or symlink_repository or python_encoding or preview_limits or regular_file_requirement or maven_parent_directory or maven_directory_parent'"
-        },
-        {
-          "name": "Smoke test installed wheel without extras",
-          "run": "uv run --frozen --extra test python -c \"from pathlib import Path; import subprocess, sys; wheels = list(Path(r'${{ runner.temp }}/depcheck-dist').glob('*.whl')); assert len(wheels) == 1, wheels; subprocess.run([sys.executable, 'scripts/check_wheel_install.py', '--wheel', str(wheels[0])], check=True)\""
-        }
-      ],
-      "strategy": {
-        "fail-fast": false,
-        "matrix": {
-          "os": [
-            "ubuntu-latest",
-            "macos-latest",
-            "windows-latest"
-          ]
-        }
-      }
-    }
-  }
-}
+name: depcheck CI
+on:
+    push:
+        branches:
+            - main
+    pull_request:
+        branches:
+            - main
+    workflow_dispatch:
+        inputs:
+            full_qualification:
+                description: Run all five Python versions and both native packaging versions
+                type: boolean
+                required: false
+                default: false
+permissions:
+    contents: read
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                # Daily full suite; expand only on an explicitly selected dispatch.
+                python-version: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.full_qualification && '["3.11", "3.12", "3.13", "3.14", "3.15"]' || '["3.12"]') }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+              with:
+                persist-credentials: false
+            - name: Set up Python
+              uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+              with:
+                python-version: ${{ matrix.python-version }}
+            - name: Set up uv
+              uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+              with:
+                version: 0.12.4
+            - name: Install declared test environment
+              run: uv sync --frozen --extra test
+            - name: Run tests
+              run: uv run --frozen --extra test python -m pytest test -q
+        timeout-minutes: 30
+    quality:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+              with:
+                persist-credentials: false
+                fetch-depth: 0
+            - name: Set up Python
+              uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+              with:
+                python-version: "3.12"
+            - name: Set up uv
+              uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+              with:
+                version: 0.12.4
+            - name: Install declared test environment
+              run: uv sync --frozen --extra test
+            - name: Lint
+              run: uv run --frozen --extra test python -m ruff check depcheck test scripts
+            - name: Check formatting
+              run: uv run --frozen --extra test python -m ruff format --check depcheck test scripts
+            - name: Check lockfile
+              run: uv lock --check --offline
+            - name: Type check typed core
+              run: uv run --frozen --extra test python -m mypy
+            - name: Check skill evaluation scripts
+              run: |-
+                uv run --frozen --extra test python -m ruff check skills/check-dependencies/evals
+                uv run --frozen --extra test python -m ruff format --check skills/check-dependencies/evals
+            - name: Select standalone evidence checks by changed inputs
+              id: evidence_scope
+              shell: python
+              env:
+                EVIDENCE_EVENT: ${{ github.event_name }}
+                EVIDENCE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+              run: |
+                import os
+                from pathlib import PurePosixPath
+                import re
+                import subprocess
+
+                base = os.environ.get("EVIDENCE_BASE", "")
+                run_evidence = True
+                if os.environ["EVIDENCE_EVENT"] != "workflow_dispatch" and re.fullmatch(r"[0-9a-f]{40}", base) and base != "0" * 40:
+                    diff = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", base, "HEAD", "--"], capture_output=True, text=True)
+                    paths = diff.stdout.rstrip("\0").split("\0") if diff.stdout else []
+                    if diff.returncode == 0 and paths:
+                        run_evidence = not all(
+                            ("/" not in path and path.endswith(".md"))
+                            or (path.startswith(".github/readme/") and PurePosixPath(path).suffix.lower() in {".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp"})
+                            for path in paths
+                        )
+                with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                    output.write(f"run_evidence={str(run_evidence).lower()}\n")
+            - name: Exercise skill MCP contracts offline
+              if: steps.evidence_scope.outputs.run_evidence == 'true'
+              run: uv run --frozen --extra test python skills/check-dependencies/evals/run_live.py
+            - name: Evaluate pinned inventory and advisory corpora
+              if: steps.evidence_scope.outputs.run_evidence == 'true'
+              run: uv run --frozen --extra test python -m scripts.evaluate_corpus --output .tmp/corpus.json
+        timeout-minutes: 30
+    build:
+        runs-on: ${{ matrix.os }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+              with:
+                persist-credentials: false
+            - name: Set up Python
+              uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+              with:
+                python-version: ${{ matrix.python-version }}
+            - name: Set up uv
+              uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+              with:
+                version: 0.12.4
+            - name: Install declared test environment
+              run: uv sync --frozen --extra test
+            - name: Check MCP stdio and client roots
+              run: uv run --frozen --extra test python -m pytest test -q -k 'mcp_stdio or client_roots'
+            - name: Build package
+              run: uv run --frozen --extra test python -m build --outdir "${{ runner.temp }}/depcheck-dist"
+            - name: Check native filesystem boundaries
+              run: uv run --frozen --extra test python -m pytest test -q -k 'bounded or anchored or default_cache or default_sqlite or query_keeps or explicit_read_transaction or journal_links or windows_atomic or symlink_repository or python_encoding or preview_limits or regular_file_requirement or maven_parent_directory or maven_directory_parent'
+            - name: Check native parser input boundaries
+              run: uv run --frozen --extra test python -m pytest test -q -k 'strict_json or npm_noncanonical or npm_partial_lock or npm_legal_omitted or cyclonedx_unknown or npm_lookup_budget or npm_legacy_requires or npm_explicit_alias_conflict or cyclonedx_manifest_origins or npm_resolution_context or npm_optional_override or npm_context or npm_unsupported_lock_header or real_npm_locks_preserve_context or snapshot_comparison_preserves_npm_context_only_changes or legacy_query_is_read_only or npm_empty_request_context or offline_sbom_matches_canonical_legacy_origin_precedence or go_advisory or incomplete_fix or scoped_severity or multilingual or pipenv or python315 or cve_risk or uv_workspace or uv_index_policy or uv_source_profile or pip_install_report or pylock_coverage or pylock_inventory or rubygems_advisory or toml_locations'
+            - name: Smoke test installed wheel without extras
+              run: uv run --frozen --extra test python -c "from pathlib import Path; import subprocess, sys; wheels = list(Path(r'${{ runner.temp }}/depcheck-dist').glob('*.whl')); assert len(wheels) == 1, wheels; subprocess.run([sys.executable, 'scripts/check_wheel_install.py', '--wheel', str(wheels[0])], check=True)"
+            - name: Validate reproducible Agent Skill bundle
+              run: uv run --frozen --extra test python -m pytest test -q -k skill_bundle
+        strategy:
+            fail-fast: false
+            matrix:
+                os:
+                    - ubuntu-latest
+                    - macos-latest
+                    - windows-latest
+                # Keep native smoke/build/install on every OS in the daily gate.
+                python-version: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.full_qualification && '["3.12", "3.15"]' || '["3.12"]') }}
+        timeout-minutes: 30

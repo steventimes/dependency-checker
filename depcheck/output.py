@@ -3,19 +3,14 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
-from depcheck.cyclonedx import build_cyclonedx as build_cyclonedx
 from depcheck.model import ScanResult
-from depcheck.policy import (
-    PolicyEvaluation as PolicyEvaluation,
-)
-from depcheck.policy import (
-    evaluate_policy as evaluate_policy,
-)
-from depcheck.policy import (
-    load_policy as load_policy,
-)
-from depcheck.sarif import build_sarif as build_sarif
+from depcheck.reporting.cyclonedx import build_cyclonedx as build_cyclonedx
+from depcheck.reporting.policy import PolicyEvaluation as PolicyEvaluation
+from depcheck.reporting.policy import evaluate_policy as evaluate_policy
+from depcheck.reporting.policy import load_policy as load_policy
+from depcheck.reporting.sarif import build_sarif as build_sarif
 
 
 def render_json(result: ScanResult) -> str:
@@ -25,6 +20,26 @@ def render_json(result: ScanResult) -> str:
         sort_keys=True,
         ensure_ascii=False,
     )
+
+
+def render_snapshot_comparison(result: dict[str, Any]) -> str:
+    """Render the existing paginated snapshot comparison for terminal readers."""
+    lines = [
+        f"Comparable: {result['comparable']}",
+        f"Inventory and security: {json.dumps(result['capabilities'], sort_keys=True)}",
+        f"Remediation verified: {result['remediation_verified']}",
+        f"Coverage: {json.dumps(result['coverage'], sort_keys=True)}",
+        f"Before: {json.dumps(result['before'], sort_keys=True)}",
+        f"After: {json.dumps(result['after'], sort_keys=True)}",
+        f"Change counts: {json.dumps(result['counts'], sort_keys=True)}",
+    ]
+    for name, rows in result["changes"].items():
+        for row in rows:
+            lines.append(f"{name}: {json.dumps(row, sort_keys=True)}")
+    for diagnostic in result["diagnostics"]:
+        lines.append(f"Diagnostic: {json.dumps(diagnostic, sort_keys=True)}")
+    lines.append(f"Next offset: {result['next_offset']}")
+    return "\n".join(escape_terminal(line) for line in lines)
 
 
 def render_text(result: ScanResult) -> str:
@@ -99,7 +114,7 @@ def render_text(result: ScanResult) -> str:
                     f" {exemption['id']}: "
                     f"{exemption.get('validation_error', group.replace('_', ' '))}"
                 )
-    return "\n".join(lines)
+    return "\n".join(escape_terminal(line) for line in lines)
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -110,3 +125,16 @@ def _relative(path: Path, root: Path) -> str:
         return candidate.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
         return candidate.name
+
+
+def escape_terminal(value: str) -> str:
+    """Escape data controls; the renderer adds its own line separators."""
+    return "".join(
+        f"\\u{ord(c):04x}"
+        if ord(c) < 32
+        or 127 <= ord(c) < 160
+        or c
+        in "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+        else c
+        for c in value
+    )

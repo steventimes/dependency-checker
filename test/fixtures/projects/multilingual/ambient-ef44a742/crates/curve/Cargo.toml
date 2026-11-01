@@ -1,0 +1,13 @@
+[package]
+name = "ambient_curve"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ambient_native_std = { path = "../native_std" }
+
+[dev-dependencies]
+glam = { workspace = true }

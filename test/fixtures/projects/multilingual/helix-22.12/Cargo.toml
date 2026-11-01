@@ -1,0 +1,27 @@
+[workspace]
+members = [
+  "helix-core",
+  "helix-view",
+  "helix-term",
+  "helix-tui",
+  "helix-lsp",
+  "helix-dap",
+  "helix-loader",
+  "helix-vcs",
+  "xtask",
+]
+
+default-members = [
+  "helix-term"
+]
+
+[profile.release]
+lto = "thin"
+# debug = true
+
+[profile.opt]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+# strip = "debuginfo" # TODO: or strip = true
+opt-level = 3

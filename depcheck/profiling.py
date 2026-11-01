@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-import time
 from typing import Any, Callable, ParamSpec, TypeVar
 
 _P = ParamSpec("_P")

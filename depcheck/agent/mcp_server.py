@@ -9,8 +9,8 @@ from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
-from .service import DependencyAgentService
 from .paging import bounded_response
+from .service import DependencyAgentService
 
 try:
     from mcp.server.fastmcp import Context, FastMCP
@@ -93,6 +93,13 @@ def create_server(
             ),
         )
 
+    @server.tool(annotations=read_only)
+    async def backend_info() -> dict[str, Any]:
+        """Identify this running backend without reading repositories or caches."""
+        from depcheck.contracts import backend_info as identity
+
+        return identity()
+
     @server.tool(annotations=cache_refresh)
     async def index_repository(
         project_root: str = ".",
@@ -136,16 +143,14 @@ def create_server(
         context: Context = None,
     ) -> dict[str, Any]:
         """Search inventory; follow next_offset for more matches without changing filters."""
-        return bounded_response(
-            (await service(project_root, context)).query_dependencies(
-                query,
-                ecosystem=ecosystem,
-                project_id=project_id,
-                evidence_limit=evidence_limit,
-                evidence_offset=evidence_offset,
-                limit=limit,
-                offset=offset,
-            )
+        return (await service(project_root, context)).query_dependencies(
+            query,
+            ecosystem=ecosystem,
+            project_id=project_id,
+            evidence_limit=evidence_limit,
+            evidence_offset=evidence_offset,
+            limit=limit,
+            offset=offset,
         )
 
     @server.tool(annotations=read_only)
@@ -161,16 +166,14 @@ def create_server(
         context: Context = None,
     ) -> dict[str, Any]:
         """Explain declarations, usages and bounded direct-owner paths (1..100 paths, depth 1..64)."""
-        return bounded_response(
-            (await service(project_root, context)).explain_dependency(
-                package,
-                ecosystem=ecosystem,
-                project_id=project_id,
-                evidence_limit=evidence_limit,
-                evidence_offset=evidence_offset,
-                origin_limit=origin_limit,
-                origin_depth=origin_depth,
-            )
+        return (await service(project_root, context)).explain_dependency(
+            package,
+            ecosystem=ecosystem,
+            project_id=project_id,
+            evidence_limit=evidence_limit,
+            evidence_offset=evidence_offset,
+            origin_limit=origin_limit,
+            origin_depth=origin_depth,
         )
 
     @server.tool(annotations=read_only)
@@ -186,16 +189,14 @@ def create_server(
         context: Context = None,
     ) -> dict[str, Any]:
         """List affected usages/findings and bounded owner paths; unknown graph coverage stays qualified."""
-        return bounded_response(
-            (await service(project_root, context)).dependency_impact(
-                package,
-                ecosystem=ecosystem,
-                project_id=project_id,
-                evidence_limit=evidence_limit,
-                evidence_offset=evidence_offset,
-                origin_limit=origin_limit,
-                origin_depth=origin_depth,
-            )
+        return (await service(project_root, context)).dependency_impact(
+            package,
+            ecosystem=ecosystem,
+            project_id=project_id,
+            evidence_limit=evidence_limit,
+            evidence_offset=evidence_offset,
+            origin_limit=origin_limit,
+            origin_depth=origin_depth,
         )
 
     @server.tool(annotations=read_only)
@@ -283,7 +284,7 @@ def create_server(
         offset: int = 0,
         context: Context = None,
     ) -> dict[str, Any]:
-        """Inspect explicit relative cve/cwe/vex/attestation/callgraph/govulncheck/runtime/component-matches/behavior/abi/deps-dev/scorecard data. All remain external assertions; no finding suppression, execution, keys or network. artifact_file selects an attestation digest comparison only; follow next_offset for all tables."""
+        """Inspect explicit relative cve/cwe/vex/attestation/callgraph/govulncheck/runtime/component-matches/behavior/abi/deps-dev/scorecard/pip-inspect/pip-install-report data. Installation reports may be dry-runs, not successful installation evidence. All remain external assertions; no finding suppression, execution, keys or network. artifact_file selects an attestation digest comparison only; follow next_offset for all tables."""
         return bounded_response(
             (await service(project_root, context)).inspect_evidence(
                 evidence_file,
@@ -301,12 +302,27 @@ def create_server(
         project_root: str = ".",
         limit: int = 20,
         offset: int = 0,
+        kev_file: str | None = None,
+        epss_file: str | None = None,
+        previous_kev_file: str | None = None,
+        previous_epss_file: str | None = None,
+        risk_as_of: str | None = None,
+        risk_max_age_days: int | None = None,
         context: Context = None,
     ) -> dict[str, Any]:
-        """Reevaluate an explicit relative scan/CycloneDX inventory against supplied OSV JSON. No network/cache writes. Nonmatches concern supplied records only, not global safety; original findings remain unchanged. Follow next_offset."""
+        """Reevaluate relative inventory/OSV JSON; optional KEV JSON and EPSS CSV/gzip add independent CVE context. Explicit previous files allow stale fallback; risk_as_of/risk_max_age_days only govern that context. No network/cache writes or finding/severity changes. Missing signals do not mean safe. Follow next_offset."""
         return bounded_response(
             (await service(project_root, context)).reevaluate_vulnerabilities(
-                inventory_file, advisory_file, limit=limit, offset=offset
+                inventory_file,
+                advisory_file,
+                limit=limit,
+                offset=offset,
+                kev_file=kev_file,
+                epss_file=epss_file,
+                previous_kev_file=previous_kev_file,
+                previous_epss_file=previous_epss_file,
+                risk_as_of=risk_as_of,
+                risk_max_age_days=risk_max_age_days,
             )
         )
 

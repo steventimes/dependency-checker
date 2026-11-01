@@ -1,0 +1,374 @@
+{
+  "schema": "depcheck.project-corpus-truth.v1",
+  "scope": "Two fixed historical real repository manifest/lock pairs; full locked package name/version/physical-instance inventory fingerprint and selected requires edges; security labels only for 17 lodash dependency instances against one supplied advisory. Root projects excluded. Not installed, runtime, reachable, exploitable, current database coverage or general accuracy.",
+  "annotation_method": "Inventory fingerprints derived independently with stdlib directly from lock syntax, without importing depcheck. Sort [physical instance, package name, version] rows and SHA256 UTF-8 json.dumps(separators=(comma,colon),ensure_ascii=False). Legacy names lowercased; these inputs contain no aliases/links/non-string versions. Selected edges and vulnerability labels manually read from raw requires/dependencies and the pinned official GHSA ranges. Unlabelled inventory is unjudged, never counted as true negatives. Resolution-context labels are independent manual subsets of the retained raw dev/optional/peer/bundle/install-script/platform fields, preserving original values and unknown activation; metadata-only comparison does not establish execution.",
+  "cases": [
+    {
+      "id": "lodash-4.17.20",
+      "directory": "lodash-4.17.20",
+      "lockfile_version": 1,
+      "expected_inventory_count": 672,
+      "expected_inventory_sha256": "f40d86119f483f0f19229e0fe1a925bb7847086dbd5fd5218d616e4660def421",
+      "security_labels": [
+        {
+          "instance": "node_modules/async/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/babel-core/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/babel-generator/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/babel-helper-define-map/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/babel-helper-regex/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/babel-plugin-transform-es2015-block-scoping/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/babel-register/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/babel-template/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/babel-traverse/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/babel-types/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/benchmark/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/docdown/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/jscs/node_modules/lodash",
+          "package": "lodash",
+          "version": "3.10.1",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/jsdoctypeparser/node_modules/lodash",
+          "package": "lodash",
+          "version": "3.10.1",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.14",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        },
+        {
+          "instance": "node_modules/xmlbuilder/node_modules/lodash",
+          "package": "lodash",
+          "version": "3.10.1",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": true,
+          "expected_status": "matched",
+          "expected_cve_ids": [
+            "CVE-2021-23337"
+          ],
+          "expected_fix_version": "4.17.21"
+        }
+      ],
+      "required_edges": [
+        {
+          "parent": "node_modules/lodash-doc-globals",
+          "required": "lodash",
+          "target": "node_modules/lodash",
+          "version": "4.17.14"
+        },
+        {
+          "parent": "node_modules/bl",
+          "required": "readable-stream",
+          "target": "node_modules/bl/node_modules/readable-stream",
+          "version": "1.0.34"
+        }
+      ],
+      "forbidden_edges": [
+        {
+          "parent": "node_modules/bl",
+          "target": "node_modules/bl/node_modules/isarray"
+        },
+        {
+          "parent": "node_modules/bl",
+          "target": "node_modules/bl/node_modules/string_decoder"
+        }
+      ],
+      "resolution_context_labels": [
+        {
+          "instance": "node_modules/chokidar",
+          "lock_format": "legacy",
+          "assertions": {
+            "dev": true,
+            "requires": {
+              "anymatch": "^1.3.0",
+              "async-each": "^1.0.0",
+              "fsevents": "^1.0.0",
+              "glob-parent": "^2.0.0",
+              "inherits": "^2.0.1",
+              "is-binary-path": "^1.0.0",
+              "is-glob": "^2.0.0",
+              "path-is-absolute": "^1.0.0",
+              "readdirp": "^2.0.0"
+            }
+          }
+        },
+        {
+          "instance": "node_modules/fsevents",
+          "lock_format": "legacy",
+          "assertions": {
+            "dev": true,
+            "optional": true,
+            "requires": {
+              "nan": "^2.9.2",
+              "node-pre-gyp": "^0.9.0"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "npm-registry-fetch-12.0.0",
+      "directory": "npm-registry-fetch-12.0.0",
+      "lockfile_version": 2,
+      "expected_inventory_count": 557,
+      "expected_inventory_sha256": "c30065eb517cfc2fe6ff837cc5a8711348312a84a55cd8f280924a523467816d",
+      "security_labels": [
+        {
+          "instance": "node_modules/tap/node_modules/lodash",
+          "package": "lodash",
+          "version": "4.17.21",
+          "advisory": "GHSA-35jh-r3h4-6jhm",
+          "known_affected": false,
+          "expected_status": "not-matched-in-supplied-records",
+          "expected_cve_ids": [],
+          "expected_fix_version": null
+        }
+      ],
+      "required_edges": [
+        {
+          "parent": "node_modules/tap/node_modules/ink",
+          "required": "lodash",
+          "target": "node_modules/tap/node_modules/lodash",
+          "version": "4.17.21"
+        }
+      ],
+      "forbidden_edges": [],
+      "resolution_context_labels": [
+        {
+          "instance": "node_modules/chokidar",
+          "lock_format": "packages",
+          "assertions": {
+            "dev": true,
+            "optionalDependencies": {
+              "fsevents": "~2.3.2"
+            }
+          }
+        },
+        {
+          "instance": "node_modules/fsevents",
+          "lock_format": "packages",
+          "assertions": {
+            "dev": true,
+            "optional": true,
+            "hasInstallScript": true,
+            "os": [
+              "darwin"
+            ]
+          }
+        },
+        {
+          "instance": "node_modules/minipass-fetch",
+          "lock_format": "packages",
+          "assertions": {
+            "optionalDependencies": {
+              "encoding": "^0.1.12"
+            }
+          }
+        },
+        {
+          "instance": "node_modules/tap",
+          "lock_format": "packages",
+          "assertions": {
+            "peerDependencies": {
+              "flow-remove-types": ">=2.112.0",
+              "ts-node": ">=8.5.2",
+              "typescript": ">=3.7.2"
+            },
+            "peerDependenciesMeta": {
+              "flow-remove-types": {
+                "optional": true
+              },
+              "ts-node": {
+                "optional": true
+              },
+              "typescript": {
+                "optional": true
+              }
+            }
+          }
+        },
+        {
+          "instance": "node_modules/tap/node_modules/ink",
+          "lock_format": "packages",
+          "assertions": {
+            "dev": true,
+            "inBundle": true,
+            "peerDependencies": {
+              "@types/react": ">=16.8.0",
+              "react": ">=16.8.0"
+            },
+            "peerDependenciesMeta": {
+              "@types/react": {
+                "optional": true
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variants": [
+    {
+      "id": "lodash-4.17.20-private-registry",
+      "base": "lodash-4.17.20",
+      "kind": "synthetic repository configuration variant; original upstream files unchanged",
+      "npmrc": "registry=https://registry.example.invalid/\n",
+      "expected_status": "unknown",
+      "known_affected": null
+    }
+  ]
+}

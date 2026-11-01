@@ -1,0 +1,1858 @@
+{
+  "name": "pipenv-root-official",
+  "schema": "depcheck.pipenv-corpus-truth.v1",
+  "repository": "pypa/pipenv",
+  "commit": "3534878ca8b41c661f163cbbd6e098bb123441aa",
+  "scope": "Static inventory and conditional source assertions from the original official root Pipfile/Pipfile.lock pair. The files are not claimed to be a consistent or selected active environment.",
+  "annotation_method": "Independent stdlib tomllib/json parsing of exact fixed upstream bytes; no depcheck or Pipenv execution, installation or build. Entries are source occurrences, not installed copies.",
+  "entry_identity": [
+    "category",
+    "name",
+    "version_raw"
+  ],
+  "inventory_fingerprint": "SHA-256 of entries JSON(sort_keys=True,separators=(comma,colon),ensure_ascii=True), preserving source category/package order.",
+  "expected_entry_count": 115,
+  "expected_category_counts": {
+    "default": 15,
+    "develop": 100
+  },
+  "entries_sha256": "ee8ffc6fbc0d089ff648fbcdf38e60ee521144fbf7ef553ed36c13a0c29a2874",
+  "entries": [
+    {
+      "row_index": 0,
+      "category": "default",
+      "name": "distlib",
+      "version_raw": "==0.4.3",
+      "source_pointer": "/default/distlib",
+      "context": {
+        "version": "==0.4.3"
+      }
+    },
+    {
+      "row_index": 1,
+      "category": "default",
+      "name": "exceptiongroup",
+      "version_raw": "==1.3.1",
+      "source_pointer": "/default/exceptiongroup",
+      "context": {
+        "markers": "python_version >= '3.7'",
+        "version": "==1.3.1"
+      }
+    },
+    {
+      "row_index": 2,
+      "category": "default",
+      "name": "filelock",
+      "version_raw": "==3.32.7",
+      "source_pointer": "/default/filelock",
+      "context": {
+        "markers": "python_version >= '3.10'",
+        "version": "==3.32.7"
+      }
+    },
+    {
+      "row_index": 3,
+      "category": "default",
+      "name": "iniconfig",
+      "version_raw": "==2.3.0",
+      "source_pointer": "/default/iniconfig",
+      "context": {
+        "markers": "python_version >= '3.10'",
+        "version": "==2.3.0"
+      }
+    },
+    {
+      "row_index": 4,
+      "category": "default",
+      "name": "packaging",
+      "version_raw": "==26.3",
+      "source_pointer": "/default/packaging",
+      "context": {
+        "markers": "python_version >= '3.9'",
+        "version": "==26.3"
+      }
+    },
+    {
+      "row_index": 5,
+      "category": "default",
+      "name": "platformdirs",
+      "version_raw": "==4.12.4",
+      "source_pointer": "/default/platformdirs",
+      "context": {
+        "markers": "python_version >= '3.10'",
+        "version": "==4.12.4"
+      }
+    },
+    {
+      "row_index": 6,
+      "category": "default",
+      "name": "pluggy",
+      "version_raw": "==1.6.0",
+      "source_pointer": "/default/pluggy",
+      "context": {
+        "markers": "python_version >= '3.9'",
+        "version": "==1.6.0"
+      }
+    },
+    {
+      "row_index": 7,
+      "category": "default",
+      "name": "pygments",
+      "version_raw": "==2.21.0",
+      "source_pointer": "/default/pygments",
+      "context": {
+        "markers": "python_version >= '3.9'",
+        "version": "==2.21.0"
+      }
+    },
+    {
+      "row_index": 8,
+      "category": "default",
+      "name": "pytest",
+      "version_raw": "==9.1.1",
+      "source_pointer": "/default/pytest",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.10'",
+        "version": "==9.1.1"
+      }
+    },
+    {
+      "row_index": 9,
+      "category": "default",
+      "name": "python-discovery",
+      "version_raw": "==1.6.1",
+      "source_pointer": "/default/python-discovery",
+      "context": {
+        "markers": "python_version >= '3.8'",
+        "version": "==1.6.1"
+      }
+    },
+    {
+      "row_index": 10,
+      "category": "default",
+      "name": "pytz",
+      "version_raw": "==2026.1.post1",
+      "source_pointer": "/default/pytz",
+      "context": {
+        "version": "==2026.1.post1"
+      }
+    },
+    {
+      "row_index": 11,
+      "category": "default",
+      "name": "setuptools",
+      "version_raw": "==83.0.0",
+      "source_pointer": "/default/setuptools",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.10'",
+        "version": "==83.0.0"
+      }
+    },
+    {
+      "row_index": 12,
+      "category": "default",
+      "name": "tomli",
+      "version_raw": "==2.4.1",
+      "source_pointer": "/default/tomli",
+      "context": {
+        "markers": "python_version >= '3.8'",
+        "version": "==2.4.1"
+      }
+    },
+    {
+      "row_index": 13,
+      "category": "default",
+      "name": "typing-extensions",
+      "version_raw": "==4.16.0",
+      "source_pointer": "/default/typing-extensions",
+      "context": {
+        "markers": "python_version >= '3.9'",
+        "version": "==4.16.0"
+      }
+    },
+    {
+      "row_index": 14,
+      "category": "default",
+      "name": "virtualenv",
+      "version_raw": "==21.7.13",
+      "source_pointer": "/default/virtualenv",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.9'",
+        "version": "==21.7.13"
+      }
+    },
+    {
+      "row_index": 15,
+      "category": "develop",
+      "name": "alabaster",
+      "version_raw": "==1.0.0",
+      "source_pointer": "/develop/alabaster",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==1.0.0"
+      }
+    },
+    {
+      "row_index": 16,
+      "category": "develop",
+      "name": "arpeggio",
+      "version_raw": "==2.0.3",
+      "source_pointer": "/develop/arpeggio",
+      "context": {
+        "markers": "'dev' in dependency_groups",
+        "version": "==2.0.3"
+      }
+    },
+    {
+      "row_index": 17,
+      "category": "develop",
+      "name": "atomicwrites",
+      "version_raw": "==1.4.1",
+      "source_pointer": "/develop/atomicwrites",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (sys_platform == 'win32')",
+        "version": "==1.4.1"
+      }
+    },
+    {
+      "row_index": 18,
+      "category": "develop",
+      "name": "attrs",
+      "version_raw": "==25.4.0",
+      "source_pointer": "/develop/attrs",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==25.4.0"
+      }
+    },
+    {
+      "row_index": 19,
+      "category": "develop",
+      "name": "babel",
+      "version_raw": "==2.18.0",
+      "source_pointer": "/develop/babel",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.8')",
+        "version": "==2.18.0"
+      }
+    },
+    {
+      "row_index": 20,
+      "category": "develop",
+      "name": "beautifulsoup4",
+      "version_raw": "==4.14.3",
+      "source_pointer": "/develop/beautifulsoup4",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_full_version >= '3.7.0')",
+        "version": "==4.14.3"
+      }
+    },
+    {
+      "row_index": 21,
+      "category": "develop",
+      "name": "black",
+      "version_raw": "==26.3.1",
+      "source_pointer": "/develop/black",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==26.3.1"
+      }
+    },
+    {
+      "row_index": 22,
+      "category": "develop",
+      "name": "bottle",
+      "version_raw": "==0.13.4",
+      "source_pointer": "/develop/bottle",
+      "context": {
+        "markers": "'dev' in dependency_groups",
+        "version": "==0.13.4"
+      }
+    },
+    {
+      "row_index": 23,
+      "category": "develop",
+      "name": "build",
+      "version_raw": "==1.4.0",
+      "source_pointer": "/develop/build",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==1.4.0"
+      }
+    },
+    {
+      "row_index": 24,
+      "category": "develop",
+      "name": "certifi",
+      "version_raw": "==2026.10.19",
+      "source_pointer": "/develop/certifi",
+      "context": {
+        "markers": "python_version >= '3.7'",
+        "version": "==2026.10.19"
+      }
+    },
+    {
+      "row_index": 25,
+      "category": "develop",
+      "name": "cffi",
+      "version_raw": "==2.1.1",
+      "source_pointer": "/develop/cffi",
+      "context": {
+        "markers": "python_version >= '3.10'",
+        "version": "==2.1.1"
+      }
+    },
+    {
+      "row_index": 26,
+      "category": "develop",
+      "name": "cfgv",
+      "version_raw": "==3.5.0",
+      "source_pointer": "/develop/cfgv",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==3.5.0"
+      }
+    },
+    {
+      "row_index": 27,
+      "category": "develop",
+      "name": "charset-normalizer",
+      "version_raw": "==3.4.7",
+      "source_pointer": "/develop/charset-normalizer",
+      "context": {
+        "markers": "python_version >= '3.7'",
+        "version": "==3.4.7"
+      }
+    },
+    {
+      "row_index": 28,
+      "category": "develop",
+      "name": "click",
+      "version_raw": "==8.0.3",
+      "source_pointer": "/develop/click",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.6')",
+        "version": "==8.0.3"
+      }
+    },
+    {
+      "row_index": 29,
+      "category": "develop",
+      "name": "coverage",
+      "version_raw": "==7.13.5",
+      "source_pointer": "/develop/coverage",
+      "context": {
+        "extras": [
+          "toml"
+        ],
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==7.13.5"
+      }
+    },
+    {
+      "row_index": 30,
+      "category": "develop",
+      "name": "cryptography",
+      "version_raw": "==50.0.0",
+      "source_pointer": "/develop/cryptography",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.9' and python_full_version not in '3.9.0, 3.9.1'",
+        "version": "==50.0.0"
+      }
+    },
+    {
+      "row_index": 31,
+      "category": "develop",
+      "name": "distlib",
+      "version_raw": "==0.4.0",
+      "source_pointer": "/develop/distlib",
+      "context": {
+        "markers": "'dev' in dependency_groups",
+        "version": "==0.4.0"
+      }
+    },
+    {
+      "row_index": 32,
+      "category": "develop",
+      "name": "docutils",
+      "version_raw": "==0.22.4",
+      "source_pointer": "/develop/docutils",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==0.22.4"
+      }
+    },
+    {
+      "row_index": 33,
+      "category": "develop",
+      "name": "exceptiongroup",
+      "version_raw": "==1.1.0",
+      "source_pointer": "/develop/exceptiongroup",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==1.1.0"
+      }
+    },
+    {
+      "row_index": 34,
+      "category": "develop",
+      "name": "execnet",
+      "version_raw": "==2.1.2",
+      "source_pointer": "/develop/execnet",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.8')",
+        "version": "==2.1.2"
+      }
+    },
+    {
+      "row_index": 35,
+      "category": "develop",
+      "name": "filelock",
+      "version_raw": "==3.25.2",
+      "source_pointer": "/develop/filelock",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==3.25.2"
+      }
+    },
+    {
+      "row_index": 36,
+      "category": "develop",
+      "name": "flake8",
+      "version_raw": "==3.9.2",
+      "source_pointer": "/develop/flake8",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3, 3.4')",
+        "version": "==3.9.2"
+      }
+    },
+    {
+      "row_index": 37,
+      "category": "develop",
+      "name": "gunicorn",
+      "version_raw": "==26.2.0",
+      "source_pointer": "/develop/gunicorn",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.10'",
+        "version": "==26.2.0"
+      }
+    },
+    {
+      "row_index": 38,
+      "category": "develop",
+      "name": "id",
+      "version_raw": "==1.6.1",
+      "source_pointer": "/develop/id",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==1.6.1"
+      }
+    },
+    {
+      "row_index": 39,
+      "category": "develop",
+      "name": "identify",
+      "version_raw": "==2.6.18",
+      "source_pointer": "/develop/identify",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==2.6.18"
+      }
+    },
+    {
+      "row_index": 40,
+      "category": "develop",
+      "name": "idna",
+      "version_raw": "==3.15",
+      "source_pointer": "/develop/idna",
+      "context": {
+        "markers": "python_version >= '3.8'",
+        "version": "==3.15"
+      }
+    },
+    {
+      "row_index": 41,
+      "category": "develop",
+      "name": "imagesize",
+      "version_raw": "==2.0.0",
+      "source_pointer": "/develop/imagesize",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10' and python_version < '3.15')",
+        "version": "==2.0.0"
+      }
+    },
+    {
+      "row_index": 42,
+      "category": "develop",
+      "name": "iniconfig",
+      "version_raw": "==2.3.0",
+      "source_pointer": "/develop/iniconfig",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==2.3.0"
+      }
+    },
+    {
+      "row_index": 43,
+      "category": "develop",
+      "name": "invoke",
+      "version_raw": "==2.2.1",
+      "source_pointer": "/develop/invoke",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.6')",
+        "version": "==2.2.1"
+      }
+    },
+    {
+      "row_index": 44,
+      "category": "develop",
+      "name": "jaraco.classes",
+      "version_raw": "==3.4.0",
+      "source_pointer": "/develop/jaraco.classes",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.8')",
+        "version": "==3.4.0"
+      }
+    },
+    {
+      "row_index": 45,
+      "category": "develop",
+      "name": "jaraco.context",
+      "version_raw": "==6.1.1",
+      "source_pointer": "/develop/jaraco.context",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==6.1.1"
+      }
+    },
+    {
+      "row_index": 46,
+      "category": "develop",
+      "name": "jaraco.functools",
+      "version_raw": "==4.4.0",
+      "source_pointer": "/develop/jaraco.functools",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==4.4.0"
+      }
+    },
+    {
+      "row_index": 47,
+      "category": "develop",
+      "name": "jeepney",
+      "version_raw": "==0.9.0",
+      "source_pointer": "/develop/jeepney",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==0.9.0"
+      }
+    },
+    {
+      "row_index": 48,
+      "category": "develop",
+      "name": "jinja2",
+      "version_raw": "==3.1.6",
+      "source_pointer": "/develop/jinja2",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==3.1.6"
+      }
+    },
+    {
+      "row_index": 49,
+      "category": "develop",
+      "name": "keyring",
+      "version_raw": "==25.7.0",
+      "source_pointer": "/develop/keyring",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==25.7.0"
+      }
+    },
+    {
+      "row_index": 50,
+      "category": "develop",
+      "name": "legacy-cgi",
+      "version_raw": "==2.6.4",
+      "source_pointer": "/develop/legacy-cgi",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.13')",
+        "version": "==2.6.4"
+      }
+    },
+    {
+      "row_index": 51,
+      "category": "develop",
+      "name": "linkify-it-py",
+      "version_raw": "==2.1.0",
+      "source_pointer": "/develop/linkify-it-py",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==2.1.0"
+      }
+    },
+    {
+      "row_index": 52,
+      "category": "develop",
+      "name": "markdown-it-py",
+      "version_raw": "==4.0.0",
+      "source_pointer": "/develop/markdown-it-py",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==4.0.0"
+      }
+    },
+    {
+      "row_index": 53,
+      "category": "develop",
+      "name": "markupsafe",
+      "version_raw": "==3.0.3",
+      "source_pointer": "/develop/markupsafe",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==3.0.3"
+      }
+    },
+    {
+      "row_index": 54,
+      "category": "develop",
+      "name": "mccabe",
+      "version_raw": "==0.6.1",
+      "source_pointer": "/develop/mccabe",
+      "context": {
+        "markers": "'dev' in dependency_groups",
+        "version": "==0.6.1"
+      }
+    },
+    {
+      "row_index": 55,
+      "category": "develop",
+      "name": "mdit-py-plugins",
+      "version_raw": "==0.5.0",
+      "source_pointer": "/develop/mdit-py-plugins",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==0.5.0"
+      }
+    },
+    {
+      "row_index": 56,
+      "category": "develop",
+      "name": "mdurl",
+      "version_raw": "==0.1.2",
+      "source_pointer": "/develop/mdurl",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==0.1.2"
+      }
+    },
+    {
+      "row_index": 57,
+      "category": "develop",
+      "name": "mock",
+      "version_raw": "==5.2.0",
+      "source_pointer": "/develop/mock",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.6')",
+        "version": "==5.2.0"
+      }
+    },
+    {
+      "row_index": 58,
+      "category": "develop",
+      "name": "more-itertools",
+      "version_raw": "==10.8.0",
+      "source_pointer": "/develop/more-itertools",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==10.8.0"
+      }
+    },
+    {
+      "row_index": 59,
+      "category": "develop",
+      "name": "mypy-extensions",
+      "version_raw": "==1.1.0",
+      "source_pointer": "/develop/mypy-extensions",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.8')",
+        "version": "==1.1.0"
+      }
+    },
+    {
+      "row_index": 60,
+      "category": "develop",
+      "name": "myst-parser",
+      "version_raw": "==5.0.0",
+      "source_pointer": "/develop/myst-parser",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.11')",
+        "version": "==5.0.0"
+      }
+    },
+    {
+      "row_index": 61,
+      "category": "develop",
+      "name": "nh3",
+      "version_raw": "==0.3.3",
+      "source_pointer": "/develop/nh3",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.8')",
+        "version": "==0.3.3"
+      }
+    },
+    {
+      "row_index": 62,
+      "category": "develop",
+      "name": "nodeenv",
+      "version_raw": "==1.10.0",
+      "source_pointer": "/develop/nodeenv",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6')",
+        "version": "==1.10.0"
+      }
+    },
+    {
+      "row_index": 63,
+      "category": "develop",
+      "name": "packaging",
+      "version_raw": "==26.2",
+      "source_pointer": "/develop/packaging",
+      "context": {
+        "markers": "python_version >= '3.8'",
+        "version": "==26.2"
+      }
+    },
+    {
+      "row_index": 64,
+      "category": "develop",
+      "name": "parse",
+      "version_raw": "==1.21.1",
+      "source_pointer": "/develop/parse",
+      "context": {
+        "markers": "'dev' in dependency_groups",
+        "version": "==1.21.1"
+      }
+    },
+    {
+      "row_index": 65,
+      "category": "develop",
+      "name": "parver",
+      "version_raw": "==0.5",
+      "source_pointer": "/develop/parver",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.8')",
+        "version": "==0.5"
+      }
+    },
+    {
+      "row_index": 66,
+      "category": "develop",
+      "name": "pathspec",
+      "version_raw": "==1.0.4",
+      "source_pointer": "/develop/pathspec",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==1.0.4"
+      }
+    },
+    {
+      "row_index": 67,
+      "category": "develop",
+      "name": "pip",
+      "version_raw": "==26.2",
+      "source_pointer": "/develop/pip",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.10'",
+        "version": "==26.2"
+      }
+    },
+    {
+      "row_index": 68,
+      "category": "develop",
+      "name": "platformdirs",
+      "version_raw": "==4.9.4",
+      "source_pointer": "/develop/platformdirs",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==4.9.4"
+      }
+    },
+    {
+      "row_index": 69,
+      "category": "develop",
+      "name": "pluggy",
+      "version_raw": "==1.6.0",
+      "source_pointer": "/develop/pluggy",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==1.6.0"
+      }
+    },
+    {
+      "row_index": 70,
+      "category": "develop",
+      "name": "pre-commit",
+      "version_raw": "==2.21.0",
+      "source_pointer": "/develop/pre-commit",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==2.21.0"
+      }
+    },
+    {
+      "row_index": 71,
+      "category": "develop",
+      "name": "pycodestyle",
+      "version_raw": "==2.7.0",
+      "source_pointer": "/develop/pycodestyle",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3')",
+        "version": "==2.7.0"
+      }
+    },
+    {
+      "row_index": 72,
+      "category": "develop",
+      "name": "pycparser",
+      "version_raw": "==3.0",
+      "source_pointer": "/develop/pycparser",
+      "context": {
+        "markers": "python_version >= '3.10'",
+        "version": "==3.0"
+      }
+    },
+    {
+      "row_index": 73,
+      "category": "develop",
+      "name": "pyenchant",
+      "version_raw": "==3.3.0",
+      "source_pointer": "/develop/pyenchant",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==3.3.0"
+      }
+    },
+    {
+      "row_index": 74,
+      "category": "develop",
+      "name": "pyflakes",
+      "version_raw": "==2.3.1",
+      "source_pointer": "/develop/pyflakes",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3')",
+        "version": "==2.3.1"
+      }
+    },
+    {
+      "row_index": 75,
+      "category": "develop",
+      "name": "pygments",
+      "version_raw": "==2.20.0",
+      "source_pointer": "/develop/pygments",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.9'",
+        "version": "==2.20.0"
+      }
+    },
+    {
+      "row_index": 76,
+      "category": "develop",
+      "name": "pypiserver",
+      "version_raw": "==2.4.1",
+      "source_pointer": "/develop/pypiserver",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==2.4.1"
+      }
+    },
+    {
+      "row_index": 77,
+      "category": "develop",
+      "name": "pyproject-hooks",
+      "version_raw": "==1.2.0",
+      "source_pointer": "/develop/pyproject-hooks",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==1.2.0"
+      }
+    },
+    {
+      "row_index": 78,
+      "category": "develop",
+      "name": "pytest",
+      "version_raw": "==9.0.3",
+      "source_pointer": "/develop/pytest",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==9.0.3"
+      }
+    },
+    {
+      "row_index": 79,
+      "category": "develop",
+      "name": "pytest-cov",
+      "version_raw": "==4.1.0",
+      "source_pointer": "/develop/pytest-cov",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==4.1.0"
+      }
+    },
+    {
+      "row_index": 80,
+      "category": "develop",
+      "name": "pytest-rerunfailures",
+      "version_raw": "==16.1",
+      "source_pointer": "/develop/pytest-rerunfailures",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==16.1"
+      }
+    },
+    {
+      "row_index": 81,
+      "category": "develop",
+      "name": "pytest-timeout",
+      "version_raw": "==2.4.0",
+      "source_pointer": "/develop/pytest-timeout",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==2.4.0"
+      }
+    },
+    {
+      "row_index": 82,
+      "category": "develop",
+      "name": "pytest-xdist",
+      "version_raw": "==3.8.0",
+      "source_pointer": "/develop/pytest-xdist",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==3.8.0"
+      }
+    },
+    {
+      "row_index": 83,
+      "category": "develop",
+      "name": "python-discovery",
+      "version_raw": "==1.1.3",
+      "source_pointer": "/develop/python-discovery",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.8')",
+        "version": "==1.1.3"
+      }
+    },
+    {
+      "row_index": 84,
+      "category": "develop",
+      "name": "pytokens",
+      "version_raw": "==0.4.1",
+      "source_pointer": "/develop/pytokens",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.8')",
+        "version": "==0.4.1"
+      }
+    },
+    {
+      "row_index": 85,
+      "category": "develop",
+      "name": "pyyaml",
+      "version_raw": "==6.0.1",
+      "source_pointer": "/develop/pyyaml",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.6')",
+        "version": "==6.0.1"
+      }
+    },
+    {
+      "row_index": 86,
+      "category": "develop",
+      "name": "readme-renderer",
+      "version_raw": "==44.0",
+      "source_pointer": "/develop/readme-renderer",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==44.0"
+      }
+    },
+    {
+      "row_index": 87,
+      "category": "develop",
+      "name": "requests",
+      "version_raw": "==2.34.2",
+      "source_pointer": "/develop/requests",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.10'",
+        "version": "==2.34.2"
+      }
+    },
+    {
+      "row_index": 88,
+      "category": "develop",
+      "name": "requests-toolbelt",
+      "version_raw": "==1.0.0",
+      "source_pointer": "/develop/requests-toolbelt",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3')",
+        "version": "==1.0.0"
+      }
+    },
+    {
+      "row_index": 89,
+      "category": "develop",
+      "name": "rfc3986",
+      "version_raw": "==2.0.0",
+      "source_pointer": "/develop/rfc3986",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==2.0.0"
+      }
+    },
+    {
+      "row_index": 90,
+      "category": "develop",
+      "name": "rich",
+      "version_raw": "==14.3.3",
+      "source_pointer": "/develop/rich",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_full_version >= '3.8.0')",
+        "version": "==14.3.3"
+      }
+    },
+    {
+      "row_index": 91,
+      "category": "develop",
+      "name": "roman-numerals",
+      "version_raw": "==4.1.0",
+      "source_pointer": "/develop/roman-numerals",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==4.1.0"
+      }
+    },
+    {
+      "row_index": 92,
+      "category": "develop",
+      "name": "secretstorage",
+      "version_raw": "==3.5.0",
+      "source_pointer": "/develop/secretstorage",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==3.5.0"
+      }
+    },
+    {
+      "row_index": 93,
+      "category": "develop",
+      "name": "semver",
+      "version_raw": "==3.0.4",
+      "source_pointer": "/develop/semver",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==3.0.4"
+      }
+    },
+    {
+      "row_index": 94,
+      "category": "develop",
+      "name": "setuptools",
+      "version_raw": "==83.0.0",
+      "source_pointer": "/develop/setuptools",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==83.0.0"
+      }
+    },
+    {
+      "row_index": 95,
+      "category": "develop",
+      "name": "snowballstemmer",
+      "version_raw": "==3.0.1",
+      "source_pointer": "/develop/snowballstemmer",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version not in '3.0, 3.1, 3.2')",
+        "version": "==3.0.1"
+      }
+    },
+    {
+      "row_index": 96,
+      "category": "develop",
+      "name": "soupsieve",
+      "version_raw": "==2.9",
+      "source_pointer": "/develop/soupsieve",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.10'",
+        "version": "==2.9"
+      }
+    },
+    {
+      "row_index": 97,
+      "category": "develop",
+      "name": "sphinx",
+      "version_raw": "==9.1.0",
+      "source_pointer": "/develop/sphinx",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.12')",
+        "version": "==9.1.0"
+      }
+    },
+    {
+      "row_index": 98,
+      "category": "develop",
+      "name": "sphinx-click",
+      "version_raw": "==4.4.0",
+      "source_pointer": "/develop/sphinx-click",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==4.4.0"
+      }
+    },
+    {
+      "row_index": 99,
+      "category": "develop",
+      "name": "sphinxcontrib-applehelp",
+      "version_raw": "==2.0.0",
+      "source_pointer": "/develop/sphinxcontrib-applehelp",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==2.0.0"
+      }
+    },
+    {
+      "row_index": 100,
+      "category": "develop",
+      "name": "sphinxcontrib-devhelp",
+      "version_raw": "==2.0.0",
+      "source_pointer": "/develop/sphinxcontrib-devhelp",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==2.0.0"
+      }
+    },
+    {
+      "row_index": 101,
+      "category": "develop",
+      "name": "sphinxcontrib-htmlhelp",
+      "version_raw": "==2.1.0",
+      "source_pointer": "/develop/sphinxcontrib-htmlhelp",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==2.1.0"
+      }
+    },
+    {
+      "row_index": 102,
+      "category": "develop",
+      "name": "sphinxcontrib-jsmath",
+      "version_raw": "==1.0.1",
+      "source_pointer": "/develop/sphinxcontrib-jsmath",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.5')",
+        "version": "==1.0.1"
+      }
+    },
+    {
+      "row_index": 103,
+      "category": "develop",
+      "name": "sphinxcontrib-qthelp",
+      "version_raw": "==2.0.0",
+      "source_pointer": "/develop/sphinxcontrib-qthelp",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==2.0.0"
+      }
+    },
+    {
+      "row_index": 104,
+      "category": "develop",
+      "name": "sphinxcontrib-serializinghtml",
+      "version_raw": "==2.0.0",
+      "source_pointer": "/develop/sphinxcontrib-serializinghtml",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==2.0.0"
+      }
+    },
+    {
+      "row_index": 105,
+      "category": "develop",
+      "name": "sphinxcontrib-spelling",
+      "version_raw": "==7.7.0",
+      "source_pointer": "/develop/sphinxcontrib-spelling",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.6')",
+        "version": "==7.7.0"
+      }
+    },
+    {
+      "row_index": 106,
+      "category": "develop",
+      "name": "stdeb",
+      "version_raw": "==0.11.0",
+      "source_pointer": "/develop/stdeb",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (sys_platform == 'linux')",
+        "version": "==0.11.0"
+      }
+    },
+    {
+      "row_index": 107,
+      "category": "develop",
+      "name": "tomli",
+      "version_raw": "==2.4.0",
+      "source_pointer": "/develop/tomli",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.8')",
+        "version": "==2.4.0"
+      }
+    },
+    {
+      "row_index": 108,
+      "category": "develop",
+      "name": "towncrier",
+      "version_raw": "==25.8.0",
+      "source_pointer": "/develop/towncrier",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==25.8.0"
+      }
+    },
+    {
+      "row_index": 109,
+      "category": "develop",
+      "name": "twine",
+      "version_raw": "==6.2.0",
+      "source_pointer": "/develop/twine",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==6.2.0"
+      }
+    },
+    {
+      "row_index": 110,
+      "category": "develop",
+      "name": "typing-extensions",
+      "version_raw": "==4.16.0",
+      "source_pointer": "/develop/typing-extensions",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.9'",
+        "version": "==4.16.0"
+      }
+    },
+    {
+      "row_index": 111,
+      "category": "develop",
+      "name": "uc-micro-py",
+      "version_raw": "==2.0.0",
+      "source_pointer": "/develop/uc-micro-py",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==2.0.0"
+      }
+    },
+    {
+      "row_index": 112,
+      "category": "develop",
+      "name": "urllib3",
+      "version_raw": "==2.8.0",
+      "source_pointer": "/develop/urllib3",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.10'",
+        "version": "==2.8.0"
+      }
+    },
+    {
+      "row_index": 113,
+      "category": "develop",
+      "name": "virtualenv",
+      "version_raw": "==21.7.13",
+      "source_pointer": "/develop/virtualenv",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==21.7.13"
+      }
+    },
+    {
+      "row_index": 114,
+      "category": "develop",
+      "name": "waitress",
+      "version_raw": "==3.0.2",
+      "source_pointer": "/develop/waitress",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (sys_platform == 'win32')",
+        "version": "==3.0.2"
+      }
+    }
+  ],
+  "cross_category_duplicate_names": [
+    {
+      "name": "distlib",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==0.4.3",
+          "source_pointer": "/default/distlib"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==0.4.0",
+          "source_pointer": "/develop/distlib"
+        }
+      ]
+    },
+    {
+      "name": "exceptiongroup",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==1.3.1",
+          "source_pointer": "/default/exceptiongroup"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==1.1.0",
+          "source_pointer": "/develop/exceptiongroup"
+        }
+      ]
+    },
+    {
+      "name": "filelock",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==3.32.7",
+          "source_pointer": "/default/filelock"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==3.25.2",
+          "source_pointer": "/develop/filelock"
+        }
+      ]
+    },
+    {
+      "name": "iniconfig",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==2.3.0",
+          "source_pointer": "/default/iniconfig"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==2.3.0",
+          "source_pointer": "/develop/iniconfig"
+        }
+      ]
+    },
+    {
+      "name": "packaging",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==26.3",
+          "source_pointer": "/default/packaging"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==26.2",
+          "source_pointer": "/develop/packaging"
+        }
+      ]
+    },
+    {
+      "name": "platformdirs",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==4.12.4",
+          "source_pointer": "/default/platformdirs"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==4.9.4",
+          "source_pointer": "/develop/platformdirs"
+        }
+      ]
+    },
+    {
+      "name": "pluggy",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==1.6.0",
+          "source_pointer": "/default/pluggy"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==1.6.0",
+          "source_pointer": "/develop/pluggy"
+        }
+      ]
+    },
+    {
+      "name": "pygments",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==2.21.0",
+          "source_pointer": "/default/pygments"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==2.20.0",
+          "source_pointer": "/develop/pygments"
+        }
+      ]
+    },
+    {
+      "name": "pytest",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==9.1.1",
+          "source_pointer": "/default/pytest"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==9.0.3",
+          "source_pointer": "/develop/pytest"
+        }
+      ]
+    },
+    {
+      "name": "python-discovery",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==1.6.1",
+          "source_pointer": "/default/python-discovery"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==1.1.3",
+          "source_pointer": "/develop/python-discovery"
+        }
+      ]
+    },
+    {
+      "name": "setuptools",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==83.0.0",
+          "source_pointer": "/default/setuptools"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==83.0.0",
+          "source_pointer": "/develop/setuptools"
+        }
+      ]
+    },
+    {
+      "name": "tomli",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==2.4.1",
+          "source_pointer": "/default/tomli"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==2.4.0",
+          "source_pointer": "/develop/tomli"
+        }
+      ]
+    },
+    {
+      "name": "typing-extensions",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==4.16.0",
+          "source_pointer": "/default/typing-extensions"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==4.16.0",
+          "source_pointer": "/develop/typing-extensions"
+        }
+      ]
+    },
+    {
+      "name": "virtualenv",
+      "occurrences": [
+        {
+          "category": "default",
+          "version_raw": "==21.7.13",
+          "source_pointer": "/default/virtualenv"
+        },
+        {
+          "category": "develop",
+          "version_raw": "==21.7.13",
+          "source_pointer": "/develop/virtualenv"
+        }
+      ]
+    }
+  ],
+  "expected_cross_category_duplicate_name_count": 14,
+  "conditional_labels": [
+    {
+      "category": "default",
+      "name": "exceptiongroup",
+      "version_raw": "==1.3.1",
+      "context": {
+        "markers": "python_version >= '3.7'",
+        "version": "==1.3.1"
+      },
+      "activation": "unknown"
+    },
+    {
+      "category": "develop",
+      "name": "exceptiongroup",
+      "version_raw": "==1.1.0",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.7')",
+        "version": "==1.1.0"
+      },
+      "activation": "unknown"
+    },
+    {
+      "category": "develop",
+      "name": "atomicwrites",
+      "version_raw": "==1.4.1",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (sys_platform == 'win32')",
+        "version": "==1.4.1"
+      },
+      "activation": "unknown"
+    },
+    {
+      "category": "develop",
+      "name": "stdeb",
+      "version_raw": "==0.11.0",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (sys_platform == 'linux')",
+        "version": "==0.11.0"
+      },
+      "activation": "unknown"
+    },
+    {
+      "category": "develop",
+      "name": "coverage",
+      "version_raw": "==7.13.5",
+      "context": {
+        "extras": [
+          "toml"
+        ],
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.10')",
+        "version": "==7.13.5"
+      },
+      "activation": "unknown"
+    },
+    {
+      "category": "develop",
+      "name": "myst-parser",
+      "version_raw": "==5.0.0",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.11')",
+        "version": "==5.0.0"
+      },
+      "activation": "unknown"
+    },
+    {
+      "category": "default",
+      "name": "setuptools",
+      "version_raw": "==83.0.0",
+      "context": {
+        "index": "pypi",
+        "markers": "python_version >= '3.10'",
+        "version": "==83.0.0"
+      },
+      "activation": "unknown"
+    },
+    {
+      "category": "develop",
+      "name": "setuptools",
+      "version_raw": "==83.0.0",
+      "context": {
+        "markers": "('dev' in dependency_groups) and (python_version >= '3.9')",
+        "version": "==83.0.0"
+      },
+      "activation": "unknown"
+    }
+  ],
+  "manifest_source_assertions": [
+    {
+      "url": "https://pypi.org/simple",
+      "verify_ssl": true,
+      "name": "pypi"
+    }
+  ],
+  "lock_source_assertions": [
+    {
+      "name": "pypi",
+      "url": "https://pypi.org/simple",
+      "verify_ssl": true
+    }
+  ],
+  "manifest_package_names": [
+    "pytz"
+  ],
+  "manifest_settings": {
+    "allow_prereleases": true,
+    "use_pylock": true
+  },
+  "manifest_lock_consistency": {
+    "active_lock_selection": "unknown",
+    "manifest_use_pylock": true,
+    "manifest_default_names_missing_from_lock_default": [],
+    "scope": "A manifest name absent from this retained lock is an observed file difference, not proof of an installed-state fault. use_pylock=true means this Pipfile.lock must not be promoted to the active resolution without additional evidence."
+  },
+  "custom_categories_in_original_lock": [],
+  "custom_category_evidence": {
+    "path": "category-test-source.txt",
+    "upstream_path": "tests/integration/test_install_categories.py",
+    "scope": "Official source assertions, not an original stored custom-category lock. The source was only read, never executed.",
+    "category_mappings": [
+      {
+        "manifest_category": "prereq",
+        "lock_category": "prereq"
+      },
+      {
+        "manifest_category": "other",
+        "lock_category": "other"
+      }
+    ],
+    "evidence_functions": [
+      "test_basic_category_install",
+      "test_multiple_category_install"
+    ],
+    "installed_state": "unknown"
+  },
+  "limits": [
+    "All marker strings and extras remain assertions; do not evaluate the analysis host to select an active subset.",
+    "Different categories retain distinct source occurrences even when names or versions match.",
+    "The official custom-category test source demonstrates schema expectations only. Any derived custom-category input used by local tests must be explicitly synthetic.",
+    "No CVE, supported installation, current graph, source freshness, runtime activation or exploitability truth is supplied.",
+    "The manifest and this stored lock may be out of sync; selected active lock and actual environment remain unknown."
+  ],
+  "manifest_entries": [
+    {
+      "section": "packages",
+      "name": "pytz",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "urllib3",
+      "constraint": ">=2.8.0",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "requests",
+      "constraint": ">=2.34.2",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "sphinx",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "sphinx-click",
+      "constraint": "==4.*",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "sphinxcontrib-spelling",
+      "constraint": "==7.*",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "click",
+      "constraint": "==8.0.3",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "stdeb",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {
+        "sys_platform": "== 'linux'"
+      }
+    },
+    {
+      "section": "dev-packages",
+      "name": "pre-commit",
+      "constraint": "==2.*",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "atomicwrites",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {
+        "sys_platform": "== 'win32'"
+      }
+    },
+    {
+      "section": "dev-packages",
+      "name": "pytest-cov",
+      "constraint": "==4.*",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "typing-extensions",
+      "constraint": "==4.*",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "waitress",
+      "constraint": "==3.*",
+      "extras": [],
+      "marker_terms": {
+        "sys_platform": "== 'win32'"
+      }
+    },
+    {
+      "section": "dev-packages",
+      "name": "gunicorn",
+      "constraint": "==26.2.*",
+      "extras": [],
+      "marker_terms": {
+        "sys_platform": "== 'linux'"
+      }
+    },
+    {
+      "section": "dev-packages",
+      "name": "parse",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "myst-parser",
+      "constraint": "",
+      "extras": [
+        "linkify"
+      ],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "invoke",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "exceptiongroup",
+      "constraint": "==1.1.0",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "pyyaml",
+      "constraint": "==6.0.1",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "build",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "twine",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "semver",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "pypiserver",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "tomli",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "bottle",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    },
+    {
+      "section": "dev-packages",
+      "name": "legacy-cgi",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {
+        "markers": "python_version >= '3.13'"
+      }
+    },
+    {
+      "section": "dev-packages",
+      "name": "pytest-rerunfailures",
+      "constraint": "",
+      "extras": [],
+      "marker_terms": {}
+    }
+  ],
+  "expected_manifest_entry_count": 27,
+  "manifest_entries_sha256": "45cc547d19557d6d985475d0be9bd13c62adfeebefe77dbbc28af8b25c2ad197"
+}

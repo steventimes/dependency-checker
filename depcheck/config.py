@@ -8,10 +8,9 @@ from typing import Any
 
 from packaging.utils import canonicalize_name
 
-from depcheck.policy_codes import VALID_FAIL_ON
-from depcheck.path_policy import require_within_project
-from depcheck.bounded_io import read_bytes, repository_operation
+from depcheck.filesystem import read_bytes, repository_operation, require_within_project
 from depcheck.model import ProjectUnit
+from depcheck.reporting.policy import VALID_FAIL_ON
 
 
 class ConfigurationError(ValueError):

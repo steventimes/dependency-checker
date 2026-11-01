@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from depcheck.path_policy import external_path_executable
+from depcheck.filesystem import external_path_executable
 
 _COMMIT_PATTERN = re.compile(r"\b[0-9a-fA-F]{40}\b")
 _CURRENT_STATUSES = {"current", "ready", "up-to-date", "up_to_date", "uptodate"}

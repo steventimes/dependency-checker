@@ -2,23 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Mapping
 
 import tomlkit
-from tomlkit.items import Array, String
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
+from tomlkit.items import Array, String
 
 from depcheck.compatibility.safe_updater import (
-    RequirementUpdatePlan,
     RequirementsUpdater,
+    RequirementUpdatePlan,
 )
+from depcheck.filesystem import read_bytes, require_within_project
 from depcheck.model import Diagnostic, SourceLocation
-from depcheck.path_policy import require_within_project
-from depcheck.bounded_io import read_bytes
 
 
 @dataclass(frozen=True)

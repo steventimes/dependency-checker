@@ -1,0 +1,47 @@
+[package]
+name = "ambient_ui"
+edition = "2021"
+description = "A UI library for the Ambient runtime, built on top of Ambient's Element library."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+rust-version = { workspace = true }
+version = { workspace = true }
+
+[package.metadata.docs.rs]
+features = ["guest"]
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["wasm32-wasi"]
+
+[dependencies]
+# Shared
+ambient_element = { path = "../element", default-features = false, version = "0.3.2-dev" }
+ambient_guest_bridge = { path = "../guest_bridge", default-features = false, version = "0.3.2-dev" }
+
+ambient_cb = { path = "../../libs/cb", version = "0.3.2-dev" }
+ambient_color = { path = "../../libs/color", version = "0.3.2-dev" }
+ambient_math = { path = "../../libs/math", version = "0.3.2-dev" }
+ambient_time = { path = "../../libs/time", version = "0.3.2-dev" }
+ambient_shared_types = { path = "../shared_types", version = "0.3.2-dev" }
+
+# Host only
+ambient_sys = { path = "../../crates/sys", optional = true, version = "0.3.2-dev" }
+
+glam = { workspace = true }
+itertools = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+rand = { workspace = true }
+indexmap = { workspace = true }
+convert_case = { workspace = true }
+
+[features]
+native = [
+    "ambient_element/native",
+    "ambient_shared_types/native",
+    "ambient_sys",
+]
+guest = ["ambient_element/guest", "ambient_guest_bridge/guest"]
+
+client = ["ambient_guest_bridge/client"]
+server = ["ambient_guest_bridge/server"]

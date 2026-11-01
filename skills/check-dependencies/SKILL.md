@@ -7,7 +7,11 @@ description: Audit repository dependencies using depcheck static evidence across
 
 Use depcheck as a source of static dependency evidence. Discover the available
 MCP tools first; do not assume installing this skill also installed its server.
-If the tools are absent or the transport fails, use an installed `depcheck` CLI
+Call `backend_info` when available and compare its revision/schema with the
+required contract; `depcheck runtime` identifies a CLI fallback. These identity
+checks need no repository root and do not prove index freshness. Do not refresh
+a current index through a stale backend. If tools are absent or the transport
+fails, use an installed `depcheck` CLI
 as described below. If neither is available, report that limitation. Do not
 silently install tools or repeatedly retry a stalled transport.
 
@@ -27,7 +31,8 @@ MCP queries and update previews are read-only. `index_repository` and
 change source or manifests. The tool annotations describe these side effects.
 Evidence reads are limited to 8 MiB per file; default SQLite snapshots to
 128 MiB. Oversized or unsafe inputs produce incomplete evidence or an operation
-error, not truncated evidence. There is no total repository processing budget.
+error, not truncated evidence. Parsing and cache reads have additional work
+budgets; there is no total repository processing budget.
 Default cache queries and refreshes process SQLite snapshots in memory. Builds
 without SQLite serialization or in-memory temporary storage return an operation
 error; report that limitation rather than retrying through a disk temporary path.
@@ -44,14 +49,15 @@ affected ecosystems; a repository audit needs every ecosystem in its scope.
 | --- | --- |
 | CLI transport | [CLI fallback](references/cli.md) |
 | Tool/command/configuration usages, policy exceptions or advisory fix candidates | [Usage and policy](references/usage-and-policy.md) |
-| Python, uv, Pipenv, PEP 735 groups or source assertions | [Python](references/python.md) |
-| npm/pnpm, TypeScript, CSS or frontend components | [JavaScript](references/javascript.md) |
-| Go requirements, checksums or tool directives | [Go](references/go.md) |
-| Maven plugins, Gradle requests, locks or catalogs | [Java/Kotlin](references/java.md) |
-| Conan/vcpkg declarations, features or C/C++ includes | [C/C++](references/cpp.md) |
-| CMake project/scripts, package-config templates or supplied File API replies | [CMake](references/cmake.md) |
-| Bazel module requests or uncovered Bazel inputs | [Bzlmod](references/bazel.md) |
-| Cargo manifests, locks or conditional Rust crate references | [Cargo](references/cargo.md) |
+| Detailed collector coverage, ownership or advisory interpretation limits | [Analysis limits](references/analysis-limits.md) |
+| Python, uv, Pipenv, PEP 735 groups or source assertions | [Python](references/ecosystems/python.md) |
+| npm/pnpm, TypeScript, CSS or frontend components | [JavaScript](references/ecosystems/javascript.md) |
+| Go requirements, checksums or tool directives | [Go](references/ecosystems/go.md) |
+| Maven plugins, Gradle requests, locks or catalogs | [Java/Kotlin](references/ecosystems/java.md) |
+| Conan/vcpkg declarations, features or C/C++ includes | [C/C++](references/ecosystems/cpp.md) |
+| CMake project/scripts, package-config templates or supplied File API replies | [CMake](references/ecosystems/cmake.md) |
+| Bazel module requests or uncovered Bazel inputs | [Bzlmod](references/ecosystems/bazel.md) |
+| Cargo manifests, locks or conditional Rust crate references | [Cargo](references/ecosystems/cargo.md) |
 | Scan comparisons or external CycloneDX/Trivy inventory | [Snapshots and SBOMs](references/inventory.md) |
 | Offline OSV reevaluation, CVE/CWE/VEX, calls/runtime/artifact/ABI evidence, provenance, supply-chain signals or explicit registry checks | [External evidence](references/external-evidence.md) |
 | User-authorized dependency changes | [Maintenance handoff](references/maintenance.md) |
@@ -67,13 +73,19 @@ For an authorized vulnerability check with network access allowed, use
 `depcheck scan "<root>" --security --no-compatibility --format json` and inspect
 `capabilities.security` and its diagnostics. MCP `reevaluate_vulnerabilities`
 can instead match explicitly supplied inventories and OSV records offline;
-its nonmatches apply only to those supplied records. Inspect the available
+its nonmatches apply only to those supplied records. Optional supplied KEV/EPSS
+files add independent CVE context; missing or stale signals do not erase matches
+or establish safety. Inspect the available
 tools and read the external evidence reference before selecting either path.
 
 OSV is the optional network path in that security scan and receives
 qualified package/version coordinates, not source text. Respect offline status
 and never describe a skipped or incomplete security capability as safe.
-PyPI, npm, Maven and verified Cargo crates.io records can supply OSV coordinates.
+Verified public PyPI, npm and Cargo crates.io records can supply OSV coordinates.
+Static Maven/Gradle repository selection remains unknown; Maven queries require
+an explicit caller-approved `--public-maven-coordinate group:artifact` through
+the CLI. A repository file cannot grant that authority. Read the Java/Kotlin
+reference before opting in.
 The OSV client also supports Go coordinates, but the current Go collector does
 not establish selected versions and skips those queries. Conan, vcpkg, CMake and Bazel
 currently return an explicit unsupported-security diagnostic.

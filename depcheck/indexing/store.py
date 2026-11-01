@@ -6,14 +6,17 @@ import os
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Self
 
-from depcheck.bounded_io import (
+from depcheck.evidence.input import parse_evidence_json
+from depcheck.filesystem import (
     MAX_INDEX_BYTES,
     ReadLimitError,
     atomic_write,
     authorize_root,
+    default_index_path,
     pinned_parent,
     read_descriptor,
 )
@@ -30,220 +33,26 @@ from depcheck.model import (
     ResolvedDependencyLink,
     SourceLocation,
 )
-from depcheck.path_policy import default_index_path
-from depcheck.profiling import measured
+from depcheck.profiling import count_work, measured
+
+MAX_CACHE_VM_STEPS = 50_000_000
 
 
-class IndexStore:
-    """SQLite 证据仓库；所有批量更新都在同一事务内提交。"""
-
-    def __init__(
-        self,
-        project_root: Path,
-        index_path: Path | None = None,
-        *,
-        read_only: bool = False,
-    ) -> None:
-        self.project_root = Path(project_root).resolve()
-        authorize_root(self.project_root)
-        self.read_only = read_only
-        self._explicit_index_path = (
-            index_path is not None
-            and Path(index_path).absolute()
-            != self.project_root / ".depcheck" / "index.sqlite3"
-        )
-        self.path = (
-            Path(index_path).resolve()
-            if index_path is not None and self._explicit_index_path
-            else default_index_path(self.project_root)
-        )
-        self.rebuilt = False
-        self._closed = False
-        self._anchor = None
-        self._source_digest: str | None = None
-        if self._explicit_index_path and not read_only:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-        snapshot = None
-        try:
-            if not self._explicit_index_path:
-                self._anchor = pinned_parent(
-                    self.path, self.project_root, create=not read_only
-                )
-                self._parent, name = self._anchor.__enter__()
-                try:
-                    descriptor = self._parent.open(name, os.O_RDONLY)
-                except FileNotFoundError:
-                    if read_only:
-                        raise sqlite3.OperationalError("dependency index is missing")
-                else:
-                    try:
-                        if os.fstat(descriptor).st_nlink > 1:
-                            raise PermissionError(
-                                "refusing hard-linked dependency cache"
-                            )
-                        snapshot = read_descriptor(
-                            descriptor, self.path, MAX_INDEX_BYTES
-                        )
-                    finally:
-                        os.close(descriptor)
-                    self._source_digest = hashlib.sha256(snapshot).hexdigest()
-            self.connection = self._connect(snapshot)
-            if read_only:
-                if self._existing_schema() != INDEX_SCHEMA:
-                    raise RuntimeError(
-                        "index schema is incompatible; run 'depcheck index' to rebuild it"
-                    )
-            else:
-                self._prepare_database()
-        except Exception:
-            if hasattr(self, "connection"):
-                self.connection.close()
-            self._cleanup()
-            raise
-
-    def _connect(self, snapshot: bytes | None = None) -> sqlite3.Connection:
-        if self._explicit_index_path:
-            connection = (
-                sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True, timeout=10)
-                if self.read_only
-                else sqlite3.connect(self.path, timeout=10)
-            )
-        else:
-            connection = sqlite3.connect(":memory:", timeout=10)
-            try:
-                if not all(
-                    callable(getattr(connection, method, None))
-                    for method in ("serialize", "deserialize")
-                ):
-                    raise RuntimeError(
-                        "default dependency cache requires SQLite serialize/deserialize support"
-                    )
-                if not any(
-                    row[0] in {"TEMP_STORE=1", "TEMP_STORE=2", "TEMP_STORE=3"}
-                    for row in connection.execute("PRAGMA compile_options")
-                ):
-                    raise RuntimeError(
-                        "default dependency cache requires SQLite in-memory temporary storage"
-                    )
-                if snapshot:
-                    if (
-                        snapshot.startswith(b"SQLite format 3\x00")
-                        and snapshot[18:20] != b"\x01\x01"
-                    ):
-                        raise sqlite3.OperationalError(
-                            "dependency cache uses an unsupported journal format"
-                        )
-                    connection.deserialize(snapshot)
-                connection.execute("PRAGMA temp_store = MEMORY")
-                page_size = connection.execute("PRAGMA page_size").fetchone()[0]
-                connection.execute(
-                    f"PRAGMA max_page_count = {MAX_INDEX_BYTES // page_size}"
-                )
-                if self.read_only:
-                    connection.execute("PRAGMA query_only = ON")
-            except BaseException:
-                connection.close()
-                raise
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
-
-    def _prepare_database(self) -> None:
-        existing_schema = self._existing_schema()
-        if existing_schema is not None and existing_schema != INDEX_SCHEMA:
-            self.connection.close()
-            if self._explicit_index_path:
-                self._validate_rebuild_target()
-                self.path.unlink()
-            self.connection = self._connect()
-            self.rebuilt = True
-        self._initialize()
-        self.set_metadata({"schema": INDEX_SCHEMA})
-        self.connection.commit()
-
-    def _existing_schema(self) -> str | None:
-        tables = {
-            str(row[0])
-            for row in self.connection.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-            )
-        }
-        if not tables:
-            return None
-        if "metadata" not in tables:
-            return "legacy"
-        row = self.connection.execute(
-            "SELECT value FROM metadata WHERE key = 'schema'"
-        ).fetchone()
-        return str(row[0]) if row is not None else "legacy"
-
-    def _validate_rebuild_target(self) -> None:
-        if not self.path.is_file():
-            raise ValueError(f"index rebuild target is not a file: {self.path}")
-        if self._explicit_index_path:
-            if self.path.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
-                raise ValueError(
-                    "explicit index path must use .db, .sqlite, or .sqlite3"
-                )
-            return
-        cache_root = (self.project_root / ".depcheck").resolve()
-        if self.path.parent != cache_root or self.path.name != "index.sqlite3":
-            raise ValueError(f"refusing to rebuild unexpected cache path: {self.path}")
-
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        try:
-            snapshot = None
-            try:
-                if not self._explicit_index_path and not self.read_only:
-                    self.connection.rollback()
-                    snapshot = self.connection.serialize()
-                    if len(snapshot) > MAX_INDEX_BYTES:
-                        raise ReadLimitError(
-                            "dependency index exceeds its snapshot size limit"
-                        )
-            finally:
-                self.connection.close()
-            if snapshot is not None:
-                default_index_path(self.project_root)
-                atomic_write(
-                    self.path,
-                    snapshot,
-                    project_root=self.project_root,
-                    max_bytes=MAX_INDEX_BYTES,
-                    expected_digest=self._source_digest,
-                    parent=self._parent,
-                )
-        finally:
-            self._cleanup()
-
-    def _cleanup(self) -> None:
-        if self._anchor is not None:
-            self._anchor.__exit__(None, None, None)
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        self.close()
-
-    def _initialize(self) -> None:
-        self.connection.executescript(
-            """
+_SCHEMA_SQL = """
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS files (
+            CREATE TABLE IF NOT EXISTS python_files (
                 path TEXT PRIMARY KEY,
-                kind TEXT NOT NULL CHECK (kind IN ('python', 'manifest')),
+                digest TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS manifest_files (
+                path TEXT PRIMARY KEY,
                 digest TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS imports (
-                file_path TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,
+                file_path TEXT NOT NULL REFERENCES python_files(path) ON DELETE CASCADE,
                 module TEXT NOT NULL,
                 line INTEGER,
                 column_number INTEGER,
@@ -254,7 +63,7 @@ class IndexStore:
                 )
             );
             CREATE TABLE IF NOT EXISTS source_diagnostics (
-                file_path TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,
+                file_path TEXT NOT NULL REFERENCES python_files(path) ON DELETE CASCADE,
                 code TEXT NOT NULL,
                 severity TEXT NOT NULL,
                 message TEXT NOT NULL,
@@ -268,7 +77,8 @@ class IndexStore:
                 raw_requirement TEXT NOT NULL,
                 dependency_group TEXT NOT NULL,
                 declaration_kind TEXT NOT NULL,
-                origin_json TEXT NOT NULL
+                origin_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS manifest_diagnostics (
                 code TEXT NOT NULL,
@@ -330,7 +140,8 @@ class IndexStore:
                 direct INTEGER NOT NULL,
                 integrity TEXT,
                 instance_id TEXT,
-                origin_json TEXT NOT NULL
+                origin_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS dependency_edges (
                 project_id TEXT NOT NULL REFERENCES projects(project_id)
@@ -374,6 +185,7 @@ class IndexStore:
                     ON DELETE CASCADE,
                 name TEXT NOT NULL,
                 complete INTEGER NOT NULL,
+                state TEXT NOT NULL,
                 reason TEXT,
                 PRIMARY KEY(project_id, name)
             );
@@ -394,19 +206,283 @@ class IndexStore:
             CREATE INDEX IF NOT EXISTS usages_package_idx
                 ON usages(project_id, mapped_ecosystem, mapped_package);
             """
+
+
+def _schema_objects(connection: sqlite3.Connection) -> dict[tuple[str, str], str]:
+    return {
+        (row[0], row[1]): " ".join((row[2] or "").split())
+        for row in connection.execute("SELECT type, name, sql FROM sqlite_schema")
+        if not row[1].startswith("sqlite_")
+    }
+
+
+@lru_cache(maxsize=1)
+def _expected_schema() -> dict[tuple[str, str], str]:
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.executescript(_SCHEMA_SQL)
+        return _schema_objects(connection)
+    finally:
+        connection.close()
+
+
+class IndexStore:
+    """SQLite 证据仓库；所有批量更新都在同一事务内提交。"""
+
+    @measured("storage.open")
+    def __init__(
+        self,
+        project_root: Path,
+        index_path: Path | None = None,
+        *,
+        read_only: bool = False,
+    ) -> None:
+        self.project_root = Path(project_root).resolve()
+        authorize_root(self.project_root)
+        self.read_only = read_only
+        self._explicit_index_path = (
+            index_path is not None
+            and Path(index_path).absolute()
+            != self.project_root / ".depcheck" / "index.sqlite3"
         )
+        self.path = (
+            Path(index_path).resolve()
+            if index_path is not None and self._explicit_index_path
+            else default_index_path(self.project_root)
+        )
+        self.rebuilt = False
+        self._closed = False
+        self._anchor = None
+        self._source_digest: str | None = None
+        if self._explicit_index_path and not read_only:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot = None
+        try:
+            if not self._explicit_index_path:
+                self._anchor = pinned_parent(
+                    self.path, self.project_root, create=not read_only
+                )
+                self._parent, name = self._anchor.__enter__()
+                try:
+                    descriptor = self._parent.open(name, os.O_RDONLY)
+                except FileNotFoundError:
+                    if read_only:
+                        raise sqlite3.OperationalError("dependency index is missing")
+                else:
+                    try:
+                        if os.fstat(descriptor).st_nlink > 1:
+                            raise PermissionError(
+                                "refusing hard-linked dependency cache"
+                            )
+                        snapshot = read_descriptor(
+                            descriptor, self.path, MAX_INDEX_BYTES
+                        )
+                        count_work(
+                            "storage.work",
+                            snapshot_reads=1,
+                            snapshot_read_bytes=len(snapshot),
+                        )
+                    finally:
+                        os.close(descriptor)
+                    self._source_digest = hashlib.sha256(snapshot).hexdigest()
+            self.connection = self._connect(snapshot)
+            if read_only:
+                if self._existing_schema() != INDEX_SCHEMA:
+                    raise RuntimeError(
+                        "index schema is incompatible; run 'depcheck index' to rebuild it"
+                    )
+            else:
+                self._prepare_database()
+                # Untrusted schema has been checked; trusted indexing can include
+                # long source-discovery/parsing work outside SQLite.
+                self.connection.set_progress_handler(None, 0)
+        except BaseException:
+            if hasattr(self, "connection"):
+                self.connection.close()
+            self._cleanup()
+            raise
+
+    def _connect(self, snapshot: bytes | None = None) -> sqlite3.Connection:
+        if self._explicit_index_path:
+            connection = (
+                sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True, timeout=10)
+                if self.read_only
+                else sqlite3.connect(self.path, timeout=10)
+            )
+        else:
+            connection = sqlite3.connect(":memory:", timeout=10)
+        try:
+            if not self._explicit_index_path:
+                if not all(
+                    callable(getattr(connection, method, None))
+                    for method in ("serialize", "deserialize")
+                ):
+                    raise RuntimeError(
+                        "default dependency cache requires SQLite serialize/deserialize support"
+                    )
+                if not any(
+                    row[0] in {"TEMP_STORE=1", "TEMP_STORE=2", "TEMP_STORE=3"}
+                    for row in connection.execute("PRAGMA compile_options")
+                ):
+                    raise RuntimeError(
+                        "default dependency cache requires SQLite in-memory temporary storage"
+                    )
+                if snapshot:
+                    if (
+                        snapshot.startswith(b"SQLite format 3\x00")
+                        and snapshot[18:20] != b"\x01\x01"
+                    ):
+                        raise sqlite3.OperationalError(
+                            "dependency cache uses an unsupported journal format"
+                        )
+                    connection.deserialize(snapshot)
+                connection.execute("PRAGMA temp_store = MEMORY")
+                page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+                connection.execute(
+                    f"PRAGMA max_page_count = {MAX_INDEX_BYTES // page_size}"
+                )
+                if self.read_only:
+                    connection.execute("PRAGMA query_only = ON")
+            remaining = MAX_CACHE_VM_STEPS // 1000
+
+            def progress() -> int:
+                nonlocal remaining
+                remaining -= 1
+                return int(remaining <= 0)
+
+            connection.set_progress_handler(progress, 1000)
+            connection.execute("PRAGMA trusted_schema = OFF")
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            return connection
+        except BaseException:
+            connection.close()
+            raise
+
+    def _prepare_database(self) -> None:
+        existing_schema = self._existing_schema()
+        if existing_schema is not None and existing_schema != INDEX_SCHEMA:
+            self.connection.close()
+            if self._explicit_index_path:
+                self._validate_rebuild_target()
+                self.path.unlink()
+            self.connection = self._connect()
+            self.rebuilt = True
+        self._initialize()
+        self.set_metadata({"schema": INDEX_SCHEMA})
+        self.connection.commit()
+
+    @measured("storage.validate")
+    def _existing_schema(self) -> str | None:
+        objects = _schema_objects(self.connection)
+        if any(
+            kind not in {"table", "index"} or "virtual table" in sql.lower()
+            for (kind, _name), sql in objects.items()
+        ):
+            raise sqlite3.OperationalError(
+                "unsafe dependency cache schema; move the rejected cache aside before rebuilding"
+            )
+        expected = _expected_schema()
+        if ("table", "metadata") in objects and objects[
+            ("table", "metadata")
+        ] != expected[("table", "metadata")]:
+            return "legacy"
+        tables = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if not tables:
+            return None
+        if "metadata" not in tables:
+            return "legacy"
+        row = self.connection.execute(
+            "SELECT value FROM metadata WHERE key = 'schema'"
+        ).fetchone()
+        marker = str(row[0]) if row is not None else "legacy"
+        if marker == INDEX_SCHEMA and objects != expected:
+            raise sqlite3.OperationalError(
+                "dependency cache schema does not match its version; move the rejected cache aside before rebuilding"
+            )
+        return marker
+
+    def _validate_rebuild_target(self) -> None:
+        if not self.path.is_file():
+            raise ValueError(f"index rebuild target is not a file: {self.path}")
+        if self._explicit_index_path:
+            if self.path.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
+                raise ValueError(
+                    "explicit index path must use .db, .sqlite, or .sqlite3"
+                )
+            return
+        cache_root = (self.project_root / ".depcheck").resolve()
+        if self.path.parent != cache_root or self.path.name != "index.sqlite3":
+            raise ValueError(f"refusing to rebuild unexpected cache path: {self.path}")
+
+    @measured("storage.close")
+    def close(self, *, publish: bool = True) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            snapshot = None
+            try:
+                if publish and not self._explicit_index_path and not self.read_only:
+                    self.connection.rollback()
+                    snapshot = self.connection.serialize()
+                    count_work(
+                        "storage.work", serializations=1, serialized_bytes=len(snapshot)
+                    )
+                    if len(snapshot) > MAX_INDEX_BYTES:
+                        raise ReadLimitError(
+                            "dependency index exceeds its snapshot size limit"
+                        )
+            finally:
+                self.connection.close()
+            if snapshot is not None:
+                with self._parent.publication_lock():
+                    default_index_path(self.project_root)
+                    atomic_write(
+                        self.path,
+                        snapshot,
+                        project_root=self.project_root,
+                        max_bytes=MAX_INDEX_BYTES,
+                        expected_digest=self._source_digest,
+                        expect_absent=self._source_digest is None,
+                        parent=self._parent,
+                    )
+                    count_work(
+                        "storage.work", publications=1, published_bytes=len(snapshot)
+                    )
+        finally:
+            self._cleanup()
+
+    def _cleanup(self) -> None:
+        if self._anchor is not None:
+            anchor, self._anchor = self._anchor, None
+            anchor.__exit__(None, None, None)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exception_type: object, *_args: object) -> None:
+        self.close(publish=exception_type is None)
+
+    def _initialize(self) -> None:
+        self.connection.executescript(_SCHEMA_SQL)
         self.connection.commit()
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
         try:
-            self.connection.execute("BEGIN IMMEDIATE")
+            self.connection.execute("BEGIN" if self.read_only else "BEGIN IMMEDIATE")
             yield
+            self.connection.commit()
         except BaseException:
             self.connection.rollback()
             raise
-        else:
-            self.connection.commit()
 
     def metadata(self) -> dict[str, str]:
         rows = self.connection.execute("SELECT key, value FROM metadata")
@@ -422,14 +498,16 @@ class IndexStore:
         )
 
     def file_digests(self, kind: str) -> dict[str, str]:
-        rows = self.connection.execute(
-            "SELECT path, digest FROM files WHERE kind = ? ORDER BY path", (kind,)
-        )
+        statement = {
+            "python": "SELECT path, digest FROM python_files ORDER BY path",
+            "manifest": "SELECT path, digest FROM manifest_files ORDER BY path",
+        }[kind]
+        rows = self.connection.execute(statement)
         return {str(row["path"]): str(row["digest"]) for row in rows}
 
-    def remove_files(self, paths: Sequence[str]) -> None:
+    def remove_python_files(self, paths: Sequence[str]) -> None:
         self.connection.executemany(
-            "DELETE FROM files WHERE path = ?", ((path,) for path in paths)
+            "DELETE FROM python_files WHERE path = ?", ((path,) for path in paths)
         )
 
     def replace_python_file(
@@ -441,8 +519,8 @@ class IndexStore:
     ) -> None:
         self.connection.execute(
             """
-            INSERT INTO files(path, kind, digest) VALUES (?, 'python', ?)
-            ON CONFLICT(path) DO UPDATE SET kind = 'python', digest = excluded.digest
+            INSERT INTO python_files(path, digest) VALUES (?, ?)
+            ON CONFLICT(path) DO UPDATE SET digest = excluded.digest
             """,
             (relative_path, digest),
         )
@@ -491,9 +569,7 @@ class IndexStore:
 
     def load_imports(self) -> ImportScanResult:
         file_rows = list(
-            self.connection.execute(
-                "SELECT path FROM files WHERE kind = 'python' ORDER BY path"
-            )
+            self.connection.execute("SELECT path FROM python_files ORDER BY path")
         )
         import_rows = self.connection.execute(
             """
@@ -543,19 +619,19 @@ class IndexStore:
         result: ManifestParseResult,
         digests: Mapping[str, str],
     ) -> None:
-        self.connection.execute("DELETE FROM files WHERE kind = 'manifest'")
+        self.connection.execute("DELETE FROM manifest_files")
         self.connection.execute("DELETE FROM declarations")
         self.connection.execute("DELETE FROM manifest_diagnostics")
         self.connection.executemany(
-            "INSERT INTO files(path, kind, digest) VALUES (?, 'manifest', ?)",
+            "INSERT INTO manifest_files(path, digest) VALUES (?, ?)",
             sorted(digests.items()),
         )
         self.connection.executemany(
             """
             INSERT INTO declarations(
                 source_path, line, column_number, raw_requirement,
-                dependency_group, declaration_kind, origin_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                dependency_group, declaration_kind, origin_json, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 (
@@ -566,6 +642,7 @@ class IndexStore:
                     item.group,
                     item.kind,
                     json.dumps(dict(item.origin), sort_keys=True),
+                    json.dumps(dict(item.metadata), sort_keys=True),
                 )
                 for item in result.declarations
             ),
@@ -591,14 +668,12 @@ class IndexStore:
 
     def load_manifests(self) -> ManifestParseResult:
         file_rows = list(
-            self.connection.execute(
-                "SELECT path FROM files WHERE kind = 'manifest' ORDER BY path"
-            )
+            self.connection.execute("SELECT path FROM manifest_files ORDER BY path")
         )
         declaration_rows = self.connection.execute(
             """
             SELECT source_path, line, column_number, raw_requirement,
-                   dependency_group, declaration_kind, origin_json
+                   dependency_group, declaration_kind, origin_json, metadata_json
             FROM declarations
             ORDER BY source_path, line, raw_requirement
             """
@@ -621,6 +696,7 @@ class IndexStore:
                 group=str(row["dependency_group"]),
                 kind=str(row["declaration_kind"]),
                 origin=json.loads(row["origin_json"]),
+                metadata=parse_evidence_json(str(row["metadata_json"]).encode("utf-8")),
             )
             for row in declaration_rows
         )
@@ -744,8 +820,9 @@ class IndexStore:
                 """
                 INSERT INTO resolved_dependencies(
                     project_id, ecosystem, package, display_name, purl, version,
-                    source_path, line, column_number, direct, integrity, instance_id, origin_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_path, line, column_number, direct, integrity, instance_id,
+                    origin_json, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     (
@@ -762,6 +839,7 @@ class IndexStore:
                         item.integrity,
                         item.instance_id,
                         json.dumps(dict(item.origin), sort_keys=True),
+                        json.dumps(dict(item.metadata), sort_keys=True),
                     )
                     for item in bundle.resolved
                 ),
@@ -791,7 +869,10 @@ class IndexStore:
                     for item in bundle.resolved
                     for link in (
                         item.dependency_links
-                        or tuple(_legacy_link(child) for child in item.dependencies)
+                        or tuple(
+                            ResolvedDependencyLink(package=child)
+                            for child in item.dependencies
+                        )
                     )
                 ),
             )
@@ -852,11 +933,17 @@ class IndexStore:
             )
             self.connection.executemany(
                 """
-                INSERT INTO capabilities(project_id, name, complete, reason)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO capabilities(project_id, name, complete, state, reason)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    (project.project_id, item.name, int(item.complete), item.reason)
+                    (
+                        project.project_id,
+                        item.name,
+                        int(item.complete),
+                        item.state.value,
+                        item.reason,
+                    )
                     for item in bundle.capabilities
                 ),
             )
@@ -924,7 +1011,3 @@ class IndexStore:
 
     def _relative(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.project_root).as_posix()
-
-
-def _legacy_link(package: Any) -> ResolvedDependencyLink:
-    return ResolvedDependencyLink(package=package)

@@ -1,0 +1,174 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pydantic-ai"
+version = "0.0.14"
+description = "Agent Framework / shim to use Pydantic with LLMs"
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet",
+    "Framework :: Pydantic",
+    "Framework :: Pydantic :: 2",
+    "Framework :: Pytest",
+]
+requires-python = ">=3.9"
+
+dependencies = ["pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral]==0.0.14"]
+
+[project.urls]
+Homepage = "https://ai.pydantic.dev"
+Source = "https://github.com/pydantic/pydantic-ai"
+Documentation = "https://ai.pydantic.dev"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
+
+[project.optional-dependencies]
+examples = ["pydantic-ai-examples==0.0.14"]
+logfire = ["logfire>=2.3"]
+
+[tool.uv.sources]
+pydantic-ai-slim = { workspace = true }
+pydantic-ai-examples = { workspace = true }
+
+[tool.uv.workspace]
+members = ["pydantic_ai_slim", "pydantic_ai_examples"]
+
+[dependency-groups]
+# dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
+lint = [
+    "mypy>=1.11.2",
+    "pyright>=1.1.388",
+    "ruff>=0.6.9",
+]
+docs = [
+    "black>=24.10.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-glightbox>=0.4.0",
+    "mkdocs-material[imaging]>=9.5.45",
+    "mkdocstrings-python>=1.12.2",
+]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["/README.md"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/README.md", "/Makefile", "/tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+include = [
+    "pydantic_ai_slim/**/*.py",
+    "pydantic_ai_examples/**/*.py",
+    "tests/**/*.py",
+    "docs/**/*.py",
+]
+
+[tool.ruff.lint]
+extend-select = [
+    "Q",
+    "RUF100",
+    "C90",
+    "UP",
+    "I",
+    "D",
+]
+flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
+isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
+mccabe = { max-complexity = 15 }
+ignore = [
+    "D100", # ignore missing docstring in module
+    "D102", # ignore missing docstring in public method
+    "D104", # ignore missing docstring in public package
+    "D105", # ignore missing docstring in magic methods
+    "D107", # ignore missing docstring in __init__ methods
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+# don't format python in docstrings, pytest-examples takes care of it
+docstring-code-format = false
+quote-style = "single"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D"]
+"docs/**/*.py" = ["D"]
+"pydantic_ai_examples/**/*.py" = ["D101", "D103"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
+reportUnnecessaryIsInstance = false
+reportUnnecessaryTypeIgnoreComment = true
+include = ["pydantic_ai_slim", "tests", "pydantic_ai_examples"]
+venvPath = ".venv"
+# see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
+# which are not otherwise used
+executionEnvironments = [
+  { root = "tests", reportUnusedFunction = false },
+]
+
+[tool.pytest.ini_options]
+testpaths = "tests"
+xfail_strict = true
+filterwarnings = [
+    "error",
+]
+
+# https://coverage.readthedocs.io/en/latest/config.html#run
+[tool.coverage.run]
+# required to avoid warnings about files created by create_module fixture
+include = ["pydantic_ai_slim/**/*.py", "tests/**/*.py"]
+omit = ["tests/test_live.py", "tests/example_modules/*.py"]
+branch = true
+
+# https://coverage.readthedocs.io/en/latest/config.html#report
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+ignore_errors = true
+precision = 2
+exclude_lines = [
+    'pragma: no cover',
+    'raise NotImplementedError',
+    'if TYPE_CHECKING:',
+    'if typing.TYPE_CHECKING:',
+    '@overload',
+    '@typing.overload',
+    '\(Protocol\):$',
+    'typing.assert_never',
+    '$\s*assert_never\(',
+    'if __name__ == .__main__.:',
+]
+
+[tool.logfire]
+ignore_no_config = true
+
+[tool.inline-snapshot.shortcuts]
+snap-fix=["create", "fix"]
+snap=["create"]

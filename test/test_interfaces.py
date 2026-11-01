@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import subprocess
 import sys
 from contextlib import closing
 from pathlib import Path
@@ -9,6 +10,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import pytest
+from conftest import JsonResponse
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -27,6 +29,496 @@ def make_python_project(root: Path) -> None:
         encoding="utf-8",
     )
     (root / "app.py").write_text("import requests\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_pipenv_category_occurrences_survive_incremental_index_and_readonly_queries(
+    tmp_path, selected
+):
+    (tmp_path / "Pipfile").write_text('[packages]\nrequests="*"\n')
+    entry = {
+        "version": "==2.31.0",
+        "markers": "sys_platform == 'win32'",
+        "extras": ["socks"],
+    }
+    (tmp_path / "Pipfile.lock").write_text(
+        json.dumps(
+            {
+                "default": {"requests": entry},
+                "develop": {"requests": entry},
+                "deploy": {"requests": entry},
+            }
+        )
+    )
+    service = DependencyAgentService(tmp_path)
+    selection = {"project_ids": ["pypi:python:."]} if selected else {}
+    service.index_repository(**selection)
+    cache = tmp_path / ".depcheck/index.sqlite3"
+    before = cache.read_bytes(), cache.stat().st_mtime_ns
+    explanation = service.explain_dependency("requests", project_id="pypi:python:.")
+    rows = explanation["resolutions"]
+    assert len(rows) == 3 and len({row["instance"] for row in rows}) == 3
+    assert {row["metadata"]["pipenv_category"] for row in rows} == {
+        "default",
+        "develop",
+        "deploy",
+    }
+    assert {row["metadata"]["source_pointer"] for row in rows} == {
+        "/default/requests",
+        "/develop/requests",
+        "/deploy/requests",
+    }
+    assert all(
+        row["metadata"]["activation"] == "unknown"
+        and row["metadata"]["context"]["package"]["extras"] == ["socks"]
+        for row in rows
+    )
+    assert not explanation["evidence_complete"]
+    assert (cache.read_bytes(), cache.stat().st_mtime_ns) == before
+    refreshed = service.index_repository(**selection)
+    if not selected:
+        assert refreshed["parsed_manifest_files"] == 0
+    assert (
+        service.explain_dependency("requests", project_id="pypi:python:.")[
+            "resolutions"
+        ]
+        == rows
+    )
+
+
+def test_strict_json_documents_and_streams_reject_unrepresentable_data():
+    from depcheck.ecosystems.static import StaticReadError, parse_json
+    from depcheck.evidence.input import evidence_json_decoder, parse_evidence_json
+
+    for raw, message in (
+        (b'{"metrics":[1e400]}', "finite"),
+        (b'{"metrics":[-1e400]}', "finite"),
+        (b'{"extension":[{"value":"\\ud800"}]}', "Unicode"),
+        (b'{"extension":{"\\udc00":"value"}}', "Unicode"),
+        (b'{"id":"first","id":"last"}', "unique"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            parse_evidence_json(raw)
+        with pytest.raises(ValueError, match=message):
+            evidence_json_decoder().raw_decode(raw.decode("utf-8"))
+        if message == "unique":
+            assert parse_json(raw.decode("utf-8"), Path("package.json"))["id"] == "last"
+        else:
+            with pytest.raises(StaticReadError, match=message):
+                parse_json(raw.decode("utf-8"), Path("package.json"))
+
+
+def test_strict_json_preserves_unicode_and_supported_byte_encodings():
+    from depcheck.evidence.input import evidence_json_decoder, parse_evidence_json
+
+    document = '{"name":"\\ud83d\\ude00","extension":{"\\u00e9":[1.25,1e308]}}'
+    expected = {"name": "😀", "extension": {"é": [1.25, 1e308]}}
+    for encoding in ("utf-8-sig", "utf-16", "utf-32"):
+        value = parse_evidence_json(document.encode(encoding))
+        assert value == expected
+        json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    stream = document + " " + document
+    decoder = evidence_json_decoder()
+    first, end = decoder.raw_decode(stream)
+    second, final = decoder.raw_decode(stream, end + 1)
+    assert first == second == expected and final == len(stream)
+
+
+def test_strict_json_static_syntax_errors_keep_source_positions():
+    from depcheck.ecosystems.static import StaticReadError, parse_json
+
+    path = Path("package.json")
+    with pytest.raises(StaticReadError) as error:
+        parse_json('{\n"dependencies":\n}', path)
+    assert error.value.source is not None
+    assert error.value.source.path == path
+    assert (error.value.source.line, error.value.source.column) == (3, 1)
+
+
+@pytest.mark.parametrize(
+    "kind, raw",
+    [
+        (
+            "scorecard",
+            b'{"repo":{"name":"x"},"scorecard":{"version":"1"},"checks":[],"score":1e400}',
+        ),
+        (
+            "runtime",
+            b'{"schema":"depcheck.runtime-trace.v1","tool":{"name":"scanner","version":"1","extension":{"\\ud800":"x"}},"records":[]}',
+        ),
+    ],
+)
+def test_strict_json_cli_rejects_invalid_assertions_without_output(
+    tmp_path, capsys, kind, raw
+):
+    path = tmp_path / "report.json"
+    path.write_bytes(raw)
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    assert main(["evidence", str(tmp_path), kind, "report.json"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Invalid evidence JSON" in captured.err
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    assert not (tmp_path / ".depcheck").exists()
+
+
+def test_strict_json_govulncheck_rejects_invalid_extension_data(tmp_path):
+    path = tmp_path / "govuln.json"
+    config = b'{"config":{"protocol_version":"v1.0.0"}}\n'
+    for record in (
+        b'{"osv":{"id":"GO-2026-0001","extension":1e400}}',
+        b'{"osv":{"id":"GO-2026-0001","extension":["\\udfff"]}}',
+    ):
+        path.write_bytes(config + record)
+        before = (path.read_bytes(), path.stat().st_mtime_ns)
+        with pytest.raises(ValueError, match="Invalid govulncheck JSON stream"):
+            DependencyAgentService(tmp_path).inspect_evidence(
+                "govuln.json", "govulncheck"
+            )
+        assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    assert not (tmp_path / ".depcheck").exists()
+
+
+@pytest.fixture
+def pip_inspect_report():
+    # Native pip inspect v1 shape; independently authored boundary records.
+    return {
+        "version": "1",
+        "pip_version": "25.3",
+        "environment": {"sys_platform": "win32", "python_version": "3.11"},
+        "installed": [
+            {
+                "metadata": {
+                    "name": "Example.Plugin",
+                    "version": "1.0rc1",
+                    "requires_dist": ["requests; python_version<'3.12'"],
+                    "description": "intentionally omitted",
+                },
+                "metadata_location": "/unavailable/site-packages/example.dist-info",
+                "requested": False,
+                "installer": "unknown-installer",
+            },
+            {
+                "metadata": {"name": "Example.Plugin", "version": "1.0rc1"},
+                "metadata_location": "/unavailable/legacy.egg",
+                "direct_url": {
+                    "url": "file:///unavailable/editable",
+                    "dir_info": {"editable": True},
+                },
+            },
+            {
+                "metadata": {"name": "legacy-version", "version": "invalid version"},
+                "metadata_location": "/unavailable/legacy.egg-info",
+                "installer": "pip",
+                "direct_url": {
+                    "url": "https://user:credential@example.test/code?token=secret",
+                    "vcs_info": {"vcs": "git", "commit_id": "abcdef"},
+                },
+            },
+        ],
+    }
+
+
+def test_pip_inspect_keeps_instances_assertions_and_cli_paging(
+    tmp_path, pip_inspect_report, monkeypatch, capsys
+):
+    import depcheck.evidence.input as evidence_input
+
+    path = tmp_path / "inspect.json"
+    path.write_text(json.dumps(pip_inspect_report))
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    reads = []
+    original = evidence_input.read_bytes
+
+    def tracked(candidate, **kwargs):
+        assert kwargs["project_root"] == tmp_path
+        reads.append(candidate)
+        return original(candidate, **kwargs)
+
+    monkeypatch.setattr(evidence_input, "read_bytes", tracked)
+    service = DependencyAgentService(tmp_path)
+    first = service.inspect_evidence("inspect.json", "pip-inspect", limit=1)
+    second = service.inspect_evidence("inspect.json", "pip-inspect", limit=1, offset=1)
+    final = service.inspect_evidence("inspect.json", "pip-inspect", limit=1, offset=2)
+    rows = [page["tables"]["distributions"][0] for page in (first, second, final)]
+    assert first["counts"] == {"distributions": 3} and first["next_offset"] == 1
+    assert final["next_offset"] is None
+    assert rows[0]["name"] == rows[1]["name"] == "example-plugin"
+    assert len({row["instance_id"] for row in rows}) == 3
+    assert rows[0]["requested"] is False and "requested" not in rows[1]
+    assert rows[0]["omitted_metadata_fields"] == ["description"]
+    assert rows[1]["direct_url"]["dir_info"]["editable"] is True
+    assert rows[2]["version_status"] == "invalid-pep440"
+    assert all(
+        row["public_identity_status"] == "unverified" and "purl" not in row
+        for row in rows
+    )
+    assert first["metadata"]["environment"]["sys_platform"] == "win32"
+    assert first["metadata"]["current_project_installation"] == "not-established"
+    assert all(page["finding_effect"] == "none" for page in (first, second, final))
+    assert "credential" not in json.dumps(final) and "secret" not in json.dumps(final)
+    assert reads == [path, path, path]
+    assert before == (path.read_bytes(), path.stat().st_mtime_ns)
+    assert not (tmp_path / ".depcheck").exists()
+    assert (
+        main(
+            [
+                "evidence",
+                str(tmp_path),
+                "pip-inspect",
+                "inspect.json",
+                "--limit",
+                "1",
+                "--offset",
+                "1",
+            ]
+        )
+        == 0
+    )
+    assert (
+        json.loads(capsys.readouterr().out)["tables"]["distributions"][0][
+            "source_pointer"
+        ]
+        == "/installed/1"
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ["version", "requested", "environment", "direct-url", "nested-url", "name"],
+)
+def test_pip_inspect_rejects_unsupported_or_malformed_native_shapes(
+    tmp_path, pip_inspect_report, invalid
+):
+    report = pip_inspect_report
+    if invalid == "version":
+        report["version"] = "2"
+    elif invalid == "requested":
+        report["installed"][0]["requested"] = 0
+    elif invalid == "environment":
+        report["environment"]["sys_platform"] = ["linux"]
+    elif invalid == "direct-url":
+        report["installed"][1]["direct_url"] = "file:///unavailable"
+    elif invalid == "nested-url":
+        report["installed"][1]["direct_url"]["dir_info"]["nested"] = {
+            "another": {"too": {"deep": "x"}}
+        }
+    else:
+        report["installed"][0]["metadata"]["name"] = (
+            "https://user:credential@example.test/name"
+        )
+    (tmp_path / "inspect.json").write_text(json.dumps(report))
+    with pytest.raises(ValueError) as error:
+        DependencyAgentService(tmp_path).inspect_evidence("inspect.json", "pip-inspect")
+    assert "credential" not in str(error.value)
+
+
+@pytest.fixture
+def pip_install_report(pip_inspect_report):
+    report = pip_inspect_report
+    records = report.pop("installed")
+    for index, record in enumerate(records):
+        record.pop("metadata_location")
+        record.pop("installer", None)
+        record["is_direct"] = "direct_url" in record
+        record["requested"] = index == 0
+        record["download_info"] = record.pop(
+            "direct_url",
+            {"url": "https://files.pythonhosted.org/example.whl", "archive_info": {}},
+        )
+    records[0]["requested_extras"] = ["security", "socks"]
+    records[2]["is_yanked"] = True
+    report["install"] = records
+    return report
+
+
+def test_pip_install_report_preserves_plan_instances_without_installation_claims(
+    tmp_path, pip_install_report, capsys
+):
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(pip_install_report))
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    service = DependencyAgentService(tmp_path)
+    pages = [
+        service.inspect_evidence("report.json", "pip-install-report", limit=1, offset=i)
+        for i in range(3)
+    ]
+    rows = [page["tables"]["distributions"][0] for page in pages]
+    assert pages[0]["counts"] == {"distributions": 3}
+    assert pages[0]["next_offset"] == 1 and pages[-1]["next_offset"] is None
+    assert len({r["instance_id"] for r in rows}) == 3
+    assert rows[0]["name"] == rows[1]["name"] == "example-plugin"
+    assert [r["source_pointer"] for r in rows] == [
+        "/install/0",
+        "/install/1",
+        "/install/2",
+    ]
+    assert rows[0]["requested_extras"] == ["security", "socks"]
+    assert rows[0]["is_direct"] is False and rows[1]["is_direct"] is True
+    assert "is_yanked" not in rows[0] and rows[2]["is_yanked"] is True
+    assert rows[1]["download_info"]["dir_info"]["editable"] is True
+    assert rows[2]["version_status"] == "invalid-pep440"
+    assert all(
+        r["public_identity_status"] == "unverified"
+        and "purl" not in r
+        and "metadata_location" not in r
+        for r in rows
+    )
+    assert all(
+        r["installation_status"] == "not-established; report-may-be-dry-run"
+        for r in rows
+    )
+    assert all(page["finding_effect"] == "none" for page in pages)
+    assert pages[0]["metadata"]["current_project_installation"] == "not-established"
+    assert pages[0]["metadata"]["report_execution"].startswith("unknown")
+    assert pages[0]["metadata"]["environment"]["sys_platform"] == "win32"
+    assert "credential" not in json.dumps(pages) and "secret" not in json.dumps(pages)
+    assert (
+        main(
+            [
+                "evidence",
+                str(tmp_path),
+                "pip-install-report",
+                "report.json",
+                "--offset",
+                "1",
+                "--limit",
+                "1",
+            ]
+        )
+        == 0
+    )
+    cli = json.loads(capsys.readouterr().out)
+    assert cli["tables"]["distributions"] == [rows[1]]
+    assert cli["source"]["authority"] == "external-assertion"
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    assert not (tmp_path / ".depcheck").exists()
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "version",
+        "array",
+        "requested",
+        "direct",
+        "yanked",
+        "extras",
+        "extras-unrequested",
+        "download",
+        "nested",
+        "duplicate-json",
+    ],
+)
+def test_pip_install_report_rejects_invalid_shapes_without_mutation(
+    tmp_path, pip_install_report, invalid
+):
+    report = pip_install_report
+    first = report["install"][0]
+    if invalid == "version":
+        report["version"] = "2"
+    elif invalid == "array":
+        report["install"] = {}
+    elif invalid == "requested":
+        first.pop("requested")
+    elif invalid == "direct":
+        first["is_direct"] = 0
+    elif invalid == "yanked":
+        first["is_yanked"] = "false"
+    elif invalid == "extras":
+        first["requested_extras"] = [False]
+    elif invalid == "extras-unrequested":
+        first["requested"] = False
+    elif invalid == "download":
+        first.pop("download_info")
+    elif invalid == "nested":
+        first["download_info"]["archive_info"] = {
+            "hashes": {"sha256": {"bad": "nested"}}
+        }
+    path = tmp_path / "report.json"
+    value = json.dumps(report)
+    if invalid == "duplicate-json":
+        value = value.replace('"version": "1",', '"version": "1", "version": "2",', 1)
+    path.write_text(value)
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    with pytest.raises(ValueError):
+        DependencyAgentService(tmp_path).inspect_evidence(
+            "report.json", "pip-install-report"
+        )
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    assert not (tmp_path / ".depcheck").exists()
+
+
+@pytest.mark.parametrize("kind", ["pip-inspect", "pip-install-report"])
+@pytest.mark.parametrize(
+    "location", ["environment", "metadata", "source", "source-info", "hashes"]
+)
+def test_pip_install_report_and_inspect_reject_credential_bearing_field_keys(
+    tmp_path, pip_inspect_report, pip_install_report, kind, location
+):
+    # Both fixtures derive from the same object; use the selected native shape.
+    report = pip_install_report
+    if kind == "pip-inspect":
+        report["installed"] = report.pop("install")
+        for record in report["installed"]:
+            record["metadata_location"] = "/not-opened/demo.dist-info"
+            record["direct_url"] = record.pop("download_info")
+    records = report["install" if kind == "pip-install-report" else "installed"]
+    source = records[0][
+        "download_info" if kind == "pip-install-report" else "direct_url"
+    ]
+    targets = {
+        "environment": report["environment"],
+        "metadata": records[0]["metadata"],
+        "source": source,
+        "source-info": source["archive_info"],
+        "hashes": source["archive_info"].setdefault("hashes", {}),
+    }
+    canary = "pip-report-key-canary"
+    targets[location]["https://user:" + canary + "@example.invalid"] = "opaque"
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(report))
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    with pytest.raises(ValueError, match="field name") as error:
+        DependencyAgentService(tmp_path).inspect_evidence("report.json", kind)
+    assert canary not in str(error.value)
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    assert not (tmp_path / ".depcheck").exists()
+
+
+def test_reflection_decorators_and_reexports_keep_callable_uncertainty(tmp_path):
+    (tmp_path / "lib.py").write_text("def target():\n    pass\n")
+    (tmp_path / "exports.py").write_text("from lib import target as public\n")
+    (tmp_path / "app.py").write_text(
+        "import exports\nfrom exports import public\n"
+        "def route(fn):\n    return fn\n"
+        "@route\ndef main():\n    public()\n"
+        "def reflective():\n    getattr(exports, 'public')()\n"
+    )
+    spec = {
+        "schema": "depcheck.python-call-analysis.v1",
+        "sources": [
+            {"path": name + ".py", "module": name} for name in ("lib", "exports", "app")
+        ],
+        "entries": ["app:main", "app:reflective"],
+        "vulnerability_symbols": [{"advisory_id": "EXAMPLE", "node_id": "lib:target"}],
+    }
+    (tmp_path / "analysis.json").write_text(json.dumps(spec))
+    result = DependencyAgentService(tmp_path).analyze_python_calls(
+        "analysis.json", limit=100
+    )
+    assert any(
+        edge["source"] == "app:main" and edge["target"] == "lib:target"
+        for edge in result["tables"]["edges"]
+    )
+    assert any(
+        row["code"] == "calls.decorators" for row in result["tables"]["diagnostics"]
+    )
+    assert any(
+        row["scope"] == "app:reflective" for row in result["tables"]["unresolved_calls"]
+    )
+    assert result["metadata"]["coverage"]["state"] == "incomplete"
+    assert not result["tables"]["assessments"][0]["not_affected_established"]
 
 
 def mcp_stdio_arguments(*arguments: str) -> list[str]:
@@ -112,7 +604,7 @@ def _make_cmake_reply(root, *, minor=9):
 def test_cmake_model_contract_preserves_relationships_paging_and_read_only_boundaries(
     tmp_path, monkeypatch, capsys
 ):
-    from depcheck import cmake_model
+    import depcheck.evidence.cmake as cmake_model
 
     index, reply = _make_cmake_reply(tmp_path)
     cache = tmp_path / ".depcheck/index.sqlite3"
@@ -335,7 +827,7 @@ def test_cmake_model_inconsistent_target_provenance_is_not_complete(
 def test_cmake_model_input_boundaries_are_rejected_or_qualified(
     tmp_path, monkeypatch, boundary
 ):
-    from depcheck import cmake_model
+    import depcheck.evidence.cmake as cmake_model
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -350,7 +842,7 @@ def test_cmake_model_input_boundaries_are_rejected_or_qualified(
         return
     if boundary == "outside-index":
         (tmp_path / "index-outside.json").write_text("{}")
-        from depcheck.path_policy import ProjectPathError
+        from depcheck.filesystem import ProjectPathError
 
         with pytest.raises(ProjectPathError):
             service.inspect_cmake_model("../index-outside.json", configuration="Debug")
@@ -499,6 +991,158 @@ def test_snapshot_comparison_keeps_versions_and_skipped_security_distinct(tmp_pa
     assert not comparison["remediation_verified"]
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == before
 
+    # Exercise the real CLI with the same snapshots and preserve default JSON.
+    checkout = Path(__file__).resolve().parents[1]
+
+    def run_compare(after, *args):
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "depcheck",
+                "compare",
+                str(tmp_path),
+                "before.json",
+                after,
+                *args,
+            ],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+        )
+
+    json_result = run_compare("after.json")
+    assert json_result.returncode == 0
+    assert json.loads(json_result.stdout) == comparison
+    changed = run_compare("after.json", "--fail-on-changes", "--offset", "100")
+    assert changed.returncode == 1
+    assert json.loads(changed.stdout)["counts"]["resolved_added"] == 1
+    unchanged = run_compare("before.json", "--fail-on-changes")
+    assert unchanged.returncode == 0
+    assert json.loads(unchanged.stdout)["capabilities"]["security"]["state"] == (
+        "incomplete"
+    )
+    text_result = run_compare("after.json", "--format", "text")
+    assert text_result.returncode == 0
+    assert "Comparable: True" in text_result.stdout
+    assert (
+        "resolved_added:" in text_result.stdout
+        and '"version": "2.0.0"' in text_result.stdout
+    )
+    assert (
+        "resolved_removed:" in text_result.stdout
+        and '"version": "1.0.0"' in text_result.stdout
+    )
+    assert (
+        "snapshot.incomplete" in text_result.stdout
+        and "Remediation verified: False" in text_result.stdout
+    )
+    assert "Next offset: None" in text_result.stdout
+    assert (
+        run_compare("after.json", "--format", "text", "--fail-on-changes").returncode
+        == 1
+    )
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == before
+    assert not (tmp_path / ".depcheck").exists()
+
+    incompatible = json.loads(before["after.json"])
+    incompatible["metadata"]["snapshot"]["selection_key"] = "0" * 64
+    (tmp_path / "incompatible.json").write_text(json.dumps(incompatible))
+    result = run_compare("incompatible.json", "--format", "text")
+    assert result.returncode == 0
+    assert (
+        "Comparable: False" in result.stdout
+        and "snapshot.incompatible" in result.stdout
+    )
+    assert (
+        "resolved_added:" not in result.stdout
+        and "resolved_removed:" not in result.stdout
+    )
+    assert run_compare("incompatible.json", "--fail-on-changes").returncode == 2
+
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "packages": {
+                    "node_modules/tool": {"version": "2.0.0"},
+                    "node_modules/extra": {"version": "3.0.0"},
+                }
+            }
+        )
+    )
+    extra = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, compatibility=False)
+    )
+    (tmp_path / "extra.json").write_text(json.dumps(extra.to_dict()))
+    page = run_compare("extra.json", "--format", "text", "--limit", "1")
+    assert page.returncode == 0 and "Next offset: 1" in page.stdout
+    assert page.stdout.count("resolved_added:") == 1
+    incompatible["schema"] = "different.schema"
+    (tmp_path / "incompatible.json").write_text(json.dumps(incompatible))
+    invalid = run_compare("incompatible.json", "--format", "text")
+    assert invalid.returncode == 2 and "depcheck.scan.v1" in invalid.stderr
+    assert run_compare("incompatible.json", "--fail-on-changes").returncode == 2
+
+
+def test_snapshot_comparison_preserves_npm_context_only_changes(tmp_path):
+    (tmp_path / "package.json").write_text('{"dependencies":{"tool":"1.0.0"}}')
+    snapshots = []
+    for filename, optional, operating_system in (
+        ("before.json", False, "darwin"),
+        ("after.json", True, "linux"),
+    ):
+        (tmp_path / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/tool": {
+                            "version": "1.0.0",
+                            "optional": optional,
+                            "os": [operating_system],
+                        }
+                    },
+                }
+            )
+        )
+        snapshot = (
+            RepositoryScanner()
+            .scan(tmp_path, RepositoryScanOptions(security=False, compatibility=False))
+            .to_dict()
+        )
+        snapshots.append(snapshot)
+        (tmp_path / filename).write_text(json.dumps(snapshot))
+
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()}
+    service = DependencyAgentService(tmp_path)
+    comparison = service.compare_dependency_snapshots("before.json", "after.json")
+    assert comparison["comparable"] and comparison["read_only"]
+    assert comparison["counts"]["resolved_added"] == 1
+    assert comparison["counts"]["resolved_removed"] == 1
+    added = comparison["changes"]["resolved_added"][0]
+    removed = comparison["changes"]["resolved_removed"][0]
+    assert added["version"] == removed["version"] == "1.0.0"
+    assert added["instance"] == removed["instance"] == "node_modules/tool"
+    assert added["metadata"]["context"]["optional"] is True
+    assert removed["metadata"]["context"]["optional"] is False
+    assert added["metadata"]["context"]["os"] == ["linux"]
+    assert removed["metadata"]["context"]["os"] == ["darwin"]
+    assert added["metadata"]["activation"] == "unknown"
+    assert comparison["counts"]["edges_added"] == 0
+    assert comparison["counts"]["edges_removed"] == 0
+    assert not comparison["remediation_verified"]
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == before
+    assert not (tmp_path / ".depcheck").exists()
+
+    # An absent additive field and its default carry the same assertion.
+    snapshots[0]["inventory"]["resolved_dependencies"][0].pop("metadata")
+    snapshots[1]["inventory"]["resolved_dependencies"][0]["metadata"] = {}
+    for filename, snapshot in zip(("before.json", "after.json"), snapshots):
+        (tmp_path / filename).write_text(json.dumps(snapshot))
+    equivalent = service.compare_dependency_snapshots("before.json", "after.json")
+    assert equivalent["counts"]["resolved_added"] == 0
+    assert equivalent["counts"]["resolved_removed"] == 0
+
 
 def test_snapshot_comparison_preserves_go_checksum_only_changes(tmp_path):
     (tmp_path / "go.mod").write_text("module example.com/app\n")
@@ -527,13 +1171,36 @@ def test_snapshot_comparison_preserves_go_checksum_only_changes(tmp_path):
     assert (
         checksum_file.read_bytes() == original and not (tmp_path / ".depcheck").exists()
     )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "depcheck",
+            "compare",
+            str(tmp_path),
+            "before.json",
+            "after.json",
+            "--format",
+            "text",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert (
+        "declarations_added:" in result.stdout
+        and "declarations_removed:" in result.stdout
+    )
+    assert "Remediation verified: False" in result.stdout
+    assert "upgrade" not in result.stdout.lower()
 
 
 @pytest.mark.parametrize(
     "repository_id,comparable", [(None, False), ("team/repo", True)]
 )
 def test_snapshot_explicit_identity_is_portable(tmp_path, repository_id, comparable):
-    from depcheck.snapshots import compare_snapshots
+    from depcheck.evidence.compare import compare_snapshots
 
     snapshots = []
     for name, version in (("first", "1.0.0"), ("second", "2.0.0")):
@@ -816,6 +1483,97 @@ def test_uv_fork_context_survives_refresh_and_read_only_queries(tmp_path, select
     assert again["resolutions"] == resolutions
 
 
+@pytest.mark.parametrize("selected", [False, True])
+def test_npm_resolution_context_survives_index_and_read_only_queries(
+    tmp_path, selected
+):
+    import sqlite3
+
+    (tmp_path / "package.json").write_text(
+        '{"dependencies":{"parent":"1.0.0","tool":"1.0.0"}}'
+    )
+    (tmp_path / "main.js").write_text('import "tool";\n')
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {
+                    "node_modules/parent": {
+                        "version": "1.0.0",
+                        "dependencies": {"tool": "^1"},
+                    },
+                    "node_modules/tool": {
+                        "version": "1.0.0",
+                        "optional": True,
+                        "os": ["darwin"],
+                        "cpu": ["arm64"],
+                        "hasInstallScript": True,
+                    },
+                    "node_modules/parent/node_modules/tool": {
+                        "version": "1.0.0",
+                        "peer": True,
+                        "os": ["linux"],
+                        "cpu": ["x64"],
+                        "libc": ["glibc"],
+                    },
+                },
+            }
+        )
+    )
+    service = DependencyAgentService(tmp_path)
+    project_id = "npm:npm:."
+    selection = {"project_ids": [project_id]} if selected else {}
+    service.index_repository(**selection)
+    index = tmp_path / ".depcheck/index.sqlite3"
+    before = index.read_bytes(), index.stat().st_mtime_ns
+    inventory = service.query_dependencies(search="tool", project_id=project_id)
+    explanation = service.explain_dependency("tool", project_id=project_id)
+    assert inventory["dependencies"][0]["resolutions"] == explanation["resolutions"]
+    resolutions = {row["instance"]: row for row in explanation["resolutions"]}
+    assert set(resolutions) == {
+        "node_modules/tool",
+        "node_modules/parent/node_modules/tool",
+    }
+    optional = resolutions["node_modules/tool"]["metadata"]
+    peer = resolutions["node_modules/parent/node_modules/tool"]["metadata"]
+    assert optional["context"]["optional"] is True
+    assert optional["context"]["os"] == ["darwin"]
+    assert optional["context"]["cpu"] == ["arm64"]
+    assert optional["context"]["hasInstallScript"] is True
+    assert peer["context"]["peer"] is True
+    assert peer["context"]["os"] == ["linux"]
+    assert peer["context"]["cpu"] == ["x64"]
+    assert peer["context"]["libc"] == ["glibc"]
+    assert optional["activation"] == peer["activation"] == "unknown"
+    assert explanation["resolved_versions"] == ["1.0.0"]
+    assert not explanation["evidence_complete"]
+    assert (index.read_bytes(), index.stat().st_mtime_ns) == before
+
+    refreshed = service.index_repository(**selection)
+    assert refreshed["status"] == "current"
+    after_refresh = index.read_bytes(), index.stat().st_mtime_ns
+    again = service.explain_dependency("tool", project_id=project_id)
+    assert again["resolutions"] == explanation["resolutions"]
+    assert (index.read_bytes(), index.stat().st_mtime_ns) == after_refresh
+
+    for raw, message in (
+        ("[]", "object"),
+        ('{"x":1e400}', "finite"),
+        ('{"x":"\\ud800"}', "Unicode"),
+    ):
+        with closing(sqlite3.connect(index)) as connection, connection:
+            connection.execute(
+                "UPDATE resolved_dependencies SET metadata_json=? WHERE instance_id=?",
+                (raw, "node_modules/tool"),
+            )
+        corrupted = index.read_bytes(), index.stat().st_mtime_ns
+        with pytest.raises(ValueError, match=message):
+            service.query_dependencies(search="tool", project_id=project_id)
+        with pytest.raises(ValueError, match=message):
+            service.explain_dependency("tool", project_id=project_id)
+        assert (index.read_bytes(), index.stat().st_mtime_ns) == corrupted
+
+
 def test_root_only_uv_workspace_keeps_index_capabilities_consistent(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[tool.uv.workspace]\nmembers=[]\n")
     (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
@@ -1077,7 +1835,7 @@ def test_cargo_inventory_queries_and_lock_freshness(tmp_path, filtered):
     assert not result["evidence_complete"]
     assert service.dependency_impact("foo", ecosystem="Cargo")["usage_count"] == 1
     assert not service.repository_context()["stale"]
-    from depcheck.path_policy import default_index_path
+    from depcheck.filesystem import default_index_path
 
     cache = default_index_path(tmp_path)
     cache_before = (cache.read_bytes(), cache.stat().st_mtime_ns)
@@ -1239,6 +1997,7 @@ def test_mcp_server_exposes_the_dependency_capability_set(
         )
 
     assert tool_names == {
+        "backend_info",
         "compare_dependency_snapshots",
         "dependency_impact",
         "explain_dependency",
@@ -2059,7 +2818,7 @@ def test_evidence_pages_bound_payload_and_keep_full_impact_counts(tmp_path):
 def test_scan_and_explain_reuse_work_without_accepting_changed_evidence(
     tmp_path, monkeypatch
 ):
-    from depcheck.indexing import RepositoryIndex
+    from depcheck.profiling import capture_profile
 
     (tmp_path / "package.json").write_text('{"dependencies":{"lib":"1.0.0"}}')
     source = tmp_path / "app.js"
@@ -2075,16 +2834,10 @@ def test_scan_and_explain_reuse_work_without_accepting_changed_evidence(
     service = DependencyAgentService(tmp_path)
     service.scan_repository()
     assert len(scans) == 1
-    context_original = RepositoryIndex._context
-    contexts = []
-
-    def context(self, *args, **kwargs):
-        contexts.append(1)
-        return context_original(self, *args, **kwargs)
-
-    monkeypatch.setattr(RepositoryIndex, "_context", context)
-    service.explain_dependency("lib")
-    assert len(contexts) == 1
+    with capture_profile() as profile:
+        service.explain_dependency("lib")
+    assert profile["query.freshness"]["calls"] == 1
+    assert profile["storage.work"]["snapshot_reads"] == 1
     cache = tmp_path / ".depcheck/index.sqlite3"
     before = cache.read_bytes()
 
@@ -2116,7 +2869,7 @@ def test_scan_and_explain_reuse_work_without_accepting_changed_evidence(
     assert cache.read_bytes() == before
 
 
-def test_tool_response_budget_handles_oversized_single_evidence(tmp_path):
+def test_tool_response_budget_handles_oversized_single_evidence(tmp_path, monkeypatch):
     from depcheck.agent.paging import bounded_response, evidence_page
 
     payload = {
@@ -2131,25 +2884,80 @@ def test_tool_response_budget_handles_oversized_single_evidence(tmp_path):
     assert bounded_response({"inventory": ["x" * 300000]})["tool_result_omitted"]
     assert len(payload["usages"]) == 1
 
+    # Impact errors return early, without the successful evidence-page path.
+    service = DependencyAgentService(tmp_path)
+    error = {"error": {"code": "dependency.ambiguous", "choices": ["字" * 100000]}}
+    monkeypatch.setattr(service, "_explain_dependency", lambda *args, **kwargs: error)
+    impact = service.dependency_impact("lib")
+    assert impact["error"]["code"] == "response.budget-exceeded"
+    assert impact["tool_result_omitted"]
+    assert len(json.dumps(impact, indent=2).encode()) < 256 * 1024
+    error["error"]["choices"] = ["lib"]
+    assert service.dependency_impact("lib") == error
 
-def test_schema3_query_is_read_only_and_refresh_rebuilds_source_evidence(tmp_path):
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        "depcheck.index.v3",
+        "depcheck.index.v4",
+        "depcheck.index.v5",
+        "depcheck.index.v6",
+    ],
+)
+def test_legacy_query_is_read_only_and_refresh_rebuilds_source_evidence(
+    tmp_path, schema
+):
     import sqlite3
 
     from depcheck.indexing import RepositoryIndex, RepositoryIndexer
     from depcheck.indexing.store import IndexStore
 
     (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
-    RepositoryIndexer().refresh(tmp_path)
     path = tmp_path / ".depcheck/index.sqlite3"
+    path.parent.mkdir()
     with closing(sqlite3.connect(path)) as c, c:
-        c.execute("UPDATE metadata SET value='depcheck.index.v3' WHERE key='schema'")
-    before = path.read_bytes()
+        c.executescript(
+            """
+            CREATE TABLE metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE resolved_dependencies (
+                project_id TEXT NOT NULL REFERENCES projects(project_id)
+                    ON DELETE CASCADE,
+                ecosystem TEXT NOT NULL,
+                package TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                purl TEXT,
+                version TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                line INTEGER,
+                column_number INTEGER,
+                direct INTEGER NOT NULL,
+                integrity TEXT,
+                instance_id TEXT,
+                origin_json TEXT NOT NULL
+            );
+            """
+        )
+        c.execute("INSERT INTO metadata VALUES ('schema', ?)", (schema,))
+        assert "metadata_json" not in {
+            row[1] for row in c.execute("PRAGMA table_info(resolved_dependencies)")
+        }
+    before = path.read_bytes(), path.stat().st_mtime_ns
     with pytest.raises(RuntimeError, match="incompatible"):
         RepositoryIndex(tmp_path).dependencies()
-    assert path.read_bytes() == before
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
     RepositoryIndexer().refresh(tmp_path)
     with IndexStore(tmp_path, read_only=True) as store:
-        assert store.metadata()["schema"] == "depcheck.index.v4"
+        assert store.metadata()["schema"] == "depcheck.index.v8"
+        assert "metadata_json" in {
+            row[1]
+            for row in store.connection.execute(
+                "PRAGMA table_info(resolved_dependencies)"
+            )
+        }
     assert (
         RepositoryIndex(tmp_path).dependencies()[0]["declarations"][0]["metadata"][
             "origin"
@@ -2180,6 +2988,23 @@ def test_bzlmod_index_keeps_scopes_requests_and_readonly_freshness(tmp_path, fil
     )
     cache = tmp_path / ".depcheck/index.sqlite3"
     before = cache.read_bytes(), cache.stat().st_mtime_ns
+    scan = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, enabled_ecosystems=("Bazel",))
+    )
+    expected = {
+        bundle.project.project_id: {
+            capability.name: {
+                "state": capability.state.value,
+                "complete": capability.complete,
+                "reason": capability.reason,
+            }
+            for capability in bundle.capabilities
+        }
+        for bundle in scan.bundles
+    }
+    context = service.repository_context()
+    assert {p["project_id"]: p["capabilities"] for p in context["projects"]} == expected
+    assert expected["bazel:bzlmod:."]["usage"]["state"] == "unsupported"
     record = service.explain_dependency(
         "fmt", ecosystem="Bazel", project_id="bazel:bzlmod:."
     )
@@ -2632,7 +3457,7 @@ def test_package_supply_signals_provenance_and_registry_opt_in(tmp_path, monkeyp
 def test_explicit_registry_lookup_pins_destination_and_distinguishes_outcomes(
     tmp_path, monkeypatch, status, identity, expected
 ):
-    from depcheck.supply_chain import verify_registry_package
+    from depcheck.security.supply_chain import verify_registry_package
 
     calls = []
 
@@ -3059,10 +3884,11 @@ def test_derivation_references_preserve_repetition_and_page_identity(tmp_path):
     width=st.integers(1, 10),
     queried=st.integers(0, 31),
     inclusive=st.booleans(),
-    ecosystem=st.sampled_from(["PyPI", "npm"]),
+    ecosystem=st.sampled_from(["PyPI", "npm", "crates.io", "Maven"]),
+    scheme=st.sampled_from(["ECOSYSTEM", "SEMVER"]),
 )
 def test_generated_osv_transport_and_offline_membership_against_integer_oracle(
-    lo, width, queried, inclusive, ecosystem
+    lo, width, queried, inclusive, ecosystem, scheme
 ):
     hi = lo + width
     expected = lo <= queried <= hi if inclusive else lo <= queried < hi
@@ -3078,7 +3904,7 @@ def test_generated_osv_transport_and_offline_membership_against_integer_oracle(
                 "package": {"name": "demo", "ecosystem": ecosystem},
                 "ranges": [
                     {
-                        "type": "ECOSYSTEM" if ecosystem == "PyPI" else "SEMVER",
+                        "type": scheme,
                         "events": [
                             {"introduced": version(lo)},
                             {"last_affected" if inclusive else "fixed": version(hi)},
@@ -3092,8 +3918,9 @@ def test_generated_osv_transport_and_offline_membership_against_integer_oracle(
         "affected" if expected else "not-affected"
     )
 
-    class Response:
+    class Response(JsonResponse):
         def __init__(self, data):
+            super().__init__(json=lambda: data)
             self.data = data
 
         def raise_for_status(self):
@@ -3146,3 +3973,471 @@ def test_generated_osv_transport_and_offline_membership_against_integer_oracle(
                 row["vulnerabilities"][0]["fix_version"]
                 == online.vulnerabilities["demo"][0]["fix_version"]
             )
+
+
+def test_python_nested_calls_evaluate_arguments_once_per_visit(tmp_path):
+    from depcheck.ecosystems.python.calls import _Analysis
+
+    (tmp_path / "app.py").write_text(
+        "def identity(value):\n    return value\n"
+        + "identity(" * 30
+        + "None"
+        + ")" * 30
+        + "\n"
+    )
+    analysis = _Analysis(
+        tmp_path, {"sources": [{"path": "app.py", "module": "app"}], "entries": []}
+    )
+    analysis.run()
+    assert analysis.expression_visits < 1000
+    assert len(analysis.edges) == 30
+
+
+def test_backend_identity_works_without_repository_and_matches_mcp(
+    tmp_path, capsys, monkeypatch
+):
+    from depcheck.contracts import backend_info
+
+    monkeypatch.chdir(tmp_path)
+    assert main(["runtime"]) == 0
+    assert json.loads(capsys.readouterr().out) == backend_info()
+
+    async def check():
+        server = create_server(allowed_roots=[tmp_path])
+        tools = await server.list_tools()
+        assert "backend_info" in {tool.name for tool in tools}
+        result = await server.call_tool("backend_info", {})
+        assert result[1] == backend_info()
+
+    asyncio.run(check())
+
+
+@pytest.fixture
+def cve_risk_data(tmp_path):
+    """Synthetic native feeds and OSV aliases, including unrelated CVE assertions."""
+    import gzip
+
+    def entry(identifier):
+        return {
+            "cveID": identifier,
+            "vendorProject": "Synthetic",
+            "product": "Example",
+            "vulnerabilityName": "Fixture",
+            "dateAdded": "2026-10-20",
+            "shortDescription": "Synthetic record",
+            "requiredAction": "Review fixture",
+            "dueDate": "2026-11-01",
+            "knownRansomwareCampaignUse": "Unknown",
+            "forensicTriage": "Yes",
+            "future_extension": {"state": "reported"},
+        }
+
+    a, b, unrelated = "CVE-2021-44228", "CVE-2026-12345", "CVE-2020-0001"
+    inventory = {
+        "schema": "depcheck.scan.v1",
+        "inventory": {
+            "resolved_dependencies": [
+                {
+                    "identity": {
+                        "ecosystem": "PyPI",
+                        "package": name,
+                        "version": version,
+                    },
+                    "origin": {"public": public},
+                }
+                for name, version, public in [
+                    ("demo", "1.5", True),
+                    ("demo", "3", True),
+                    ("demo", "1.5", False),
+                    ("other", "1", True),
+                ]
+            ]
+        },
+    }
+    records = [
+        {
+            "id": identifier,
+            "modified": "2026-10-23T00:00:00Z",
+            "aliases": aliases,
+            "related": [unrelated],
+            "affected": [
+                {
+                    "package": {"ecosystem": "PyPI", "name": package},
+                    "ranges": [
+                        {
+                            "type": "ECOSYSTEM",
+                            "events": [{"introduced": "0"}, {"fixed": "2"}],
+                        }
+                    ],
+                }
+            ],
+        }
+        for identifier, package, aliases in [
+            ("OSV-ONE", "demo", [a, b]),
+            ("OSV-TWO", "demo", [a]),
+            ("OSV-RELATED", "other", []),
+        ]
+    ]
+    current = {
+        "catalogVersion": "2026.10.23",
+        "dateReleased": "2026-10-23T19:30:18.9209Z",
+        "count": 2,
+        "vulnerabilities": [entry(a), entry(unrelated)],
+        "future_root": {"state": "provided"},
+    }
+    previous = {
+        **current,
+        "dateReleased": "2026-10-23T17:00:09.9001Z",
+        "vulnerabilities": [entry(a), entry(b)],
+    }
+    files = {
+        "inventory.json": inventory,
+        "osv.json": {"schema": "depcheck.osv-database.v1", "records": records},
+        "kev.json": current,
+        "previous-kev.json": previous,
+    }
+    for name, data in files.items():
+        (tmp_path / name).write_text(json.dumps(data))
+    csv = f"#model_version:v2026.test,score_date:2026-10-23T12:55:00Z\ncve,epss,percentile,extension\n{a},0.1,0.9,preserved\n{unrelated},0.7,0.95,unused\n"
+    (tmp_path / "epss.csv").write_text(csv)
+    (tmp_path / "epss.csv.gz").write_bytes(gzip.compress(csv.encode(), mtime=0))
+    (tmp_path / "previous-epss.csv").write_text(
+        f"#model_version:v2026.old,score_date:2026-10-22T12:55:00Z\ncve,epss,percentile\n{a},0.2,0.95\n{b},0.8,0.99\n"
+    )
+    return {
+        "root": tmp_path,
+        "a": a,
+        "b": b,
+        "unrelated": unrelated,
+        "current": current,
+        "csv": csv,
+    }
+
+
+def test_cve_risk_alias_join_preserves_matching_and_read_only_cli(
+    cve_risk_data, monkeypatch, capsys
+):
+    data = cve_risk_data
+    root = data["root"]
+    originals = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.iterdir()}
+    monkeypatch.setattr(
+        "requests.Session",
+        lambda *a, **k: pytest.fail("risk enrichment constructed an HTTP session"),
+    )
+    service = DependencyAgentService(root)
+    base = service.reevaluate_vulnerabilities("inventory.json", "osv.json")
+    assert "risk_context" not in base
+    result = service.reevaluate_vulnerabilities(
+        "inventory.json",
+        "osv.json",
+        kev_file="kev.json",
+        epss_file="epss.csv.gz",
+        previous_kev_file="previous-kev.json",
+        previous_epss_file="previous-epss.csv",
+        risk_as_of="2026-10-24",
+        risk_max_age_days=1,
+    )
+    assert result["observations"] == base["observations"]
+    assert result["diagnostics"] == base["diagnostics"]
+    context = result["risk_context"]
+    rows = {r["cve"]: r for r in context["records"]}
+    assert set(rows) == {data["a"], data["b"]}
+    assert (
+        context["finding_effect"] == "none"
+        and context["exploitation_status"] == "not-evaluated"
+    )
+    assert {r["source_advisory_id"] for r in rows[data["a"]]["associations"]} == {
+        "OSV-ONE",
+        "OSV-TWO",
+    }
+    assert all(
+        r["observation_index"] == 0
+        for row in rows.values()
+        for r in row["associations"]
+    )
+    a = rows[data["a"]]
+    assert (
+        a["kev"]["status"] == "listed"
+        and a["kev"]["record"]["knownRansomwareCampaignUse"] == "Unknown"
+    )
+    assert a["kev"]["record"]["future_extension"] == {"state": "reported"}
+    assert a["epss"]["probability"] == 0.1 and a["epss"]["percentile"] == 0.9
+    assert a["epss"]["fields"]["extension"] == "preserved"
+    assert rows[data["b"]]["kev"]["status"] == "not_listed_in_snapshot"
+    assert rows[data["b"]]["kev"]["comparison"]["change"] == "removed_from_snapshot"
+    assert rows[data["b"]]["epss"]["status"] == "no_row_in_snapshot"
+    assert "probability" not in rows[data["b"]]["epss"]
+    feed = context["feeds"]["kev"]
+    assert (
+        feed["snapshot"]["catalog_version"]
+        == feed["previous_snapshot"]["catalog_version"]
+    )
+    assert (
+        feed["snapshot"]["source"]["snapshot_id"]
+        != feed["previous_snapshot"]["source"]["snapshot_id"]
+    )
+    assert feed["freshness"] == "within-explicit-age-limit"
+    assert (
+        main(
+            [
+                "reevaluate",
+                str(root),
+                "inventory.json",
+                "osv.json",
+                "--kev-file",
+                "kev.json",
+                "--epss-file",
+                "epss.csv.gz",
+                "--previous-kev-file",
+                "previous-kev.json",
+                "--risk-as-of",
+                "2026-10-24",
+                "--risk-max-age-days",
+                "1",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["observations"] == base["observations"]
+    assert all(
+        (p.read_bytes(), p.stat().st_mtime_ns) == value
+        for p, value in originals.items()
+    )
+    assert not (root / ".depcheck").exists()
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "count",
+        "conflicting-duplicate",
+        "date",
+        "csv-header",
+        "csv-duplicate",
+        "unselected-nan",
+        "infinite",
+        "over-one",
+        "underflow",
+        "precision",
+        "truncated-gzip",
+        "future-date",
+    ],
+)
+def test_cve_risk_invalid_complete_snapshot_falls_back_without_erasing_matches(
+    cve_risk_data, fault
+):
+    data = cve_risk_data
+    root = data["root"]
+    kind = "kev" if fault in {"count", "conflicting-duplicate", "date"} else "epss"
+    if kind == "kev":
+        current = json.loads((root / "kev.json").read_text())
+        if fault == "count":
+            current["count"] += 1
+        elif fault == "date":
+            current["vulnerabilities"][-1]["dateAdded"] = "2026-02-30"
+        else:
+            duplicate = {**current["vulnerabilities"][0], "product": "conflict"}
+            current["vulnerabilities"].append(duplicate)
+            current["count"] += 1
+        (root / "kev.json").write_text(json.dumps(current))
+        current_file, previous_file = "kev.json", "previous-kev.json"
+    else:
+        text = data["csv"]
+        if fault == "csv-header":
+            text = text.replace(
+                "cve,epss,percentile,extension", "cve,epss,epss,extension"
+            )
+        elif fault == "csv-duplicate":
+            text += f"{data['a']},0.2,0.9,different\n"
+        elif fault == "unselected-nan":
+            text = text.replace(",0.7,0.95,", ",NaN,0.95,")
+        elif fault == "infinite":
+            text = text.replace(",0.1,0.9,", ",Infinity,0.9,")
+        elif fault == "over-one":
+            text = text.replace(",0.1,0.9,", ",1.1,0.9,")
+        elif fault == "underflow":
+            text = text.replace(",0.1,0.9,", ",1e-999,0.9,")
+        elif fault == "precision":
+            text = text.replace(",0.1,0.9,", ",0.999999999999999999999,0.9,")
+        elif fault == "future-date":
+            text = text.replace("2026-10-23T12:55:00Z", "2026-10-26T12:55:00Z")
+        (root / "epss.csv").write_text(text)
+        current_file, previous_file = "epss.csv", "previous-epss.csv"
+        if fault == "truncated-gzip":
+            (root / "epss.csv.gz").write_bytes((root / "epss.csv.gz").read_bytes()[:-5])
+            current_file = "epss.csv.gz"
+    original = (
+        (root / previous_file).read_bytes(),
+        (root / previous_file).stat().st_mtime_ns,
+    )
+    service = DependencyAgentService(root)
+    base = service.reevaluate_vulnerabilities("inventory.json", "osv.json")
+    options = {
+        kind + "_file": current_file,
+        "previous_" + kind + "_file": previous_file,
+        "risk_as_of": "2026-10-24",
+    }
+    result = service.reevaluate_vulnerabilities("inventory.json", "osv.json", **options)
+    assert result["observations"] == base["observations"]
+    feed = result["risk_context"]["feeds"][kind]
+    assert feed["selection"] == "previous" and feed["stale"] is True
+    assert feed["attempts"]["current"]["status"] == "invalid"
+    assert feed["snapshot"]["parsed_completely"] is True
+    row = next(r for r in result["risk_context"]["records"] if r["cve"] == data["a"])
+    if kind == "epss":
+        assert row[kind]["probability"] == 0.2
+    else:
+        assert row[kind]["status"] == "listed"
+    options.pop("previous_" + kind + "_file")
+    unavailable = service.reevaluate_vulnerabilities(
+        "inventory.json", "osv.json", **options
+    )
+    assert unavailable["observations"] == base["observations"]
+    assert unavailable["risk_context"]["feeds"][kind]["status"] == "unavailable"
+    assert all(
+        r[kind]["status"] == "unavailable"
+        for r in unavailable["risk_context"]["records"]
+    )
+    assert (root / previous_file).read_bytes() == original[0] and (
+        root / previous_file
+    ).stat().st_mtime_ns == original[1]
+
+
+def test_cve_risk_legacy_dates_duplicate_records_and_pagination_are_qualified(
+    cve_risk_data,
+):
+    data = cve_risk_data
+    root = data["root"]
+    current = json.loads((root / "kev.json").read_text())
+    current["vulnerabilities"].append(current["vulnerabilities"][0])
+    current["count"] += 1
+    (root / "kev.json").write_text(json.dumps(current))
+    text = data["csv"].split("\n", 1)[1]
+    text += text.splitlines()[1] + "\n"
+    (root / "epss.csv").write_text(text)
+    service = DependencyAgentService(root)
+    result = service.reevaluate_vulnerabilities(
+        "inventory.json",
+        "osv.json",
+        kev_file="kev.json",
+        epss_file="epss.csv",
+        risk_as_of="2026-10-24",
+        risk_max_age_days=0,
+        limit=1,
+    )
+    feeds = result["risk_context"]["feeds"]
+    assert feeds["kev"]["snapshot"]["identical_duplicates"] == 1
+    assert (
+        feeds["kev"]["snapshot"]["raw_record_count"] == 3
+        and feeds["kev"]["snapshot"]["record_count"] == 2
+    )
+    assert feeds["epss"]["snapshot"]["identical_duplicates"] == 1
+    assert (
+        feeds["epss"]["snapshot"]["model_version"] is None
+        and feeds["epss"]["snapshot"]["data_date"] is None
+    )
+    assert feeds["epss"]["freshness"] == "unknown" and feeds["epss"]["stale"] is None
+    assert feeds["kev"]["stale"] is True and result["next_offset"] == 1
+    second = service.reevaluate_vulnerabilities(
+        "inventory.json",
+        "osv.json",
+        kev_file="kev.json",
+        epss_file="epss.csv",
+        risk_as_of="2026-10-24",
+        limit=1,
+        offset=1,
+    )
+    assert second["observations"][0]["status"] == "not-matched-in-supplied-records"
+    assert second["risk_context"]["records"] == []
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["expansion", "members", "rows", "association", "details", "outside-root"],
+)
+def test_cve_risk_budgets_and_file_boundaries_do_not_invent_negative_signals(
+    cve_risk_data, monkeypatch, boundary
+):
+    from depcheck.security import risk
+
+    data = cve_risk_data
+    root = data["root"]
+    options = {
+        "kev_file": "kev.json",
+        "epss_file": "epss.csv.gz",
+        "risk_as_of": "2026-10-24",
+    }
+    if boundary == "expansion":
+        monkeypatch.setattr(risk, "_MAX_CSV_BYTES", 64)
+    elif boundary == "members":
+        monkeypatch.setattr(risk, "_MAX_GZIP_MEMBERS", 0)
+    elif boundary == "rows":
+        monkeypatch.setattr(risk, "_MAX_CSV_ROWS", 1)
+    elif boundary == "association":
+        monkeypatch.setattr(risk, "_MAX_ASSOCIATION_WORK", 0)
+    elif boundary == "details":
+        monkeypatch.setattr(risk, "_DETAIL_BYTES", 1)
+    else:
+        external = root.parent / "outside-risk-catalog.json"
+        external.write_text(json.dumps(data["current"]))
+        (root / "alias.json").symlink_to(external)
+        options["kev_file"] = "alias.json"
+    service = DependencyAgentService(root)
+    result = service.reevaluate_vulnerabilities("inventory.json", "osv.json", **options)
+    assert result["observations"][0]["status"] == "matched"
+    context = result["risk_context"]
+    if boundary == "association":
+        assert not context["associations_complete"] and context["records"] == []
+    elif boundary == "details":
+        row = next(r for r in context["records"] if r["cve"] == data["a"])
+        assert row["kev"]["status"] == "listed" and row["kev"]["record"] == {
+            "details_omitted": True
+        }
+        assert row["epss"]["status"] == "scored" and row["epss"]["probability"] == 0.1
+    else:
+        kind = "kev" if boundary == "outside-root" else "epss"
+        assert context["feeds"][kind]["status"] == "unavailable"
+        assert all(row[kind]["status"] == "unavailable" for row in context["records"])
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"risk_as_of": "bad"}, {"risk_max_age_days": -1}, {"risk_max_age_days": True}],
+)
+def test_cve_risk_invalid_request_options_are_errors(cve_risk_data, options):
+    with pytest.raises(ValueError, match="Risk"):
+        DependencyAgentService(cve_risk_data["root"]).reevaluate_vulnerabilities(
+            "inventory.json", "osv.json", **options
+        )
+
+
+def test_cve_risk_gzip_members_and_url_details_keep_credentials_private(cve_risk_data):
+    import gzip
+
+    data = cve_risk_data
+    root = data["root"]
+    canary = "risk-extension-credential-canary"
+    url = f"https://user:{canary}@example.invalid/feed?token={canary}"
+    current = data["current"]
+    current["catalogVersion"] = url
+    current["vulnerabilities"][0]["future_extension"]["source"] = url
+    (root / "kev.json").write_text(json.dumps(current))
+    csv_data = data["csv"].replace("v2026.test", url).replace("extension", url).encode()
+    split = 29
+    (root / "epss.csv.gz").write_bytes(
+        gzip.compress(csv_data[:split], mtime=0)
+        + gzip.compress(csv_data[split:], mtime=0)
+    )
+    result = DependencyAgentService(root).reevaluate_vulnerabilities(
+        "inventory.json",
+        "osv.json",
+        kev_file="kev.json",
+        epss_file="epss.csv.gz",
+        risk_as_of="2026-10-24",
+    )
+    context = result["risk_context"]
+    assert all(f["status"] == "available" for f in context["feeds"].values())
+    row = next(r for r in context["records"] if r["cve"] == data["a"])
+    assert row["kev"]["status"] == "listed" and row["epss"]["probability"] == 0.1
+    assert row["epss"]["fields"] == {"details_omitted": True}
+    assert canary not in json.dumps(result)

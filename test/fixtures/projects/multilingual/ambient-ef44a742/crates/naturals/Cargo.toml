@@ -1,0 +1,33 @@
+
+[package]
+name = "ambient_naturals"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ambient_core = { path = "../core" }
+ambient_ecs = { path = "../ecs" }
+ambient_gpu = { path = "../gpu" }
+ambient_renderer = { path = "../renderer" }
+ambient_native_std = { path = "../native_std" }
+ambient_ui_native = { path = "../ui_native" }
+ambient_network = { path = "../network" }
+ambient_model = { path = "../model" }
+ambient_editor_derive = { path = "../../shared_crates/editor_derive" }
+ambient_terrain = { path = "../terrain" }
+itertools = { workspace = true }
+rand = { workspace = true }
+glam = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+bytemuck = { workspace = true }
+serde_json = { workspace = true }
+wgpu = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+hotload-includes = ['ambient_native_std/hotload-includes']

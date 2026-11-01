@@ -6,30 +6,28 @@ from typing import Any
 
 from packaging.utils import canonicalize_name
 
-from depcheck.bounded_io import capture_reads, repository_operation
-from depcheck.cmake_model import inspect_cmake_model
+from depcheck.compatibility.planning import DependencyUpdatePlanner
 from depcheck.config import load_project_config
+from depcheck.ecosystems.python.calls import analyze_python_calls
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
-from depcheck.evidence_export import export_evidence
-from depcheck.external_evidence import KINDS, inspect_external_evidence
+from depcheck.evidence.cmake import inspect_cmake_model
+from depcheck.evidence.compare import compare_inventories, compare_snapshots
+from depcheck.evidence.export import export_evidence
+from depcheck.evidence.external import KINDS, inspect_external_evidence
+from depcheck.evidence.sbom import inspect_sbom
+from depcheck.filesystem import capture_reads, default_index_path, repository_operation
 from depcheck.indexing import RepositoryIndex, RepositoryIndexer
 from depcheck.indexing.fingerprints import freshness_guard
-from depcheck.inventory_compare import compare_inventories
-from depcheck.path_policy import default_index_path
-from depcheck.python_calls import analyze_python_calls
-from depcheck.sbom import inspect_sbom
 from depcheck.security.evidence import inspect_security_evidence
 from depcheck.security.offline import reevaluate_vulnerabilities
-from depcheck.snapshots import compare_snapshots
-from depcheck.supply_chain import (
+from depcheck.security.supply_chain import (
     compare_package_behavior,
     compare_package_names,
     verify_registry_package,
 )
-from depcheck.update_planning import DependencyUpdatePlanner
 
 from .gitnexus import GitNexusCompanion
-from .paging import evidence_page
+from .paging import bounded_response, evidence_page
 
 
 class DependencyAgentService:
@@ -67,12 +65,18 @@ class DependencyAgentService:
         )
         payload = asdict(result)
         payload["index_path"] = self._relative(result.index_path)
+        from depcheck.contracts import backend_info
+
+        payload["backend"] = backend_info()
         payload["schema"] = "depcheck.agent.index-result.v1"
         return payload
 
     @repository_operation("self._io_root")
     def repository_context(self) -> dict[str, Any]:
+        from depcheck.contracts import backend_info
+
         context = RepositoryIndex(self.project_root).context()
+        context["backend"] = backend_info()
         context["code_index"] = self.code_index.inspect(self.project_root).to_dict()
         return context
 
@@ -234,7 +238,7 @@ class DependencyAgentService:
             origin_depth=origin_depth,
         )
         if "error" in explanation:
-            return explanation
+            return bounded_response(explanation)
         usages = explanation["usages"]
         files = sorted({str(item["location"]["path"]) for item in usages})
         scopes: dict[str, int] = {}
@@ -393,6 +397,12 @@ class DependencyAgentService:
         *,
         limit: int | None = None,
         offset: int = 0,
+        kev_file: str | None = None,
+        epss_file: str | None = None,
+        previous_kev_file: str | None = None,
+        previous_epss_file: str | None = None,
+        risk_as_of: str | None = None,
+        risk_max_age_days: int | None = None,
     ) -> dict[str, Any]:
         return reevaluate_vulnerabilities(
             self.project_root,
@@ -400,6 +410,12 @@ class DependencyAgentService:
             advisory_file,
             limit=self._limit(limit),
             offset=offset,
+            kev_file=kev_file,
+            epss_file=epss_file,
+            previous_kev_file=previous_kev_file,
+            previous_epss_file=previous_epss_file,
+            risk_as_of=risk_as_of,
+            risk_max_age_days=risk_max_age_days,
         )
 
     @repository_operation("self._io_root")

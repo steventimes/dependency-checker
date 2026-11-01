@@ -1,0 +1,12 @@
+[package]
+name = "ambient_time"
+edition = "2021"
+description = "Helper functionality for manipulating datetimes."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+rust-version = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+itertools = { workspace = true }
+thiserror = { workspace = true }

@@ -12,7 +12,27 @@
 【拓展】表示需要新增能力或额外输入。外部 SBOM、构建模型和运行轨迹
 不能直接替代源码使用、已安装版本或已完成漏洞检查的证据。
 
+<a id="adoption-status"></a>
+
+## 当前采用状态（2026-10-29）
+
+本表更新现行判断，不改下方原编号和历史阅读记录。状态依据当前源码、既有回执与 2026-10-29 有界复评；目录收录不等于原文已读，方法可迁移不等于已有效。
+
+| 条目 | 当前状态 | 实际范围与条件 |
+| --- | --- | --- |
+| AH02／N06，KEV／EPSS | 已实现，限显式文件 | 2026-10-25 已接入离线风险上下文，按已有 CVE／可信 alias 关联，保留缺失、陈旧、来源与概率／百分位。自动下载、持久缓存和来源真实性未实现，不重复列为待做。 |
+| AP01–AP04、AR02 | 已有覆盖 | 环境报告、工具配置、保守引用与模块边界已有相应实现；AR02 已有有界计量。只有新输入、失败或实测缺口才继续，旧样本不证明当前性能。 |
+| F5／P1，快照 compare | 已实现，范围已澄清 | JSON／文本、分页及 opt-in 退出码已受限验收。比较四类记录的增减，不比较同公告元数据；不完整安全证据下 exit 0 不能证明风险未变或已修复。 |
+| OSV／GHSA／PYSEC 原始来源定位 | 可验证，未新增接入 | Hub／文本镜像可找公告线索，实际判断回到固定版本的原始记录。PYSEC 镜像省略 severity、modified、withdrawn 等字段，不能作为字段完整输入或同公告变化真值。 |
+| 同公告元数据差异 | 继续暂缓 | 需实际消费者问题、前后字段和来源资格，再明确缺失／unknown、分页与兼容退出码。合成复现只说明当前合同，不证明功能需求。 |
+| SBOM 完整 Schema／质量验证 | 条件候选，未实施完整验证 | 当前已有 1.4–1.7 支持投影及字段计数。完整格式、真实性、法律合规和安全结论分别判断，真实不兼容输入或格式要求是后续验证入口。 |
+| 用镜像字段缺失证明未受影响，或用单一质量分数证明安全 | 不适用 | 来源省略不等于原公告缺失；字段存在、Schema 合法或分数高均不能证明安装、执行、完整覆盖或已修复。 |
+
+实现细节及原验收范围见活动记录 `.tmp/implementation-report-20261019.md` 和其已完成归档。首轮研究及本轮文档增量分别保存在经理批次 `2026-10-29-corpus-reassessment` 的原回执和 attempt 2 回执中，本轮未新增产品算法或验证收益。
+
 ## 处理记录
+
+下表保留各轮当时的采用与阅读状态，现行分类见上表。
 
 | 编号 | 状态 | 记录 |
 | --- | --- | --- |
@@ -57,6 +77,91 @@
 | --- | --- | --- |
 | CVE Program | [CVE List JSON 5](https://github.com/CVEProject/cvelistV5) | 核对官方漏洞记录格式。报告保留 OSV 提供的 CVE 标识及官方链接，尚未接入独立记录更新与状态核验。 |
 | MITRE CWE | [REST API 指南](https://github.com/CWE-CAPEC/REST-API-wg/blob/main/Quick%20Start.md)、[分类下载](https://cwe.mitre.org/data/downloads.html) | 核对弱点分类及免注册查询接口。当前保留公告提供的 CWE 断言，不拉取分类库或推断弱点关系。 |
+
+## 下一轮候选：awesome-python
+
+2026-10-21 按用户提供的 [awesome-python](https://github.com/vinta/awesome-python)
+筛选下一轮参考，目录快照固定在
+[`af248d22cebc`](https://github.com/vinta/awesome-python/tree/af248d22cebc35db6b7140bf28c0c941069ea18c)。
+本次查看静态分析、测试、调试、构建、环境管理、包管理、分发与供应链安全分类，
+并选读下列七个项目的官方资料。pip、Hatch、Poe、Vulture、import-linter 和
+Pyinstrument 另核对相关源码片段，Memray 只读官方概览与许可证。
+这不等于逐个审查目录中的所有项目。后续实施按本节下方的状态记录，不将目录
+收录本身当作安装决定。
+
+| 任务 | 下一轮考虑的改进 | 参考与阅读落点 | 优先级与边界 |
+| --- | --- | --- | --- |
+| AP01 | 接收显式提供的 Python 环境报告，补充版本、直接来源和环境上下文 | [pip inspect 规范](https://pip.pypa.io/en/stable/reference/inspect-report/)，`InspectCommand._dist_to_dict` | 优先评估。保留报告版本、重复实例与可选字段。报告仍是外部断言，不运行目标 pip，不凭 `installer` 或缺少 `direct_url` 认定公共 PyPI 来源。 |
+| AP02 | 补充 Python 环境依赖和任务配置中的工具使用证据 | [Hatch 环境配置](https://hatch.pypa.io/latest/config/environment/overview/)，`EnvironmentInterface.environment_dependencies_complex` / `scripts`；[Poe cmd](https://poethepoet.natn.io/tasks/task_types/cmd.html)，`CmdTask._resolve_commandline` | 优先评估。区分环境声明、任务引用与执行。保留继承、模板、变量、来源覆盖和成员归属的不确定状态，不执行任务、hook 或 shell。 |
+| AP03 | 用动态引用、装饰器注册等样例复核未使用告警的保守性 | [Vulture](https://github.com/jendrikseipp/vulture)，误报说明、白名单与 `Vulture.get_unused_code` | 次优先。借鉴样例和限定方式，不将代码符号评分直接用于包依赖判断，不执行白名单文件。复用现有配置映射和五个测试模块。 |
+| AP04 | 检查现有模块边界约束是否需要覆盖间接导入 | [import-linter](https://github.com/seddonym/import-linter)，`ForbiddenContract.check` | 条件候选。当前已有直接导入约束，先证明间接路径的实际缺口，再选择扩展现有检查或开发期工具，避免维护两套规则。 |
+| AP05 | 在现有阶段计时和进程峰值 RSS 之外定位耗时或分配热点 | [Pyinstrument](https://github.com/joerick/pyinstrument)，`Profiler.start` / `stop`；[Memray](https://github.com/bloomberg/memray)，官方分配分析说明 | 条件候选。先采样自身后端，确有分配问题再考虑 Memray。保留无 profiler 的基准，不增加运行依赖或 CI 阈值。Memray 的平台限制单独处理。 |
+
+2026-10-21 用户授权后，AP01–AP04 已实现并通过本地验证。Hatch 本轮收集物理
+环境声明，不展开模板继承和动态配置，相关状态保持不完整。AP05 采用现有基准、
+cProfile 和 tracemalloc 定位问题，减少无 pytest 配置时的重复位置解析。在固定
+合成夹具的五组前后比较中，扫描中位数从 0.602 秒降至 0.507 秒，完整证据一致。
+这不是全场景速度保证，不新增 profiler 依赖或 CI 阈值。固定来源与实际阅读范围
+保存在 `.tmp/awesome-python-20261021/`，实现与验证在现有活动报告和
+`.tmp/ap-implementation-20261021/`，不进入发布包。
+原有 92 条参考编号保持不变。
+
+pytest、Hypothesis、Ruff、mypy、uv 和 pip-audit 复用已有实现或参考记录，
+不重复立项。tox/nox 暂不替换现有 CI 矩阵，VCR/Responses 暂不替换现有离线
+注入夹具。框架、GUI、模型编排与打包器没有本轮需求，未转成改进任务。
+
+## 下一轮候选：架构与安全目录
+
+2026-10-21 核对用户新提供的两个入口，原有 92 条编号保持不变。
+
+| 目录 | 固定版本与实际阅读范围 | 处理意见 |
+| --- | --- | --- |
+| [architect-awesome](https://github.com/xingshaocheng/architect-awesome/tree/a9b92bd4a384fd3f620a553a377612983d1ecbad) | README 的一致性与事务、监控、测试、缓存、性能与容量、稳定性及限流条目。该快照的最后提交在 2022 年，未逐篇读取其外链。 | 借鉴故障恢复、成本测量和资源隔离的问题划分，再用当前官方资料核对。未发现根许可证，不复制目录正文或代码。 |
+| [Awesome-Hacking](https://github.com/Hack-with-Github/Awesome-Hacking/tree/b2bb13aa69b4f568a1bab0cbb17b7a00a350dc36) | 阅读 README，选取 Fuzzing、Threat Intelligence、Security Cheatsheets 入口，并核对下表原始资料。 | 作为安全参考的发现入口。收录和星数不证明工具适用性，也不构成安装决定。 |
+
+| 任务 | 下一轮候选与本仓库落点 | 原始资料与实施条件 |
+| --- | --- | --- |
+| AR01 | 当前源码已补默认索引的失败上下文处理、发布互斥、初次缺失状态检查和父目录身份检查。落点为 `indexing/store.py`、`filesystem/`，工程测试涵盖写入故障与实际子进程中断。 | 依据 [SQLite 原子提交的故障测试](https://sqlite.org/atomiccommit.html#_testing_atomic_commit_behavior)与[文件替换及损坏说明](https://www.sqlite.org/howtocorrupt.html)，保留事务、私有快照、摘要检查与原子替换。默认缓存的协议协调当前后端写入；显式库路径、手工编辑和旧后端不在同一保证内。进程中断与断电持久性分别验证，后者未获证明。 |
+| AR02 | 已完成累计成本采样，并将 opt-in 工作计量扩展至默认索引快照、刷新、新鲜度与 OSV 传输。现有基准核对输入／完整证据摘要、有／无探针、完整分页及各阶段测量；后续查询视图修正保留一致性，不宣称延迟改善。 | 参考 [OWASP DoS 的设计与输入验证](https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html)。区分每文件、每快照、每次生态调用与整个仓库预算。仅在新测量或回归证明缺口时继续优化，不重复已完成采样，不增加通用调度框架或新的 CI 阈值。 |
+| AH01 | 共享 JSON 数值／Unicode 与 npm lock 路径、坏节点、未知目标的修正，以及私有有界探索，已完成对应轮次的本地验证。回归保留在五个既有测试模块；原生跨平台及当前工作树的完整验证仍须分别确认。 | 从 [Awesome-Fuzzing](https://github.com/secfigo/Awesome-Fuzzing) 延伸核对 [Atheris](https://github.com/google/atheris)。已有实验复用 Hypothesis target 和 Python 行转移观测，不是原生分支覆盖率。Atheris 未安装，仍为可选候选；后续须保留进程、时间、内存和输入边界，不吞掉意外异常或执行被扫描项目。 |
+| AH02 | 已实现显式文件的离线 KEV／EPSS 风险上下文，见 N06；自动下载等仍未实现。 | 从威胁情报分类进一步核对 [CISA 官方 KEV 数据及 schema](https://github.com/cisagov/kev-data)与 [FIRST EPSS](https://www.first.org/epss/)。仅按已有 CVE 标识关联，保留来源、数据日期、缺失和陈旧状态。KEV 收录不证明本项目遭利用，EPSS 是概率信号，不能替代版本匹配、可达性或严重性。不按产品名猜包、不默认联网或阻断发布。 |
+
+2026-10-23 已实现 AR01 的默认缓存防护与故障回归入口，原生跨平台和断电边界仍需分别核对。
+AR02 的集中测量和 AH01 的有界探索已完成对应轮次的本地收尾，不再作为未启动任务。
+Maven 的有界字符串对照只提供局部依据，不能替代原生平台或当前源码验证。
+AH02 于 2026-10-25 的 N06 轮次完成显式离线文件接入；2026-10-23 的未实施判断已被该记录替代。自动下载、持久缓存及来源真实性仍不在已实现范围。
+架构边界和间接导入约束承接 W06／AP04，缓存失效与证据推导承接 W03／W05，
+性能剖析承接 W02／AP05。提示注入试验承接 W08；CI/CD 最小权限、依赖来源及
+产物检查沿用现有规则，不再各建一套任务。OWASP 的 SSRF 和 XML 资料作为这些
+边界的补充参考，本次没有据此宣称发现新漏洞。
+
+本次只整理参考，不安装工具、不运行扫描或攻击样例，不修改运行代码、测试、
+依赖或版本。没有新增论文阅读范围，也未审计目录内的全部项目。固定提交、文本
+摘要和实际阅读落点保存在 `.tmp/catalogs-20261021/`，进度继续记在现有活动报告。
+
+## 条件参考：Locust
+
+2026-10-21 按用户提供的 [Locust](https://github.com/locustio/locust) 查重后收录，
+源码快照固定在
+[`3a1d0caa5bde`](https://github.com/locustio/locust/tree/3a1d0caa5bde59494ede55f513fcb4becbf406a0)。
+本次阅读官方概览、自定义协议说明、`TaskSet.run` 的任务与等待循环，以及
+`Runner.spawn_users` 的用户启动逻辑，另核对依赖声明和 MIT 许可证。没有安装或
+运行 Locust，也未审计其全部实现。
+
+值得借鉴的是按用户任务组织场景、逐步增加负载，以及分别记录吞吐、延迟和错误。
+当前后端以 CLI 和 stdio MCP 为入口，已有独立进程基准及离线 MCP 合同检查。
+Locust 原生支持 HTTP；其他协议需要客户端适配和请求事件，官方还要求检查
+[gevent 对协议库的兼容性](https://docs.locust.io/en/stable/testing-other-systems.html)。
+本次没有验证它与 AnyIO／stdio MCP 的组合，也没有为引入压测工具增加 HTTP 服务。
+
+LP01 保留为条件候选，承接 AR02 的组合成本测量。若出现明确的多客户端容量问题，
+先用有界本地场景记录进程数、用户数、输入规模、等待策略、启动与稳态耗时、
+错误及证据完整性，再比较现有工具与 Locust 自定义客户端的成本和新增价值。
+用户数、启动速率和请求速率分别记录，不把 CPU 扫描耗时解释为 HTTP 容量。
+没有实际缺口时继续使用现有基准；不添加运行依赖或 CI 负载阈值。
+
+固定来源和阅读记录与本轮 README／CI 修复材料一同保存在
+`.tmp/docs-ci-20261021/`，原 92 条编号不变。
 
 ## 用户提供的 92 条参考
 

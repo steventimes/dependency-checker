@@ -1,0 +1,13 @@
+[package]
+name = "ambient_math"
+edition = "2021"
+description = "Convenient mathematical operations for the Ambient runtime."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+rust-version = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+glam = { workspace = true }
+serde = { workspace = true }
+rand = { workspace = true }

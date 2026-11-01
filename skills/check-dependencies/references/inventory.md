@@ -43,7 +43,7 @@ or query vulnerabilities. Its usage capability is unsupported and security is
 skipped. Both operations reject aliases, duplicate JSON keys and inputs above
 8 MiB, and do not change the source or index.
 
-For supplied CMake File API build models, read [CMake guidance](cmake.md) and use
+For supplied CMake File API build models, read [CMake guidance](ecosystems/cmake.md) and use
 `inspect_cmake_model`. Keep that external build-model projection separate from
 SBOM package identities and source-index evidence. It does not establish
 installed packages, current source contents, build execution or vulnerability

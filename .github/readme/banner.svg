@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-labelledby="title desc">
+<title id="title">Dependency Checker</title><desc id="desc">Trace declarations, locked versions, and source usage. Decorative project artwork.</desc>
+<rect width="1200" height="280" rx="20" fill="#101820"/>
+<rect x="44" y="44" width="6" height="24" rx="3" fill="#d2a8ff"/>
+<text x="64" y="62" fill="#d2a8ff" font-family="Arial, sans-serif" font-size="14" letter-spacing="3">DEVELOPER TOOLS</text>
+<text x="44" y="135" fill="#f0f4f8" font-family="Arial, sans-serif" font-size="44" font-weight="700">Dependency Checker</text>
+<text x="44" y="180" fill="#bac7d2" font-family="Arial, sans-serif" font-size="19">Trace declarations, locked versions, and source usage.</text>
+<path d="M44 225h745" stroke="#34424e"/>
+<g fill="none" stroke="#d2a8ff" stroke-width="2" opacity="0.65"><path d="M920 72l105 62 116-56M920 206l105-72 116 70M1025 134V48"/><rect x="907" y="59" width="26" height="26" rx="7" fill="#d2a8ff"/><rect x="907" y="193" width="26" height="26" rx="7" fill="#d2a8ff"/><rect x="1012" y="121" width="26" height="26" rx="7" fill="#d2a8ff"/><rect x="1128" y="65" width="26" height="26" rx="7" fill="#d2a8ff"/><rect x="1128" y="191" width="26" height="26" rx="7" fill="#d2a8ff"/></g>
+</svg>

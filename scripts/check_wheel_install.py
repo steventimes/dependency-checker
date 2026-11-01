@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import venv
+from pathlib import Path
 
 
 def main() -> int:
@@ -34,6 +35,8 @@ def main() -> int:
                     "pip",
                     "install",
                     "--disable-pip-version-check",
+                    "--report",
+                    str(root / "installation-report.json"),
                     str(wheel),
                 ],
                 cwd=root,
@@ -47,6 +50,41 @@ def main() -> int:
                 env=environment,
                 check=True,
                 timeout=120,
+            )
+            result = subprocess.run(
+                [
+                    str(python),
+                    "-I",
+                    "-m",
+                    "depcheck",
+                    "evidence",
+                    str(root),
+                    "pip-install-report",
+                    "installation-report.json",
+                    "--limit",
+                    "1000",
+                ],
+                cwd=root,
+                env=environment,
+                check=True,
+                timeout=30,
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            evidence = json.loads(result.stdout)
+            records = evidence["tables"]["distributions"]
+            assert evidence["next_offset"] is None
+            assert any(r["name"] == "depcheck" for r in records)
+            assert all(
+                r["public_identity_status"] == "unverified" and "purl" not in r
+                for r in records
+            )
+            assert (
+                evidence["metadata"]["current_project_installation"]
+                == "not-established"
+            )
+            print(
+                "Native pip installation report: supplied plan retained without installation or public-origin inference"
             )
     except (OSError, subprocess.SubprocessError) as exc:
         parser.exit(1, f"Wheel installation/smoke failed: {exc}\n")

@@ -10,8 +10,8 @@ from typing import Any
 
 from semver import Version as SemVersion
 
-from depcheck.evidence_input import parse_evidence_json, read_evidence_json
-from depcheck.sbom import inspect_sbom
+from depcheck.evidence.input import parse_evidence_json, read_evidence_json
+from depcheck.evidence.sbom import inspect_sbom
 
 from .advisories import (
     advisory_timestamp as _timestamp,
@@ -22,15 +22,17 @@ from .advisories import (
     normalize_package,
     parse_advisory,
 )
+from .risk import cve_risk_context
 
 
 def inventory_identities(
     root: Path, path: str
-) -> tuple[list[dict[str, Any]], str, list[dict[str, Any]]]:
+) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], str, list[dict[str, Any]]]:
+    """Read identities and separate captured resolution metadata assertions."""
     data, digest = read_evidence_json(root, path)
+    entries: list[tuple[dict[str, Any], dict[str, Any]]] = []
     if data.get("bomFormat") == "CycloneDX":
         sbom = inspect_sbom(root, path, limit=20000)
-        identities = []
         ambiguous = {
             note.get("bom_ref")
             for note in sbom["diagnostics"]
@@ -63,8 +65,17 @@ def inventory_identities(
                 identity["origin"] = parse_evidence_json(origins[0].encode())
             elif origins:
                 identity["origin"] = {"public": None, "kind": "ambiguous-sbom-origin"}
-            identities.append(identity)
-        return identities, digest, sbom["diagnostics"]
+            metadata = {}
+            for prop in item["properties"]:
+                if prop["name"] == "depcheck:resolution:metadata":
+                    metadata = parse_evidence_json(prop["value"].encode())
+            if not origins and "origin" in metadata:
+                # Match canonical scans' legacy origin fallback. An explicitly
+                # unknown legacy origin must not become an unqualified PURL.
+                identity["origin"] = metadata["origin"]
+                identity.pop("assertion_kind", None)
+            entries.append((identity, metadata))
+        return entries, digest, sbom["diagnostics"]
     if data.get("schema") != "depcheck.scan.v1":
         raise ValueError(
             "Inventory must be a canonical depcheck scan or CycloneDX JSON"
@@ -75,7 +86,6 @@ def inventory_identities(
     records = inventory.get("resolved_dependencies", [])
     if not isinstance(records, list) or len(records) > 20000:
         raise ValueError("Resolved inventory exceeds its entry budget")
-    identities = []
     for record in records:
         if not isinstance(record, dict) or not isinstance(record.get("identity"), dict):
             raise ValueError("Resolved inventory needs explicit identity objects")
@@ -86,18 +96,27 @@ def inventory_identities(
         if not isinstance(metadata, dict):
             raise ValueError("Resolved inventory metadata must be an object")
         identity["origin"] = record.get("origin", metadata.get("origin"))
-        identities.append(identity)
-    return identities, digest, []
+        entries.append((identity, metadata))
+    return entries, digest, []
 
 
 def reevaluate_vulnerabilities(
-    root: Path, inventory_file: str, advisory_file: str, *, limit: int, offset: int = 0
+    root: Path,
+    inventory_file: str,
+    advisory_file: str,
+    *,
+    limit: int,
+    offset: int = 0,
+    kev_file: str | None = None,
+    epss_file: str | None = None,
+    previous_kev_file: str | None = None,
+    previous_epss_file: str | None = None,
+    risk_as_of: str | None = None,
+    risk_max_age_days: int | None = None,
 ) -> dict[str, Any]:
     if limit < 1 or offset < 0:
         raise ValueError("Pagination requires positive limit and non-negative offset")
-    identities, inventory_digest, diagnostics = inventory_identities(
-        root, inventory_file
-    )
+    entries, inventory_digest, diagnostics = inventory_identities(root, inventory_file)
     database, database_digest = read_evidence_json(root, advisory_file)
     if database.get("schema") == "depcheck.osv-database.v1":
         records = database.get("records")
@@ -182,7 +201,7 @@ def reevaluate_vulnerabilities(
         Decimal(f"0.{now.microsecond:06d}"),
     )
     work = 0
-    for identity in identities:
+    for identity, metadata in entries:
         ecosystem, package, version = (
             identity.get(field) for field in ("ecosystem", "package", "version")
         )
@@ -208,11 +227,12 @@ def reevaluate_vulnerabilities(
             or identity.get("subpath")
             or identity.get("identity_status") == "ambiguous"
             or str(query_ecosystem).lower()
-            not in {"pypi", "npm", "maven", "go", "crates.io"}
+            not in {"pypi", "npm", "maven", "go", "crates.io", "rubygems"}
         ):
             observations.append(
                 {
                     "identity": identity,
+                    "metadata": metadata,
                     "status": "unknown",
                     "reason": "Exact public package coordinate is unavailable",
                     "vulnerabilities": [],
@@ -290,6 +310,7 @@ def reevaluate_vulnerabilities(
         observations.append(
             {
                 "identity": identity,
+                "metadata": metadata,
                 "identity_basis": "external-coordinate-assertion"
                 if identity.get("assertion_kind")
                 else "public-origin-assertion",
@@ -304,7 +325,7 @@ def reevaluate_vulnerabilities(
             }
         )
     total = len(observations)
-    return {
+    result: dict[str, Any] = {
         "schema": "depcheck.offline-security.v1",
         "read_only": True,
         "inventory": {"path": inventory_file, "sha256": inventory_digest},
@@ -315,7 +336,7 @@ def reevaluate_vulnerabilities(
             "record_count": len(records),
             "freshness": "unverified",
             "scope": "supplied-records-only",
-            "matching_profile": "public-package-coordinates; Git-commit matching unsupported",
+            "matching_profile": "public-package-coordinates; PEP 440, strict SemVer, Go module SemVer with optional leading v, bounded ASCII Maven ComparableVersion 3.10.0 or RubyGems Gem::Version 3.6.9; Git-commit matching unsupported",
             "unmapped_affected_entries": unmapped_affected_entries,
         },
         "observations": observations[offset : offset + limit],
@@ -327,3 +348,26 @@ def reevaluate_vulnerabilities(
         "global_vulnerability_coverage": "unknown",
         "reachability": "not-evaluated",
     }
+    if any(
+        value is not None
+        for value in (
+            kev_file,
+            epss_file,
+            previous_kev_file,
+            previous_epss_file,
+            risk_as_of,
+            risk_max_age_days,
+        )
+    ):
+        result["risk_context"] = cve_risk_context(
+            root,
+            result["observations"],
+            offset=offset,
+            kev_file=kev_file,
+            epss_file=epss_file,
+            previous_kev_file=previous_kev_file,
+            previous_epss_file=previous_epss_file,
+            as_of=risk_as_of,
+            max_age_days=risk_max_age_days,
+        )
+    return result

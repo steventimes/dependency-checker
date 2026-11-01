@@ -1,0 +1,35 @@
+[package]
+name = "ambient_core"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+description = "Ambient core functionality. Host-only."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ambient_ecs = { path = "../ecs" , version = "0.3.2-dev" }
+ambient_sys = { path = "../sys" , version = "0.3.2-dev" }
+ambient_native_std = { path = "../native_std" , version = "0.3.2-dev" }
+ambient_gpu = { path = "../gpu" , version = "0.3.2-dev" }
+ambient_gpu_ecs = { path = "../gpu_ecs" , version = "0.3.2-dev" }
+
+itertools = { workspace = true }
+yaml-rust = { workspace = true }
+tracing = { workspace = true }
+glam = { workspace = true }
+profiling = { workspace = true }
+# derive_more = { workspace = true }
+bytemuck = { workspace = true }
+# lazy_static = { workspace = true }
+
+winit = { workspace = true }
+ordered-float = { workspace = true }
+flume = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+# tracing-subscriber = { workspace = true }

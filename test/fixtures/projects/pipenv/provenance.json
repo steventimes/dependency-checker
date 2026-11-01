@@ -1,0 +1,47 @@
+{
+  "repository": "pypa/pipenv",
+  "commit": "3534878ca8b41c661f163cbbd6e098bb123441aa",
+  "license": "MIT",
+  "retrieved_at": "2026-10-25",
+  "retained_fixtures": [
+    {
+      "path": "Pipfile.lock",
+      "source": "https://raw.githubusercontent.com/pypa/pipenv/3534878ca8b41c661f163cbbd6e098bb123441aa/Pipfile.lock",
+      "repository": "pypa/pipenv",
+      "commit": "3534878ca8b41c661f163cbbd6e098bb123441aa",
+      "bytes": 105625,
+      "sha256": "f6544f251b0f65a09f5426bed0fa6abf65ba0419a8454a18456c97365edd2f25",
+      "git_blob_sha1": "75a8a86aa35f715c6163c6d09f3470c6e57da274"
+    },
+    {
+      "path": "Pipfile",
+      "source": "https://raw.githubusercontent.com/pypa/pipenv/3534878ca8b41c661f163cbbd6e098bb123441aa/Pipfile",
+      "repository": "pypa/pipenv",
+      "commit": "3534878ca8b41c661f163cbbd6e098bb123441aa",
+      "bytes": 954,
+      "sha256": "a2c91cb98a3ad49473397e5e19e02139339aaaeabd40bc6428769dcb8d0f6cfd",
+      "git_blob_sha1": "47b00c4c5ba9de6c5efc31cf3343a6bd0970906c"
+    },
+    {
+      "path": "LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/pypa/pipenv/3534878ca8b41c661f163cbbd6e098bb123441aa/LICENSE",
+      "repository": "pypa/pipenv",
+      "commit": "3534878ca8b41c661f163cbbd6e098bb123441aa",
+      "bytes": 1094,
+      "sha256": "5ecf69f0af47ec65cec838d45efa5099246b36561a1590e33c278a14fb130e2c",
+      "git_blob_sha1": "cda2cbdc9c3e67e68a621fb5eaf9c199bdd19775"
+    },
+    {
+      "path": "category-test-source.txt",
+      "source": "https://raw.githubusercontent.com/pypa/pipenv/3534878ca8b41c661f163cbbd6e098bb123441aa/tests/integration/test_install_categories.py",
+      "repository": "pypa/pipenv",
+      "commit": "3534878ca8b41c661f163cbbd6e098bb123441aa",
+      "bytes": 4135,
+      "sha256": "488b3eacb47486c3a7592360507bb95470ebada10187aec67023a32d22f66674",
+      "git_blob_sha1": "a938d399dc331e3cc9bc7c19091ba89dcc97e49f"
+    }
+  ],
+  "scope": "Original root manifest/lock pair and license. The category integration test source is retained as text for static evidence only; it was not executed and is not a checked-in custom-category lock.",
+  "source_scope_limit": "At the fixed official commit, code search found only root and examples stored Pipfile.lock files; custom categories occur in dynamically generated integration-test locks, not in this retained raw lock. No exhaustive historical search is claimed.",
+  "license_attribution": "Pipenv contributors; MIT license original retained at LICENSE.txt."
+}

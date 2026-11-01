@@ -10,12 +10,12 @@ from depcheck.config import DepcheckConfig
 from depcheck.ecosystems.analysis import EvidenceAnalyzer
 from depcheck.ecosystems.coverage import repository_coverage
 from depcheck.ecosystems.preparation import prepare_bundle
-from depcheck.ecosystems.python import (
+from depcheck.ecosystems.python.collector import (
     adapt_python_bundle,
     create_python_pack,
     filter_python_manifest,
 )
-from depcheck.ecosystems.python_manifest import is_requirements_file
+from depcheck.ecosystems.python.manifest import is_requirements_file
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
 from depcheck.model import AnalysisReport, EvidenceBundle, ProjectUnit, ScanResult
 

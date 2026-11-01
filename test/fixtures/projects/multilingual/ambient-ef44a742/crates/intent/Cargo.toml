@@ -1,0 +1,29 @@
+
+[package]
+name = "ambient_intent"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ambient_native_std = { path = "../native_std" }
+ambient_ecs = { path = "../ecs" }
+ambient_network = { path = "../network" }
+ambient_rpc = { path = "../rpc" }
+ambient_ui_native = { path = "../ui_native" }
+ambient_element = { path = "../../shared_crates/element" }
+tracing = { workspace = true }
+itertools = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+chrono = { workspace = true }
+
+[features]
+intent_block_detection = []
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

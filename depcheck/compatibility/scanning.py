@@ -35,6 +35,8 @@ def analyze_compatibility(
         declarations: list[PythonRequirement] = []
         conversion_diagnostics: list[Diagnostic] = []
         for item in bundle.declarations:
+            if item.kind == "environment":
+                continue
             if item.metadata.get("origin", {}).get("public") is not True:
                 conversion_diagnostics.append(
                     Diagnostic(
@@ -54,8 +56,15 @@ def analyze_compatibility(
                         raw,
                         source=item.source,
                         group=str(item.metadata.get("group") or item.scope),
-                        kind=item.kind,
+                        kind=(
+                            "direct"
+                            if item.metadata.get("python_kind") == "pipenv-declaration"
+                            and item.metadata.get("category_kind") == "custom"
+                            and item.kind == "conditional"
+                            else item.kind
+                        ),
                         origin=item.metadata.get("origin"),
+                        metadata=item.metadata,
                     )
                 )
             except ValueError as exc:
@@ -81,6 +90,15 @@ def analyze_compatibility(
             **({"dependency_groups": dependency_groups} if dependency_groups else {}),
         )
         metadata[bundle.project.project_id] = _compatibility_payload(compatibility)
+        environments = [
+            item for item in bundle.declarations if item.kind == "environment"
+        ]
+        if environments:
+            complete = False
+            metadata[bundle.project.project_id]["environment_requirements"] = {
+                "count": len(environments),
+                "state": "not-evaluated; separate Hatch environments not selected",
+            }
         findings = [
             *reports[index].findings,
             *_compatibility_findings(bundle, compatibility),

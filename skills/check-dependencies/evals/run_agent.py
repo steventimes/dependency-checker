@@ -7,16 +7,16 @@ Only supplied synthetic fixtures and the Skill instructions are task inputs.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from score import EvalCase, command_events, load_cases, score_suite

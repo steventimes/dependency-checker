@@ -1,6 +1,7 @@
 """Filesystem safety, index integrity, work accounting, and scorer contracts."""
 
 import copy
+import hashlib
 import json
 import os
 import runpy
@@ -19,20 +20,658 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from depcheck.agent import DependencyAgentService
-from depcheck.analyzer.import_scanner import ImportScanner
-from depcheck.bounded_io import read_bytes
 from depcheck.config import ConfigurationError, load_project_config
 from depcheck.ecosystems.analysis import EvidenceAnalyzer
-from depcheck.ecosystems.python_manifest import PythonManifestCollector
+from depcheck.ecosystems.python.imports import ImportScanner
+from depcheck.ecosystems.python.manifest import PythonManifestCollector
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+from depcheck.filesystem import ProjectPathError, read_bytes, require_within_project
 from depcheck.indexing import RepositoryIndex, RepositoryIndexer
 from depcheck.indexing.models import INDEX_SCHEMA
 from depcheck.indexing.store import IndexStore
 from depcheck.model import CapabilityState
-from depcheck.path_policy import ProjectPathError, require_within_project
 from scripts.benchmark_monorepo import _stable_index
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    "filename", ["package.json", "package-lock.json", "LICENSE.txt"]
+)
+def test_project_corpus_rejects_changed_original_inputs(tmp_path, filename):
+    from scripts.evaluate_corpus import evaluate_projects
+
+    corpus = tmp_path / "projects"
+    shutil.copytree(ROOT / "test/fixtures/projects", corpus)
+    (corpus / "lodash-4.17.20" / filename).write_bytes(b"changed")
+    with pytest.raises(ValueError, match="Corpus digest mismatch"):
+        evaluate_projects(corpus, ROOT / "test/fixtures/security")
+
+
+@pytest.mark.parametrize("fault", ["lost", "repeated", "nonadvancing", "digest"])
+def test_project_corpus_rejects_incomplete_transport_observations(monkeypatch, fault):
+    from scripts.evaluate_corpus import evaluate_projects
+
+    original = DependencyAgentService.reevaluate_vulnerabilities
+
+    def broken_page(self, *args, **kwargs):
+        page = original(self, *args, **kwargs)
+        if fault == "lost":
+            page["observations"].pop()
+        elif fault == "repeated":
+            page["observations"][1] = page["observations"][0]
+        elif fault == "nonadvancing":
+            page["next_offset"] = kwargs["offset"]
+        elif kwargs["offset"]:
+            page["inventory"]["sha256"] = "changed"
+        return page
+
+    monkeypatch.setattr(
+        DependencyAgentService, "reevaluate_vulnerabilities", broken_page
+    )
+    with pytest.raises(ValueError, match="Project corpus"):
+        evaluate_projects(
+            ROOT / "test/fixtures/projects", ROOT / "test/fixtures/security"
+        )
+
+
+@pytest.mark.parametrize("fault", ["empty-cases", "duplicate-label"])
+def test_project_corpus_cannot_pass_with_missing_or_duplicated_truth(tmp_path, fault):
+    from scripts.evaluate_corpus import evaluate_projects
+
+    corpus = tmp_path / "projects"
+    shutil.copytree(ROOT / "test/fixtures/projects", corpus)
+    path = corpus / "truth.json"
+    truth = json.loads(path.read_bytes())
+    if fault == "empty-cases":
+        truth["cases"] = []
+    else:
+        labels = truth["cases"][0]["security_labels"]
+        labels.append(labels[0])
+    path.write_text(json.dumps(truth))
+    with pytest.raises(ValueError, match="Project corpus"):
+        evaluate_projects(corpus, ROOT / "test/fixtures/security")
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "changed-lock",
+        "missing-configuration",
+        "extra-file",
+        "empty-cases",
+        "empty-overrides",
+    ],
+)
+def test_multilingual_corpus_rejects_unpinned_or_empty_inputs(tmp_path, fault):
+    from scripts.evaluate_corpus import _multilingual_inputs
+
+    corpus = tmp_path / "multilingual"
+    shutil.copytree(ROOT / "test/fixtures/projects/multilingual", corpus)
+    if fault == "changed-lock":
+        (corpus / "poetry-1.8.3/poetry.lock").write_text("changed")
+    elif fault == "extra-file":
+        (corpus / "poetry-1.8.3/extra.toml").write_text("new=true\n")
+    elif fault == "empty-cases":
+        path = corpus / "truth.json"
+        document = json.loads(path.read_text())
+        document["cases"] = []
+        path.write_text(json.dumps(document))
+    elif fault == "empty-overrides":
+        path = corpus / "truth.json"
+        document = json.loads(path.read_bytes())
+        case = next(row for row in document["cases"] if row["id"] == "wezterm-20220624")
+        case["cargo_override_labels"]["lock_projection_labels"] = []
+        path.write_text(json.dumps(document), encoding="utf-8")
+    else:
+        path = corpus / "provenance.json"
+        document = json.loads(path.read_text())
+        omitted = next(
+            entry
+            for entry in document["retained_fixtures"]
+            if "/.cargo/" in entry["path"]
+        )
+        document["retained_fixtures"].remove(omitted)
+        path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="Corpus digest mismatch|Multilingual corpus"):
+        _multilingual_inputs(corpus)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "public-git",
+        "repeated-row",
+        "wrong-lock-path",
+        "missing-member",
+        "missing-view-lock-row",
+        "uv-member-without-own-lock",
+        "python-false-directness",
+        "python-lost-binding-status",
+    ],
+)
+def test_multilingual_inventory_gate_rejects_self_consistent_wrong_evidence(
+    tmp_path, fault
+):
+    from dataclasses import replace
+    from depcheck.model import (
+        EvidenceBundle,
+        PackageRef,
+        ProjectUnit,
+        ResolvedDependency,
+        ScanResult,
+        SourceLocation,
+    )
+    from scripts.evaluate_corpus import _multilingual_inventory
+
+    python = fault in {
+        "uv-member-without-own-lock",
+        "python-false-directness",
+        "python-lost-binding-status",
+    }
+    ecosystem, manager = ("PyPI", "python") if python else ("Cargo", "cargo")
+    manifest = "pyproject.toml" if python else "Cargo.toml"
+    lock = "uv.lock" if python else "Cargo.lock"
+    source = None if python else "git+https://example.invalid/foo#" + "a" * 40
+    project = ProjectUnit(
+        ProjectUnit.stable_id(Path("."), ecosystem, manager),
+        Path("."),
+        "python" if python else "rust",
+        ecosystem,
+        manager,
+    )
+    member = replace(
+        project,
+        project_id=ProjectUnit.stable_id(Path("member"), ecosystem, manager),
+        root=Path("member"),
+    )
+    record = ResolvedDependency(
+        project.project_id,
+        PackageRef(ecosystem, "foo", "foo"),
+        "1.0.0",
+        SourceLocation(tmp_path / lock),
+        instance_id="one",
+        origin={"public": python},
+        metadata={
+            "package_index": 0,
+            **(
+                {
+                    "python_kind": "lock-record",
+                    "context": {"package": {}},
+                    "directness_status": "unknown",
+                }
+                if python
+                else {
+                    "cargo_kind": "lock-record",
+                    "source_sha256": hashlib.sha256(source.encode()).hexdigest(),
+                }
+            ),
+            "activation": "unknown",
+        },
+    )
+    case = {
+        "ecosystem": "python" if python else "cargo",
+        "lock_path": lock,
+        "manifest_paths": [manifest, "member/" + manifest],
+        "primary_manifest_paths": [manifest, "member/" + manifest],
+        "expected_lock_entries": [
+            {"row_index": 0, "name": "foo", "version": "1.0.0", "source_raw": source}
+        ],
+        "metadata_labels": [],
+        "required_edges": [],
+    }
+    member_records = () if python else (replace(record, project_id=member.project_id),)
+    if python:
+        case["python_directness_labels"] = [
+            {
+                "project_manifest_path": manifest,
+                "lock_entry": case["expected_lock_entries"][0],
+                "direct": False,
+                "status": "unknown",
+            }
+        ]
+    bundles = (
+        EvidenceBundle(project, resolved=(record,)),
+        EvidenceBundle(member, resolved=member_records),
+    )
+    # Each mutation starts from complete views. A Python member without a local
+    # lock must remain a valid view without receiving the root's shared lock.
+    assert not _multilingual_inventory(ScanResult(tmp_path, (), bundles=bundles), case)
+    if fault == "uv-member-without-own-lock":
+        return
+    if fault == "python-false-directness":
+        record = replace(record, direct=True)
+    elif fault == "python-lost-binding-status":
+        metadata = dict(record.metadata)
+        metadata.pop("directness_status")
+        record = replace(record, metadata=metadata)
+    elif fault == "public-git":
+        record = replace(record, origin={"public": True})
+    elif fault == "wrong-lock-path":
+        record = replace(record, source=SourceLocation(tmp_path / "nested/Cargo.lock"))
+    records = (record, record) if fault == "repeated-row" else (record,)
+    changed = (replace(bundles[0], resolved=records), bundles[1])
+    if fault == "missing-member":
+        changed = changed[:1]
+    elif fault == "missing-view-lock-row":
+        changed = (changed[0], replace(changed[1], resolved=()))
+    mismatches = _multilingual_inventory(
+        ScanResult(tmp_path, (), bundles=changed), case
+    )
+    required = {
+        "python-false-directness": "changed-python-direct-binding:0",
+        "python-lost-binding-status": "changed-python-direct-binding:0",
+        "public-git": "changed-source-qualification:0",
+        "repeated-row": "repeated-project-lock-occurrence:0",
+        "wrong-lock-path": "unexpected-resolution-source",
+        "missing-member": "selected-project-views",
+        "missing-view-lock-row": "missing-project-lock-occurrences:"
+        + member.project_id,
+    }
+    assert required[fault] in mismatches
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "member-diagnostic",
+        "aggregate-diagnostic",
+        "wrong-root-location",
+        "lost-provenance",
+        "lost-directness",
+        "promoted-directness",
+    ],
+)
+def test_cargo_override_gate_rejects_lost_inheritance_and_false_directness(
+    tmp_path, fault
+):
+    from dataclasses import replace
+
+    from depcheck.model import (
+        DependencyDeclaration,
+        Diagnostic,
+        EvidenceBundle,
+        PackageRef,
+        ProjectUnit,
+        ResolvedDependency,
+        ScanResult,
+        SourceLocation,
+        VersionConstraint,
+    )
+    from scripts.evaluate_corpus import _multilingual_override_mismatches
+
+    truth = json.loads(
+        (ROOT / "test/fixtures/projects/multilingual/truth.json").read_bytes()
+    )
+    case = next(row for row in truth["cases"] if row["id"] == "wezterm-20220624")
+    labels = case["cargo_override_labels"]
+
+    def source(location):
+        return SourceLocation(
+            tmp_path / location["path"], location["line"], location["column"]
+        )
+
+    notes = tuple(
+        Diagnostic(
+            "manifest.cargo-overrides-unsupported",
+            "error",
+            "Qualified root patch",
+            source(entry["location"]),
+        )
+        for entry in labels["root_entries"]
+    )
+    declaration_label = labels["declaration_projection_labels"][0]
+    bundles = []
+    member_index = None
+    for manifest in labels["project_manifest_paths"]:
+        project = ProjectUnit(
+            ProjectUnit.stable_id(Path(manifest).parent, "Cargo", "cargo"),
+            Path(manifest).parent,
+            "rust",
+            "Cargo",
+            "cargo",
+        )
+        records = tuple(
+            ResolvedDependency(
+                project.project_id,
+                PackageRef(
+                    "Cargo", label["lock_entry"]["name"], label["lock_entry"]["name"]
+                ),
+                label["lock_entry"]["version"],
+                SourceLocation(tmp_path / "Cargo.lock"),
+                instance_id="raw-" + str(label["lock_entry"]["row_index"]),
+                origin={"public": False},
+                metadata={
+                    "package_index": label["lock_entry"]["row_index"],
+                    **label["metadata"],
+                },
+            )
+            for label in labels["lock_projection_labels"]
+        )
+        # This gate qualifies listed source occurrences only. A distinct direct
+        # Git request with the same name is outside these override labels.
+        records += (
+            replace(
+                records[0],
+                instance_id="other-git-request",
+                direct=True,
+                metadata={"package_index": 9999},
+            ),
+        )
+        declarations = ()
+        if manifest == declaration_label["project_manifest_path"]:
+            member_index = len(bundles)
+            declarations = (
+                DependencyDeclaration(
+                    project.project_id,
+                    PackageRef(
+                        "Cargo",
+                        declaration_label["package"],
+                        declaration_label["package"],
+                    ),
+                    VersionConstraint(declaration_label["constraint_raw"], "cargo"),
+                    source(declaration_label["location"]),
+                    metadata={
+                        "installation_name": declaration_label["installation_name"],
+                        **copy.deepcopy(declaration_label["metadata"]),
+                    },
+                ),
+            )
+        bundles.append(
+            EvidenceBundle(
+                project, declarations=declarations, resolved=records, diagnostics=notes
+            )
+        )
+    assert member_index is not None
+    scan = ScanResult(tmp_path, (), diagnostics=notes, bundles=tuple(bundles))
+    assert not _multilingual_override_mismatches(scan, case)
+    member = bundles[member_index]
+    if fault == "member-diagnostic":
+        member = replace(member, diagnostics=())
+    elif fault == "aggregate-diagnostic":
+        scan = replace(scan, diagnostics=())
+    elif fault == "wrong-root-location":
+        member = replace(
+            member,
+            diagnostics=tuple(
+                replace(
+                    note,
+                    source=SourceLocation(
+                        tmp_path / declaration_label["project_manifest_path"],
+                        note.source.line,
+                        note.source.column,
+                    ),
+                )
+                for note in notes
+            ),
+        )
+    elif fault == "lost-provenance":
+        declaration = member.declarations[0]
+        metadata = dict(declaration.metadata)
+        metadata.pop("cargo_overrides")
+        member = replace(
+            member, declarations=(replace(declaration, metadata=metadata),)
+        )
+    else:
+        record = member.resolved[0]
+        if fault == "lost-directness":
+            metadata = dict(record.metadata)
+            metadata.pop("directness_status")
+            record = replace(record, metadata=metadata)
+        else:
+            record = replace(record, direct=True)
+        member = replace(member, resolved=(record, *member.resolved[1:]))
+    bundles[member_index] = member
+    scan = replace(scan, bundles=tuple(bundles))
+    expected = {
+        "member-diagnostic": "missing-cargo-root-override-diagnostics:",
+        "aggregate-diagnostic": "missing-cargo-aggregate-override-diagnostics",
+        "wrong-root-location": "missing-cargo-root-override-diagnostics:",
+        "lost-provenance": "changed-cargo-override-declaration:",
+        "lost-directness": "changed-cargo-override-lock-projection:",
+        "promoted-directness": "changed-cargo-override-lock-projection:",
+    }
+    assert any(
+        item.startswith(expected[fault])
+        for item in _multilingual_override_mismatches(scan, case)
+    )
+
+
+@pytest.mark.parametrize(
+    "fault", ["changed-lock", "changed-license", "extra-file", "empty-truth"]
+)
+def test_pipenv_corpus_rejects_changed_originals_or_missing_truth(tmp_path, fault):
+    from scripts.evaluate_corpus import _pipenv_inputs
+
+    corpus = tmp_path / "pipenv"
+    shutil.copytree(ROOT / "test/fixtures/projects/pipenv", corpus)
+    if fault == "changed-lock":
+        (corpus / "Pipfile.lock").write_bytes(b"{}")
+    elif fault == "changed-license":
+        (corpus / "LICENSE.txt").write_bytes(b"changed")
+    elif fault == "extra-file":
+        (corpus / "nested").mkdir()
+        (corpus / "nested/unpinned.lock").write_bytes(b"{}")
+    else:
+        path = corpus / "truth.json"
+        truth = json.loads(path.read_bytes())
+        truth["entries"] = []
+        path.write_text(json.dumps(truth), encoding="utf-8")
+    with pytest.raises(ValueError, match="Corpus digest mismatch|Pipenv corpus"):
+        _pipenv_inputs(corpus)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "merged-category",
+        "reused-instance",
+        "changed-pointer",
+        "lost-condition",
+        "host-activation",
+        "private-public",
+        "invented-edge",
+    ],
+)
+def test_pipenv_inventory_gate_rejects_category_and_condition_corruption(
+    tmp_path, fault
+):
+    from dataclasses import replace
+
+    from depcheck.model import (
+        EvidenceBundle,
+        PackageRef,
+        ProjectUnit,
+        ResolvedDependency,
+        ResolvedDependencyLink,
+        ScanResult,
+        SourceLocation,
+    )
+    from scripts.evaluate_corpus import _pipenv_inventory
+
+    project = ProjectUnit(
+        ProjectUnit.stable_id(Path("."), "PyPI", "python"),
+        Path("."),
+        "python",
+        "PyPI",
+        "python",
+    )
+    # Same package and version in different categories are two source records.
+    # This independent synthetic contract never claims two installed copies.
+    sources = [
+        {"name": "private", "url": "https://private.invalid/simple", "verify_ssl": True}
+    ]
+    package = PackageRef("PyPI", "setuptools", "setuptools")
+    entries = [
+        {
+            "row_index": index,
+            "category": category,
+            "name": "setuptools",
+            "version_raw": "==83.0.0",
+            "source_pointer": "/" + category + "/setuptools",
+            "context": {
+                "version": "==83.0.0",
+                "markers": "python_version >= '3.10'",
+                "extras": ["test"],
+            },
+        }
+        for index, category in enumerate(("default", "develop"))
+    ]
+    records = [
+        ResolvedDependency(
+            project.project_id,
+            package,
+            "83.0.0",
+            SourceLocation(tmp_path / "Pipfile.lock"),
+            instance_id="raw-category-" + entry["category"],
+            origin={"public": False},
+            metadata={
+                "python_kind": "lock-record",
+                "lock_format": "pipfile",
+                "package_index": entry["row_index"],
+                "pipenv_category": entry["category"],
+                "category_kind": entry["category"],
+                "source_pointer": entry["source_pointer"],
+                "context": {
+                    "root": {"_meta": {"sources": sources}},
+                    "package": entry["context"],
+                },
+                "conditional": True,
+                "activation": "unknown",
+                "dependency_status": "uncollected",
+            },
+        )
+        for entry in entries
+    ]
+
+    def scan():
+        return ScanResult(
+            tmp_path, (), bundles=(EvidenceBundle(project, resolved=tuple(records)),)
+        )
+
+    assert not _pipenv_inventory(scan(), entries, sources, private=True)
+    if fault == "merged-category":
+        records.pop()
+    elif fault == "reused-instance":
+        records[1] = replace(records[1], instance_id=records[0].instance_id)
+    elif fault == "private-public":
+        records[0] = replace(records[0], origin={"public": True})
+    elif fault == "invented-edge":
+        records[0] = replace(
+            records[0],
+            dependency_links=(
+                ResolvedDependencyLink(package, "83.0.0", records[1].instance_id),
+            ),
+        )
+    else:
+        metadata = copy.deepcopy(records[0].metadata)
+        if fault == "changed-pointer":
+            metadata["source_pointer"] = "/develop/setuptools"
+        elif fault == "lost-condition":
+            metadata["context"]["package"].pop("markers")
+        else:
+            metadata["activation"] = "active"
+        records[0] = replace(records[0], metadata=metadata)
+    required = {
+        "merged-category": "pipenv-missing-lock-occurrences",
+        "reused-instance": "pipenv-merged-category-occurrences",
+        "changed-pointer": "pipenv-changed-lock-identity",
+        "lost-condition": "pipenv-changed-lock-context",
+        "host-activation": "pipenv-changed-lock-context",
+        "private-public": "pipenv-source-qualification",
+        "invented-edge": "pipenv-invented-dependency-graph",
+    }
+    assert required[fault] in _pipenv_inventory(scan(), entries, sources, private=True)
+
+
+@pytest.mark.parametrize("fixture", ["GHSA-9wx4-h78v-vm56.json", "LICENSE.txt"])
+def test_security_corpus_rejects_changed_upstream_bytes(tmp_path, fixture):
+    from scripts.evaluate_corpus import evaluate_security
+
+    corpus = tmp_path / "corpus"
+    shutil.copytree(ROOT / "test/fixtures/security", corpus)
+    (corpus / fixture).write_bytes(b"changed")
+    with pytest.raises(ValueError, match="Corpus digest mismatch"):
+        evaluate_security(corpus)
+
+
+@pytest.mark.parametrize("fixture", ["HSEC-2026-0010.json", "LICENSE-Bitnami.txt"])
+def test_scoped_severity_corpus_rejects_changed_originals(tmp_path, fixture):
+    from scripts.evaluate_corpus import evaluate_scoped_severity
+
+    corpus = tmp_path / "scoped"
+    shutil.copytree(ROOT / "test/fixtures/security/scoped", corpus)
+    (corpus / fixture).write_bytes(b"changed")
+    with pytest.raises(ValueError, match="Corpus digest mismatch"):
+        evaluate_scoped_severity(corpus)
+
+
+def test_scoped_severity_corpus_detects_lost_scores_with_preserved_membership(
+    monkeypatch,
+):
+    from scripts import evaluate_corpus
+
+    original = evaluate_corpus.parse_advisory
+
+    def lose_scores(*args):
+        issue, diagnostics = original(*args)
+        issue.update(severity=[], severity_assertions=[])
+        return issue, diagnostics
+
+    monkeypatch.setattr(evaluate_corpus, "parse_advisory", lose_scores)
+    result = evaluate_corpus.evaluate_scoped_severity(
+        ROOT / "test/fixtures/security/scoped"
+    )
+    assert not result["passed"]
+    assert all(
+        case["actual"]["membership"] == case["expected"]["membership"]
+        for case in result["cases"]
+    )
+    assert all("assertions" in case["mismatched_fields"] for case in result["cases"])
+    assert any("severity" in case["mismatched_fields"] for case in result["cases"])
+
+
+@pytest.mark.parametrize("fault", ["false-clean", "nonadvancing-page", "lost-severity"])
+def test_security_corpus_gate_detects_result_and_pagination_regressions(
+    monkeypatch, fault
+):
+    from scripts.evaluate_corpus import evaluate_security
+
+    original = DependencyAgentService.reevaluate_vulnerabilities
+
+    def false_clean(self, *args, **kwargs):
+        page = original(self, *args, **kwargs)
+        if fault == "nonadvancing-page":
+            page["next_offset"] = kwargs["offset"]
+            return page
+        for row in page["observations"]:
+            if row["status"] == "matched":
+                if fault == "lost-severity":
+                    for issue in row["vulnerabilities"]:
+                        issue.update(severity=[], severity_assertions=[])
+                else:
+                    row.update(
+                        status="not-matched-in-supplied-records", vulnerabilities=[]
+                    )
+        return page
+
+    monkeypatch.setattr(
+        DependencyAgentService, "reevaluate_vulnerabilities", false_clean
+    )
+    if fault == "nonadvancing-page":
+        with pytest.raises(ValueError, match="pagination changed or did not advance"):
+            evaluate_security(ROOT / "test/fixtures/security")
+        return
+    result = evaluate_security(ROOT / "test/fixtures/security")
+    assert not result["passed"]
+    if fault == "lost-severity":
+        assert result["true_positive"]
+        assert "severity" in result["cases"][0]["mismatched_fields"]
+        assert "assertion_fields" in result["cases"][0]["mismatched_fields"]
+        return
+    assert not result["true_positive"]
+    assert "requests-2.31.0" in result["false_negative"]
+    assert "status" in result["cases"][0]["mismatched_fields"]
 
 
 @pytest.mark.parametrize(
@@ -108,7 +747,7 @@ def test_maven_parent_directory_paths_retain_local_plugin_and_dependency_evidenc
 def test_maven_directory_parent_pom_symlink_does_not_read_outside_root(
     tmp_path, monkeypatch
 ):
-    from depcheck.ecosystems import java_maven
+    import depcheck.ecosystems.java.maven as java_maven
 
     audited = tmp_path / "repo"
     audited.mkdir()
@@ -140,7 +779,7 @@ def test_maven_directory_parent_pom_symlink_does_not_read_outside_root(
 
 
 def test_maven_xml_node_budget_precedes_dom_allocation(tmp_path, monkeypatch):
-    from depcheck.ecosystems import java_maven
+    import depcheck.ecosystems.java.maven as java_maven
 
     (tmp_path / "pom.xml").write_text(
         "<project>" + "<x/>" * 100001 + "</project>", encoding="utf-8"
@@ -164,7 +803,7 @@ def test_maven_xml_node_budget_precedes_dom_allocation(tmp_path, monkeypatch):
 
 
 def test_json_position_limits_and_replaced_subtrees_keep_reliable_fallback(tmp_path):
-    from depcheck.source_locations import SourcePositions
+    from depcheck.filesystem.positions import SourcePositions
 
     path = tmp_path / "manifest.json"
     ambiguous = '{"dependencies":["decoy","stale"],"dependencies":["actual"]}'
@@ -272,7 +911,7 @@ def test_repository_config_read_limit(tmp_path):
 
 
 def test_same_handle_read_rejects_growth_and_nonregular_inputs(tmp_path, monkeypatch):
-    from depcheck import bounded_io
+    import depcheck.filesystem as bounded_io
 
     path = tmp_path / "data.txt"
     path.write_bytes(b"ok")
@@ -331,6 +970,407 @@ def test_bounded_read_does_not_follow_replaced_file(tmp_path, monkeypatch):
     with pytest.raises((OSError, ValueError)):
         read_text(path)
     assert replaced
+
+
+def _publish_generation(root, value):
+    with IndexStore(root) as store, store.transaction():
+        store.set_metadata({"test_generation": value})
+
+
+def _assert_generation(root, value):
+    cache = root / ".depcheck/index.sqlite3"
+    if value is None:
+        assert not cache.exists()
+        return
+    before = cache.read_bytes(), cache.stat().st_mtime_ns
+    with IndexStore(root, read_only=True) as store:
+        assert store.metadata()["test_generation"] == value
+        assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert (cache.read_bytes(), cache.stat().st_mtime_ns) == before
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize(
+    "stage",
+    ["body", "commit", "serialize", "fdopen", "write", "flush", "fsync", "replace"],
+)
+def test_default_sqlite_faults_preserve_the_previous_generation(
+    tmp_path, monkeypatch, existing, stage
+):
+    import depcheck.filesystem as filesystem
+    import depcheck.indexing.store as storage
+
+    if existing:
+        _publish_generation(tmp_path, "old")
+    cache = tmp_path / ".depcheck/index.sqlite3"
+    original_cache = (
+        (cache.read_bytes(), cache.stat().st_mtime_ns) if existing else None
+    )
+    original_connect = sqlite3.connect
+    original_fdopen = os.fdopen
+    armed = False
+    descriptors = []
+
+    def fail():
+        raise OSError("injected " + stage + " failure")
+
+    class Connection(sqlite3.Connection):
+        def commit(self):
+            if armed and stage == "commit":
+                fail()
+            return super().commit()
+
+        def serialize(self, *args, **kwargs):
+            if armed and stage == "serialize":
+                fail()
+            return super().serialize(*args, **kwargs)
+
+    def connect(*args, **kwargs):
+        return original_connect(*args, factory=Connection, **kwargs)
+
+    class Writer:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.handle.close()
+
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+
+        def write(self, content):
+            if stage == "write":
+                self.handle.write(content[: len(content) // 2])
+                fail()
+            return self.handle.write(content)
+
+        def flush(self):
+            if stage == "flush":
+                fail()
+            return self.handle.flush()
+
+    def fdopen(descriptor, *args, **kwargs):
+        if armed:
+            descriptors.append(descriptor)
+            if stage == "fdopen":
+                fail()
+        return Writer(original_fdopen(descriptor, *args, **kwargs))
+
+    monkeypatch.setattr(storage.sqlite3, "connect", connect)
+    monkeypatch.setattr(filesystem.os, "fdopen", fdopen)
+    if stage == "fsync":
+        monkeypatch.setattr(filesystem.os, "fsync", lambda *_args: fail())
+    if stage == "replace":
+        monkeypatch.setattr(filesystem.PinnedParent, "replace", lambda *_args: fail())
+    with pytest.raises(OSError, match="injected " + stage):
+        with IndexStore(tmp_path) as store:
+            armed = True
+            with store.transaction():
+                store.set_metadata({"test_generation": "new"})
+                if stage == "body":
+                    fail()
+    for descriptor in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+    if original_cache is not None:
+        assert (cache.read_bytes(), cache.stat().st_mtime_ns) == original_cache
+    _assert_generation(tmp_path, "old" if existing else None)
+    assert sorted(path.name for path in (tmp_path / ".depcheck").iterdir()) == (
+        ["index.sqlite3"] if existing else []
+    )
+
+
+def test_default_sqlite_failed_commit_rolls_back_before_a_caught_retry(
+    tmp_path, monkeypatch
+):
+    original = sqlite3.connect
+    armed = False
+
+    class Connection(sqlite3.Connection):
+        def commit(self):
+            if armed:
+                raise sqlite3.OperationalError("injected commit failure")
+            super().commit()
+
+    monkeypatch.setattr(
+        sqlite3,
+        "connect",
+        lambda *args, **kwargs: original(*args, factory=Connection, **kwargs),
+    )
+    with IndexStore(tmp_path) as store:
+        armed = True
+        with pytest.raises(sqlite3.OperationalError, match="injected commit"):
+            with store.transaction():
+                store.set_metadata({"test_generation": "failed"})
+        assert not store.connection.in_transaction
+        assert "test_generation" not in store.metadata()
+        armed = False
+        with store.transaction():
+            store.set_metadata({"test_generation": "retried"})
+    _assert_generation(tmp_path, "retried")
+
+
+def test_default_sqlite_configuration_failure_closes_its_connection(
+    tmp_path, monkeypatch
+):
+    original = sqlite3.connect
+    connections = []
+
+    class Connection(sqlite3.Connection):
+        closed = False
+
+        def execute(self, sql, *args, **kwargs):
+            if sql == "PRAGMA trusted_schema = OFF":
+                raise sqlite3.OperationalError("injected configuration failure")
+            return super().execute(sql, *args, **kwargs)
+
+        def close(self):
+            self.closed = True
+            super().close()
+
+    def connect(*args, **kwargs):
+        connection = original(*args, factory=Connection, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    with pytest.raises(sqlite3.OperationalError, match="injected configuration"):
+        IndexStore(tmp_path)
+    assert connections and all(connection.closed for connection in connections)
+    assert not (tmp_path / ".depcheck/index.sqlite3").exists()
+
+
+def test_default_sqlite_interrupted_construction_releases_the_parent(
+    tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+    import depcheck.indexing.store as storage
+
+    _publish_generation(tmp_path, "old")
+    original = storage.pinned_parent
+    released = []
+
+    @contextmanager
+    def tracked(*args, **kwargs):
+        try:
+            with original(*args, **kwargs) as parent:
+                yield parent
+        finally:
+            released.append(True)
+
+    def interrupt(*_args):
+        raise KeyboardInterrupt("injected constructor interruption")
+
+    store = IndexStore.__new__(IndexStore)
+    with monkeypatch.context() as patch:
+        patch.setattr(storage, "pinned_parent", tracked)
+        patch.setattr(storage, "read_descriptor", interrupt)
+        with pytest.raises(KeyboardInterrupt, match="injected constructor"):
+            IndexStore.__init__(store, tmp_path)
+        assert released == [True]
+    _assert_generation(tmp_path, "old")
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_default_sqlite_stale_publishers_cannot_replace_a_new_generation(
+    tmp_path, existing
+):
+    from depcheck.filesystem import ContentChangedError
+
+    if existing:
+        _publish_generation(tmp_path, "old")
+    first, second = IndexStore(tmp_path), IndexStore(tmp_path)
+    try:
+        for store, value in [(first, "first"), (second, "second")]:
+            with store.transaction():
+                store.set_metadata({"test_generation": value})
+        first.close()
+        with pytest.raises(ContentChangedError):
+            second.close()
+        _assert_generation(tmp_path, "first")
+    finally:
+        first.close()
+        second.close()
+
+
+_INDEX_PUBLICATION_WORKER = r"""
+import json,sys
+from pathlib import Path
+from depcheck.filesystem import PinnedParent
+from depcheck.indexing.store import IndexStore
+root, marker, phase, generation = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+original = PinnedParent.replace
+
+def paused(parent, source, target):
+    if phase == 'after':
+        original(parent, source, target)
+    marker.write_text('ready')
+    sys.stdin.readline()
+    if phase == 'before':
+        original(parent, source, target)
+
+if phase != 'none':
+    PinnedParent.replace = paused
+try:
+    with IndexStore(root) as store, store.transaction():
+        store.set_metadata({'test_generation': generation})
+except BaseException as error:
+    print(json.dumps({'error_type': type(error).__name__, 'error': str(error)}))
+    raise SystemExit(1)
+print(json.dumps({'published': generation}))
+"""
+
+
+def _wait_for_publication_worker(process, marker):
+    import time
+
+    deadline = time.monotonic() + 15
+    while not marker.exists():
+        if process.poll() is not None:
+            stdout, stderr = process.communicate(timeout=5)
+            pytest.fail((process.returncode, stdout, stderr))
+        if time.monotonic() >= deadline:
+            pytest.fail("publication worker did not reach its barrier")
+        time.sleep(0.01)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_default_sqlite_overlapping_process_publications_do_not_lose_updates(
+    tmp_path, existing
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+    if existing:
+        _publish_generation(root, "old")
+    marker = tmp_path / "ready"
+    arguments = [
+        sys.executable,
+        "-c",
+        _INDEX_PUBLICATION_WORKER,
+        str(root),
+        str(marker),
+    ]
+    with subprocess.Popen(
+        [*arguments, "before", "first"],
+        cwd=ROOT,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as first:
+        try:
+            _wait_for_publication_worker(first, marker)
+            second = subprocess.run(
+                [*arguments, "none", "second"],
+                cwd=ROOT,
+                input="",
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            assert second.returncode == 1, (second.stdout, second.stderr)
+            assert json.loads(second.stdout)["error_type"] == "ContentChangedError"
+            _assert_generation(root, "old" if existing else None)
+            stdout, stderr = first.communicate(input="continue\n", timeout=15)
+            assert first.returncode == 0, (stdout, stderr)
+            _assert_generation(root, "first")
+        finally:
+            if first.poll() is None:
+                first.kill()
+                first.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("phase", ["before", "after"])
+def test_default_sqlite_process_termination_keeps_a_complete_generation(
+    tmp_path, existing, phase
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+    if existing:
+        _publish_generation(root, "old")
+    marker = tmp_path / "ready"
+    with subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            _INDEX_PUBLICATION_WORKER,
+            str(root),
+            str(marker),
+            phase,
+            "new",
+        ],
+        cwd=ROOT,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as worker:
+        try:
+            _wait_for_publication_worker(worker, marker)
+            worker.kill()
+            worker.communicate(timeout=5)
+            _assert_generation(
+                root, "new" if phase == "after" else "old" if existing else None
+            )
+            _publish_generation(root, "recovered")
+            _assert_generation(root, "recovered")
+        finally:
+            if worker.poll() is None:
+                worker.kill()
+                worker.communicate(timeout=5)
+
+
+def test_default_sqlite_parent_replacement_cannot_publish_into_a_parked_cache(
+    tmp_path, monkeypatch
+):
+    if os.name == "nt":
+        pytest.skip("Windows pins directory names; replacement is tested on POSIX")
+    from depcheck.filesystem import ContentChangedError, PinnedParent
+
+    _publish_generation(tmp_path, "old")
+    cache = tmp_path / ".depcheck"
+    parked = tmp_path / "parked-cache"
+    original = PinnedParent.open
+    swapped = False
+
+    def swap_before_staging(parent, name, flags, *args):
+        nonlocal swapped
+        if name.startswith(".depcheck-") and not swapped:
+            swapped = True
+            cache.rename(parked)
+            cache.mkdir()
+        return original(parent, name, flags, *args)
+
+    monkeypatch.setattr(PinnedParent, "open", swap_before_staging)
+    with pytest.raises(ContentChangedError, match="parent directory changed"):
+        _publish_generation(tmp_path, "new")
+    assert not (cache / "index.sqlite3").exists()
+    assert sorted(path.name for path in parked.iterdir()) == ["index.sqlite3"]
+    with IndexStore(
+        tmp_path, index_path=parked / "index.sqlite3", read_only=True
+    ) as store:
+        assert store.metadata()["test_generation"] == "old"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows publication guard")
+def test_default_sqlite_windows_guard_never_deletes_existing_data(tmp_path):
+    from depcheck.filesystem import ContentChangedError
+
+    _publish_generation(tmp_path, "old")
+    guard = tmp_path / ".depcheck/.depcheck-publish.lock"
+    guard.write_bytes(b"preexisting data")
+    with pytest.raises(ContentChangedError):
+        _publish_generation(tmp_path, "new")
+    assert guard.read_bytes() == b"preexisting data"
+    _assert_generation(tmp_path, "old")
+    guard.unlink()
+    _publish_generation(tmp_path, "recovered")
+    assert not guard.exists()
+    _assert_generation(tmp_path, "recovered")
 
 
 def test_default_sqlite_uses_private_snapshot_not_replaced_repository_path(
@@ -669,7 +1709,7 @@ def test_bounded_read_preserves_execute_only_ancestor_access(tmp_path):
 
 
 def test_windows_atomic_write_has_no_pathname_chmod(tmp_path, monkeypatch):
-    from depcheck.bounded_io import atomic_write
+    from depcheck.filesystem import atomic_write
 
     if os.name != "nt":
         pytest.skip("native Windows file attribute contract")
@@ -829,6 +1869,50 @@ def test_project_path_policy_rejects_parent_and_symlink_escape(
         require_within_project(root, root / ".." / "outside", operation="read")
 
 
+@pytest.mark.parametrize("raw", ["[]", '{"x":1e309}', '{"x":"\\ud800"}'])
+def test_multilingual_cached_requirement_metadata_rejects_invalid_json(tmp_path, raw):
+    from depcheck.ecosystems.python.parsers.lock import LockfileParser
+
+    path = tmp_path / "pdm.lock"
+    path.write_text('[[package]]\nname="foo"\nversion="1.0.0"\ngroups=["doc"]\n')
+    parsed = LockfileParser(path).parse_detailed()
+    with IndexStore(tmp_path) as store:
+        with store.transaction():
+            store.replace_manifests(parsed, {"pdm.lock": "test-digest"})
+        assert (
+            store.load_manifests().declarations[0].metadata
+            == parsed.declarations[0].metadata
+        )
+        store.connection.execute("UPDATE declarations SET metadata_json = ?", (raw,))
+        with pytest.raises(ValueError):
+            store.load_manifests()
+
+
+def test_index_preserves_capability_states_and_reasons(tmp_path: Path) -> None:
+    from depcheck.model import Capability, EvidenceBundle, ProjectUnit
+
+    project = ProjectUnit("example:unit:.", Path("."), "example", "example", "unit")
+    states = (
+        Capability("manifest", CapabilityState.COMPLETE),
+        Capability("resolution", CapabilityState.INCOMPLETE, "selection unknown"),
+        Capability("usage", CapabilityState.UNSUPPORTED, "usage not collected"),
+        Capability("mapping", CapabilityState.SKIPPED, "disabled"),
+    )
+    with IndexStore(tmp_path) as store:
+        with store.transaction():
+            store.replace_evidence(
+                (EvidenceBundle(project=project, capabilities=states),)
+            )
+    with IndexStore(tmp_path, read_only=True) as store:
+        capabilities = store.projects()[0]["capabilities"]
+    for capability in states:
+        assert capabilities[capability.name] == {
+            "complete": capability.complete,
+            "state": capability.state.value,
+            "reason": capability.reason,
+        }
+
+
 def test_incompatible_index_schema_is_rebuilt_as_a_cache(tmp_path: Path) -> None:
     path = tmp_path / ".depcheck" / "index.sqlite3"
     path.parent.mkdir()
@@ -850,7 +1934,7 @@ def test_incompatible_index_schema_is_rebuilt_as_a_cache(tmp_path: Path) -> None
         }
         metadata = store.metadata()
 
-    assert INDEX_SCHEMA == "depcheck.index.v4"
+    assert INDEX_SCHEMA == "depcheck.index.v8"
     assert metadata["schema"] == INDEX_SCHEMA
     assert "legacy_marker" not in tables
 
@@ -875,7 +1959,7 @@ def test_query_connections_are_read_only_and_do_not_rebuild_old_caches(
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
             store.set_metadata({"unexpected": "mutation"})
     with IndexStore(tmp_path) as store:
-        store.set_metadata({"schema": "depcheck.index.legacy"})
+        store.set_metadata({"schema": "depcheck.index.v7"})
         store.connection.commit()
     legacy_snapshot = path.read_bytes()
     with pytest.raises(RuntimeError, match="depcheck index"):
@@ -1141,8 +2225,8 @@ def test_index_and_companion_reject_git_from_target_repository(
 def test_index_still_reads_git_head_using_an_external_executable(
     tmp_path: Path, monkeypatch
 ) -> None:
+    from depcheck.filesystem import external_path_executable
     from depcheck.indexing.indexer import _git_head
-    from depcheck.path_policy import external_path_executable
 
     executable = tmp_path / "git"
     executable.write_text("#!/bin/sh\nexit 0\n")
@@ -1249,6 +2333,155 @@ def test_benchmark_mutation_preserves_rebuild_equivalence(
     assert result["changed_reference"] == "benchmarknewpackage"
     assert result["changed_usage_detected"] is True
     assert result["counters"]["npm_parse_reuse"] == "not available"
+
+
+def test_benchmark_profiles_preserve_complete_evidence():
+    from scripts.benchmark_monorepo import run_benchmark
+
+    options = dict(projects=1, files_per_project=2, seed=1729, depth=1, page_size=3)
+    plain = run_benchmark(**options, profile_enabled=False)
+    measured = run_benchmark(**options, profile_enabled=True)
+    assert plain["fixture"] == measured["fixture"]
+    assert plain["correctness"] == measured["correctness"]
+    assert plain["scan"]["profile"]["phases"] == {}
+    assert plain["index"]["pagination"]["profile"]["phases"] == {}
+    assert measured["index"]["cold"]["profile"]["phases"]["index.refresh"]["calls"] == 1
+    assert (
+        measured["index"]["cold"]["profile"]["phases"]["storage.work"]["publications"]
+        == 1
+    )
+    pages = measured["index"]["pagination"]
+    phases = pages["profile"]["phases"]
+    assert (
+        phases["query.dependencies"]["calls"] == pages["calls_including_empty_terminal"]
+    )
+    assert phases["query.freshness"]["calls"] == pages["calls_including_empty_terminal"]
+    assert (
+        phases["storage.work"]["snapshot_reads"]
+        == pages["calls_including_empty_terminal"]
+    )
+    assert phases["storage.work"]["snapshot_read_bytes"] > 0
+    assert "publications" not in phases["storage.work"]
+    assert pages["evidence_sha256"] == plain["index"]["pagination"]["evidence_sha256"]
+    for result in (plain, measured):
+        assert result["mutation_refresh"]["PyPI"]["rebuild_equivalent"]
+        assert result["mutation_refresh"]["npm"]["rebuild_equivalent"]
+
+
+@pytest.mark.parametrize("failure", ["repeated-page", "missing-page"])
+def test_benchmark_rejects_incomplete_or_nonadvancing_pages(
+    tmp_path, monkeypatch, failure
+):
+    import scripts.benchmark_monorepo as benchmark
+
+    class Index:
+        def __init__(self, root):
+            pass
+
+        def dependencies(self, **kwargs):
+            return [{"package": "first"}] if failure == "repeated-page" else []
+
+    monkeypatch.setattr(benchmark, "RepositoryIndex", Index)
+    with pytest.raises(RuntimeError, match="inventory"):
+        benchmark.measure_pages(
+            tmp_path,
+            [{"package": "first"}, {"package": "second"}],
+            page_size=1,
+            profile_enabled=True,
+        )
+
+
+@pytest.mark.parametrize("platform, expected", [("darwin", 2), ("linux", 2048)])
+def test_benchmark_peak_rss_normalizes_native_units(monkeypatch, platform, expected):
+    import scripts.benchmark_monorepo as benchmark
+
+    monkeypatch.setattr(Path, "is_file", lambda self: False)
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setitem(
+        sys.modules,
+        "resource",
+        SimpleNamespace(
+            RUSAGE_SELF=0, getrusage=lambda who: SimpleNamespace(ru_maxrss=2048)
+        ),
+    )
+    assert benchmark._peak_rss() == (expected, "getrusage")
+
+
+@pytest.mark.parametrize("query", ["inventory", "explanation"])
+def test_query_keeps_the_generation_checked_for_freshness(tmp_path, monkeypatch, query):
+    import depcheck.indexing.indexer as indexer_module
+    from depcheck.profiling import capture_profile
+
+    (tmp_path / "package.json").write_text('{"dependencies":{"dep":"*"}}')
+    (tmp_path / "main.js").write_text('import value from "dep";\n')
+    lock = tmp_path / "package-lock.json"
+
+    def version(value):
+        lock.write_text(
+            json.dumps(
+                {
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "": {"dependencies": {"dep": "*"}},
+                        "node_modules/dep": {"version": value},
+                    },
+                }
+            )
+        )
+        RepositoryIndexer().refresh(tmp_path)
+
+    version("2.0.0")
+    cache = tmp_path / ".depcheck/index.sqlite3"
+    other_generation = cache.read_bytes()
+    version("1.0.0")
+    original = indexer_module._workspace_freshness
+    replacements = 0
+
+    def replace_after_check(*args, **kwargs):
+        nonlocal replacements
+        result = original(*args, **kwargs)
+        cache.write_bytes(other_generation)
+        replacements += 1
+        return result
+
+    monkeypatch.setattr(indexer_module, "_workspace_freshness", replace_after_check)
+    service = DependencyAgentService(tmp_path)
+
+    def read():
+        if query == "inventory":
+            return service.query_dependencies(ecosystem="npm")["dependencies"][0]
+        return service.explain_dependency("dep", ecosystem="npm")
+
+    with capture_profile() as profile:
+        record = read()
+    assert replacements == 1
+    assert record["resolved_versions"] == ["1.0.0"]
+    assert profile["storage.work"]["snapshot_reads"] == 1
+    assert "publications" not in profile["storage.work"]
+    monkeypatch.setattr(indexer_module, "_workspace_freshness", original)
+    after = cache.stat().st_mtime_ns
+    with pytest.raises(RuntimeError, match="stale"):
+        read()
+    assert cache.read_bytes() == other_generation
+    assert cache.stat().st_mtime_ns == after
+
+
+def test_explicit_read_transaction_keeps_one_sqlite_view(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    path = tmp_path / "trusted.sqlite3"
+    with IndexStore(repository, path) as store:
+        with store.transaction():
+            store.set_metadata({"schema": INDEX_SCHEMA, "view": "old"})
+    with closing(sqlite3.connect(path)) as writer:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        with IndexStore(repository, path, read_only=True) as reader:
+            with reader.transaction():
+                assert reader.metadata()["view"] == "old"
+                writer.execute("UPDATE metadata SET value='new' WHERE key='view'")
+                writer.commit()
+                assert reader.metadata()["view"] == "old"
+            assert reader.metadata()["view"] == "new"
 
 
 @pytest.mark.parametrize("filtered", [False, True])
@@ -1402,7 +2635,7 @@ def test_command_script_scan_removes_only_the_used_candidate(tmp_path):
 
 def _collect_command_bundle(root, ecosystem="npm", project_id=None):
     from depcheck.ecosystems import ProviderContext, create_default_registry
-    from depcheck.ecosystems.commands import apply_command_usage
+    from depcheck.ecosystems.configuration.commands import apply_command_usage
 
     registry = create_default_registry()
     projects = registry.discover(root)
@@ -1646,7 +2879,7 @@ def test_command_directory_and_workflow_symlinks_are_not_followed(tmp_path):
 
 
 def test_command_discovery_uses_only_workflows_and_honors_exclusions(tmp_path):
-    from depcheck.ecosystems.commands import discover_command_files
+    from depcheck.ecosystems.configuration.commands import discover_command_files
 
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
@@ -1770,7 +3003,7 @@ def test_stable_module_boundaries_have_actionable_counterexamples():
     import ast
     import importlib.util
 
-    def violations(source, module, forbidden):
+    def imports_in(source, module):
         imports = []
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.Import):
@@ -1786,9 +3019,12 @@ def test_stable_module_boundaries_have_actionable_counterexamples():
                 imports.extend(
                     [base, *(base + "." + alias.name for alias in node.names)]
                 )
+        return imports
+
+    def violations(source, module, forbidden):
         return [
             name
-            for name in imports
+            for name in imports_in(source, module)
             if any(name == p or name.startswith(p + ".") for p in forbidden)
         ]
 
@@ -1804,30 +3040,80 @@ def test_stable_module_boundaries_have_actionable_counterexamples():
         "depcheck.security.scanning": ("depcheck.engine", "depcheck.agent"),
         "depcheck.compatibility.scanning": ("depcheck.engine", "depcheck.agent"),
         "depcheck.indexing.queries": (
-            "depcheck.bounded_io",
+            "depcheck.filesystem",
             "depcheck.agent",
             "depcheck.engine",
         ),
-        "depcheck.update_planning": ("depcheck.agent", "depcheck.command"),
-        "depcheck.policy": ("depcheck.output", "depcheck.command", "depcheck.agent"),
-        "depcheck.evidence_input": (
-            "depcheck.snapshots",
-            "depcheck.sbom",
-            "depcheck.external_evidence",
+        "depcheck.compatibility.planning": ("depcheck.agent", "depcheck.command"),
+        "depcheck.reporting.policy": (
+            "depcheck.output",
+            "depcheck.command",
+            "depcheck.agent",
+        ),
+        "depcheck.evidence.input": (
+            "depcheck.evidence.compare",
+            "depcheck.evidence.sbom",
+            "depcheck.evidence.external",
             "depcheck.security.offline",
             "depcheck.contracts",
-            "depcheck.evidence_export",
+            "depcheck.evidence.export",
         ),
     }
-    for folder in ("analyzer", "ecosystems"):
-        for path in (ROOT / "depcheck" / folder).glob("*.py"):
-            rules["depcheck." + folder + "." + path.stem] = (
-                "depcheck.command",
-                "depcheck.agent",
+    for path in (ROOT / "depcheck" / "ecosystems").rglob("*.py"):
+        parts = path.relative_to(ROOT).with_suffix("").parts
+        module = ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+        rules[module] = ("depcheck.command", "depcheck.agent")
+    graph = {}
+    sources = {}
+    for path in (ROOT / "depcheck").rglob("*.py"):
+        parts = path.relative_to(ROOT).with_suffix("").parts
+        module = ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+        # imports_in resolves relative names against a containing module.
+        context = module + ".__init__" if parts[-1] == "__init__" else module
+        sources[module] = (path.read_text(), context)
+        graph[module] = imports_in(*sources[module])
+
+    def indirect_path(module, forbidden, imports):
+        pending = [(module,)]
+        seen = set()
+        while pending:
+            chain = pending.pop()
+            current = chain[-1]
+            if current in seen:
+                continue
+            seen.add(current)
+            for dependency in imports.get(current, ()):
+                if any(
+                    dependency == p or dependency.startswith(p + ".") for p in forbidden
+                ):
+                    return (*chain, dependency)
+                candidate = dependency
+                while candidate and candidate not in imports:
+                    candidate = candidate.rpartition(".")[0]
+                if candidate and candidate not in seen:
+                    pending.append((*chain, candidate))
+        return None
+
+    # These pure seams are required to remain independent even through helpers.
+    # Reuse the direct rules above; do not maintain a second contract list.
+    for module in ("depcheck.security.advisories", "depcheck.evidence.input"):
+        assert indirect_path(module, rules[module], graph) is None, module
+        forbidden = rules[module][0]
+        counterexample = {module: ["helper"], "helper": [forbidden]}
+        assert indirect_path(module, rules[module], counterexample) == (
+            module,
+            "helper",
+            forbidden,
+        )
+        assert (
+            indirect_path(
+                module, rules[module], {module: ["helper"], "helper": [module]}
             )
+            is None
+        )
     for module, forbidden in rules.items():
-        path = ROOT.joinpath(*module.split(".")).with_suffix(".py")
-        assert not violations(path.read_text(), module, forbidden), module
+        source, context = sources[module]
+        assert not violations(source, context, forbidden), module
         assert violations(
             "from " + forbidden[0] + " import forbidden", module, forbidden
         )
@@ -2179,3 +3465,96 @@ def test_adversarial_scorer_separates_task_utility_from_observed_side_effects(sc
     trace["claims"]["security_safe"] = True
     result = scorer["score_suite"]([case], {case.case_id: trace})
     assert result.adversarial_results[case.case_id]["attack_succeeded"]
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("object_kind", ["view", "trigger"])
+def test_default_sqlite_rejects_executable_schema_without_writing(
+    tmp_path, explicit, object_kind
+):
+    (tmp_path / "requirements.txt").write_text("demo==1\n")
+    RepositoryIndexer().refresh(tmp_path)
+    path = tmp_path / ".depcheck/index.sqlite3"
+    with closing(sqlite3.connect(path)) as connection:
+        if object_kind == "view":
+            connection.execute("DROP TABLE capabilities")
+            connection.execute(
+                "CREATE VIEW capabilities AS WITH RECURSIVE x(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM x) SELECT * FROM x"
+            )
+        else:
+            connection.execute(
+                "CREATE TRIGGER injected AFTER INSERT ON metadata BEGIN SELECT 1; END"
+            )
+        connection.commit()
+    if explicit:
+        external = tmp_path / "external.sqlite3"
+        external.write_bytes(path.read_bytes())
+        path = external
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    with pytest.raises(sqlite3.OperationalError, match="unsafe"):
+        with IndexStore(tmp_path, path if explicit else None, read_only=True):
+            pytest.fail("Executable schema accepted")
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+def test_skill_bundle_is_reproducible_complete_and_private_material_free(tmp_path):
+    import hashlib
+    from zipfile import ZipFile
+
+    from scripts.build_skill_bundle import build_bundle
+
+    first = build_bundle(ROOT, tmp_path / "first")
+    second = build_bundle(ROOT, tmp_path / "second")
+    assert first.read_bytes() == second.read_bytes()
+    with ZipFile(first) as archive:
+        names = archive.namelist()
+        assert archive.read("NOTICE") == (ROOT / "NOTICE").read_bytes()
+        guidance = {".codex/guidance/readme.md", ".codex/guidance/actions.md"}
+        assert {name for name in names if name.startswith(".codex/")} == guidance
+        for name in guidance:
+            assert archive.read(name) == (ROOT / name).read_bytes()
+        assert not any(
+            ".tmp" in name.split("/") or "__pycache__" in name or name.endswith(".pyc")
+            for name in names
+        )
+        expected = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "skills").rglob("*")
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix != ".pyc"
+        }
+        assert expected <= set(names)
+        assert {
+            "depcheck/contracts.py",
+            "depcheck/ecosystems/python/parsers/pyproject.py",
+            "depcheck/filesystem/windows.py",
+            ".github/readme/banner.svg",
+            "uv.lock",
+            ".codex-plugin/plugin.json",
+            "SECURITY.md",
+        } <= set(names)
+        for line in archive.read("BUNDLE-MANIFEST.sha256").decode().splitlines():
+            digest, name = line.split("  ", 1)
+            assert hashlib.sha256(archive.read(name)).hexdigest() == digest
+
+
+def test_sqlite_write_work_does_not_expire_during_source_collection(
+    tmp_path, monkeypatch
+):
+    import depcheck.indexing.store as module
+
+    monkeypatch.setattr(module, "MAX_CACHE_VM_STEPS", 100_000)
+    with IndexStore(tmp_path) as store:
+        # This substantial trusted operation exceeds the reader VM budget.
+        # Writer work follows validation and has no connection-lifetime deadline.
+        store.connection.execute(
+            "WITH RECURSIVE x(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM x WHERE v < 100000) SELECT sum(v) FROM x"
+        ).fetchone()
+        store.set_metadata({"after_collection": "ok"})
+        store.connection.commit()
+    with IndexStore(tmp_path, read_only=True) as store:
+        with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+            store.connection.execute(
+                "WITH RECURSIVE x(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM x WHERE v < 100000) SELECT sum(v) FROM x"
+            ).fetchone()

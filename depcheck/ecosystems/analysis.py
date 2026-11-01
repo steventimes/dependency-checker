@@ -7,12 +7,15 @@ from typing import Any
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from depcheck.model import AnalysisReport, Finding, PackageIdentity
-from depcheck.model import Diagnostic, SourceLocation
 from depcheck.model import (
+    AnalysisReport,
     DependencyDeclaration,
+    Diagnostic,
     EvidenceBundle,
+    Finding,
     MappingConfidence,
+    PackageIdentity,
+    SourceLocation,
     UsageEvidence,
 )
 
@@ -42,6 +45,11 @@ class EvidenceAnalyzer:
                 },
             )
         declarations = self._declarations_by_key(bundle.declarations)
+        profile_only = {
+            item.package.key(item.project_id)
+            for item in bundle.declarations
+            if item.metadata.get("maven_kind") == "profile-dependency"
+        } - declarations.keys()
         actionable = {
             key: [item for item in items if item.kind == "direct"]
             for key, items in declarations.items()
@@ -53,6 +61,11 @@ class EvidenceAnalyzer:
             if item.version
         }
         qualified = self._qualified_usages_by_key(bundle.usages)
+        environment_only = {
+            item.package.key(item.project_id)
+            for item in bundle.declarations
+            if item.kind == "environment"
+        } - declarations.keys()
         inferred = {
             item.mapped_package.key(item.project_id)
             for item in bundle.usages
@@ -72,7 +85,14 @@ class EvidenceAnalyzer:
             for item in bundle.capabilities
             if item.name in {"usage", "mapping"}
         )
-        findings = self._usage_findings(qualified, declarations)
+        findings = self._usage_findings(
+            {
+                key: items
+                for key, items in qualified.items()
+                if key not in environment_only and key not in profile_only
+            },
+            declarations,
+        )
         if not manifest_complete:
             findings = [item for item in findings if item.code != "dependency.missing"]
         if unknown_count == 0 and usage_complete and manifest_complete:
@@ -85,6 +105,24 @@ class EvidenceAnalyzer:
         findings.sort(key=lambda item: (item.code, item.package.sort_key, item.message))
 
         diagnostics = list(bundle.diagnostics)
+        for key in sorted(profile_only & qualified.keys()):
+            diagnostics.append(
+                Diagnostic(
+                    "analysis.maven-profile-availability-unknown",
+                    "warning",
+                    f"{key[2]} is declared only in Maven profiles; application availability remains unknown until activation is established.",
+                    qualified[key][0].source,
+                )
+            )
+        for key in sorted(environment_only & qualified.keys()):
+            diagnostics.append(
+                Diagnostic(
+                    "analysis.python-environment-selection-unknown",
+                    "warning",
+                    f"{key[2]} is declared only in a separate Hatch environment; its availability to this source is unknown.",
+                    qualified[key][0].source,
+                )
+            )
         diagnostics.extend(declaration_diagnostics)
         if unknown_count:
             examples = []
@@ -132,8 +170,14 @@ class EvidenceAnalyzer:
                 and item.metadata.get("go_kind") == "require"
             )
             if (
-                item.kind not in {"direct", "conditional"} and not go_requirement
-            ) or item.scope == "build":
+                (item.kind not in {"direct", "conditional"} and not go_requirement)
+                or item.scope == "build"
+                or item.metadata.get("maven_kind")
+                in {
+                    "profile-dependency",
+                    "profile-management",
+                }
+            ):
                 continue
             grouped.setdefault(item.package.key(item.project_id), []).append(item)
         return grouped
@@ -147,6 +191,7 @@ class EvidenceAnalyzer:
             if (
                 item.mapped_package is None
                 or not item.mapping_confidence.qualifies_for_hygiene
+                or item.kind == "environment-command"
             ):
                 continue
             grouped.setdefault(

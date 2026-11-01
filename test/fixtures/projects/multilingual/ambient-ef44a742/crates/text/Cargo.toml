@@ -1,0 +1,25 @@
+[package]
+name = "ambient_text"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+description = "Ambient text. Host-only."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ambient_native_std = { path = "../native_std" , version = "0.3.2-dev" }
+ambient_ecs = { path = "../ecs" , version = "0.3.2-dev" }
+ambient_gpu = { path = "../gpu" , version = "0.3.2-dev" }
+ambient_core = { path = "../core" , version = "0.3.2-dev" }
+ambient_renderer = { path = "../renderer" , version = "0.3.2-dev" }
+ambient_layout = { path = "../layout" , version = "0.3.2-dev" }
+glyph_brush = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+glam = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+wgpu = { workspace = true }

@@ -20,9 +20,9 @@ from packaging.version import InvalidVersion, Version
 from resolvelib import AbstractProvider, BaseReporter, Resolver
 from resolvelib.resolvers import ResolutionImpossible, ResolutionTooDeep
 
+from depcheck.compatibility.pypi_client import ReleaseMetadata
 from depcheck.model import Diagnostic, ManifestParseResult, PythonRequirement
 
-from .metadata import ReleaseMetadata
 from .models import (
     CompatibilityConflict,
     CompatibilityReport,

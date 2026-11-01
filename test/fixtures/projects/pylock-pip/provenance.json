@@ -1,0 +1,57 @@
+{
+  "upstream": "https://github.com/pypa/pip",
+  "commit": "0d09686649a97c2dd304322b191e44eb06ab4d44",
+  "license": "MIT",
+  "license_file": "LICENSE.txt",
+  "files": [
+    {
+      "path": "LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/pypa/pip/0d09686649a97c2dd304322b191e44eb06ab4d44/LICENSE.txt",
+      "sha256": "634300a669d49aeae65b12c6c48c924c51a4cdf3d1ff086dc3456dc8bcaa2104",
+      "git_blob_sha1": "8e7b65eaf628360e6f32f4140fcdd7ec7c2b7077",
+      "bytes": 1093,
+      "fixture": "LICENSE.txt"
+    },
+    {
+      "path": "tests/data/lockfiles/pylock.toml",
+      "url": "https://raw.githubusercontent.com/pypa/pip/0d09686649a97c2dd304322b191e44eb06ab4d44/tests/data/lockfiles/pylock.toml",
+      "sha256": "e0b65af8c139d22df5f641b3e86e91d4114a86ac185011a3a054ba4fedfe9754",
+      "git_blob_sha1": "194817b4404f15b96d2dbc8d05b752f617271e11",
+      "bytes": 747,
+      "fixture": "pylock.toml"
+    },
+    {
+      "path": "tests/data/lockfiles/pylock.mixed.toml",
+      "url": "https://raw.githubusercontent.com/pypa/pip/0d09686649a97c2dd304322b191e44eb06ab4d44/tests/data/lockfiles/pylock.mixed.toml",
+      "sha256": "a0c2024987d2e3adc11ec3657210af02f5d8da4e1644a8f42f5d6d307fcd30f0",
+      "git_blob_sha1": "03ba69107013042c1590d46b8aeedf0c93c128a5",
+      "bytes": 420,
+      "fixture": "pylock.mixed.toml"
+    },
+    {
+      "path": "tests/data/lockfiles/pylock.directory.toml",
+      "url": "https://raw.githubusercontent.com/pypa/pip/0d09686649a97c2dd304322b191e44eb06ab4d44/tests/data/lockfiles/pylock.directory.toml",
+      "sha256": "479dac7d60c683fd6f65706636ae28c17b507ad5c58798f31b1292bb4468bafb",
+      "git_blob_sha1": "349c5a083d0008c6ae071e1d536635f18b575027",
+      "bytes": 228,
+      "fixture": "pylock.directory.toml"
+    },
+    {
+      "path": "tests/data/lockfiles/pylock.certifi-with-upload_time.toml",
+      "url": "https://raw.githubusercontent.com/pypa/pip/0d09686649a97c2dd304322b191e44eb06ab4d44/tests/data/lockfiles/pylock.certifi-with-upload_time.toml",
+      "sha256": "b67a43aa588e0e69184de7bd9658065440b570e4c629146bb0f28b127e12c1a7",
+      "git_blob_sha1": "eba72c83d97a90e4d360b47295b47809701545e9",
+      "bytes": 691,
+      "fixture": "pylock.certifi-with-upload_time.toml"
+    },
+    {
+      "path": "tests/data/lockfiles/pylock.prerelease-wheel.toml",
+      "url": "https://raw.githubusercontent.com/pypa/pip/0d09686649a97c2dd304322b191e44eb06ab4d44/tests/data/lockfiles/pylock.prerelease-wheel.toml",
+      "sha256": "a241600aa111a1b4475443c029cfb20e03994ec456f8098c17a6926edf5c76a6",
+      "git_blob_sha1": "d048720bce5fbc78b66113473b3595ce718e2eb1",
+      "bytes": 325,
+      "fixture": "pylock.prerelease-wheel.toml"
+    }
+  ],
+  "scope": "Unmodified official pip test inputs; paths and artifacts are opaque assertions and never opened. Not a real application or installed-environment sample."
+}

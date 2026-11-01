@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from importlib.resources import files
-import json
 from typing import Any, cast
 
-from depcheck.evidence_input import objects
+from depcheck._version import __version__
+from depcheck.evidence.input import objects
+from depcheck.model import ANALYSIS_REVISION
 
 SCHEMA_NAMES = ("scan", "policy-input", "provenance")
 
@@ -108,3 +110,21 @@ def _validate_inventory(inventory: dict[str, Any], project_ids: set[str]) -> Non
                 or identity.get("project_id") not in project_ids
             ):
                 raise ValueError("Scan record refers to an unknown project")
+
+
+TOOL_CONTRACT_REVISION = 2
+
+
+def backend_info() -> dict[str, Any]:
+    from depcheck.indexing.models import INDEX_SCHEMA
+
+    return {
+        "schema": "depcheck.runtime.v1",
+        "backend_version": __version__,
+        "analysis_revision": ANALYSIS_REVISION,
+        "index_schema": INDEX_SCHEMA,
+        "tool_contract_revision": TOOL_CONTRACT_REVISION,
+        "default_mcp_transport": "stdio",
+        "target_execution": False,
+        "network_default_mcp": False,
+    }

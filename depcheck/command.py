@@ -13,18 +13,19 @@ from depcheck._version import __version__
 from depcheck.agent import DependencyAgentService
 from depcheck.config import load_project_config
 from depcheck.contracts import SCHEMA_NAMES, output_schema
-from depcheck.policy_codes import normalize_fail_on
-from depcheck.profiling import capture_profile, profile_payload
-from depcheck.engine import RepositoryScanOptions, RepositoryScanner
+from depcheck.engine import RepositoryScanner, RepositoryScanOptions
 from depcheck.output import (
     build_cyclonedx,
     build_sarif,
+    escape_terminal,
     evaluate_policy,
     load_policy,
+    render_snapshot_comparison,
     render_json,
     render_text,
 )
-
+from depcheck.profiling import capture_profile, profile_payload
+from depcheck.reporting.policy import normalize_fail_on
 
 _FORMATS = ("text", "json", "sarif", "cyclonedx-json")
 
@@ -44,12 +45,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
+    commands.add_parser(
+        "runtime", help="Print backend identity without reading a repository"
+    )
+
     schema = commands.add_parser("schema", help="Print a packaged output JSON Schema")
     schema.add_argument("kind", choices=SCHEMA_NAMES)
     schema.set_defaults(root=Path("."))
 
     scan = commands.add_parser("scan", help="Scan a repository")
     _root_argument(scan)
+    scan.add_argument(
+        "--public-maven-coordinate",
+        action="append",
+        default=[],
+        help="Assert an exact group:artifact is public; permits its OSV lookup",
+    )
     scan.add_argument(
         "--security",
         action=argparse.BooleanOptionalAction,
@@ -143,6 +154,17 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("after_file")
     compare.add_argument("--limit", type=int, default=20)
     compare.add_argument("--offset", type=int, default=0)
+    compare.add_argument(
+        "--fail-on-changes",
+        action="store_true",
+        help="Exit 1 for observed changes, 2 for incomparable snapshots",
+    )
+    compare.add_argument(
+        "--format",
+        choices=("json", "text"),
+        default="json",
+        help="Output format (default: json)",
+    )
     sbom = commands.add_parser(
         "sbom", help="Inspect an external CycloneDX JSON inventory"
     )
@@ -180,6 +202,8 @@ def build_parser() -> argparse.ArgumentParser:
             "abi",
             "deps-dev",
             "scorecard",
+            "pip-inspect",
+            "pip-install-report",
         ),
     )
     evidence.add_argument("evidence_file")
@@ -195,6 +219,14 @@ def build_parser() -> argparse.ArgumentParser:
     reevaluate.add_argument("advisory_file")
     reevaluate.add_argument("--limit", type=int, default=20)
     reevaluate.add_argument("--offset", type=int, default=0)
+    reevaluate.add_argument("--kev-file")
+    reevaluate.add_argument("--epss-file")
+    reevaluate.add_argument("--previous-kev-file")
+    reevaluate.add_argument("--previous-epss-file")
+    reevaluate.add_argument(
+        "--risk-as-of", help="ISO date/time for risk snapshot age only"
+    )
+    reevaluate.add_argument("--risk-max-age-days", type=int)
     calls = commands.add_parser(
         "python-calls", help="Analyze selected Python sources and explicit call entries"
     )
@@ -263,9 +295,18 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         return int(exc.code or 0)
 
+    if arguments.command == "runtime":
+        from depcheck.contracts import backend_info
+
+        print(json.dumps(backend_info(), indent=2, sort_keys=True))
+        return 0
+
     root = arguments.root.resolve()
     if not root.is_dir():
-        print(f"depcheck: repository is not a directory: {root}", file=sys.stderr)
+        print(
+            escape_terminal(f"depcheck: repository is not a directory: {root}"),
+            file=sys.stderr,
+        )
         return 2
     try:
         with capture_profile(enabled=arguments.profile) as measurements:
@@ -292,17 +333,22 @@ def main(argv: list[str] | None = None) -> int:
         ValueError,
         sqlite3.Error,
     ) as exc:
-        print(f"depcheck {arguments.command}: {exc}", file=sys.stderr)
+        print(escape_terminal(f"depcheck {arguments.command}: {exc}"), file=sys.stderr)
         return 2
-    print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
-    return (
-        2
-        if "error" in payload
-        or any(
-            item.get("severity") == "error" for item in payload.get("diagnostics", [])
-        )
-        else 0
-    )
+    if arguments.command == "compare" and arguments.format == "text":
+        print(render_snapshot_comparison(payload))
+    else:
+        print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
+    if "error" in payload or any(
+        item.get("severity") == "error" for item in payload.get("diagnostics", [])
+    ):
+        return 2
+    if arguments.command == "compare" and arguments.fail_on_changes:
+        if not payload["comparable"]:
+            return 2
+        if any(payload["counts"].values()):
+            return 1
+    return 0
 
 
 def _scan(root: Path, arguments: argparse.Namespace) -> int:
@@ -327,6 +373,7 @@ def _scan(root: Path, arguments: argparse.Namespace) -> int:
             import_mapping=_parse_updates(arguments.mappings, option="--map"),
             python_version=arguments.python_version,
             dependency_groups=tuple(arguments.dependency_group),
+            public_maven_packages=tuple(arguments.public_maven_coordinate),
         ),
     )
     evaluation = evaluate_policy(result, policy)
@@ -415,6 +462,12 @@ def _service_command(
             arguments.advisory_file,
             limit=arguments.limit,
             offset=arguments.offset,
+            kev_file=arguments.kev_file,
+            epss_file=arguments.epss_file,
+            previous_kev_file=arguments.previous_kev_file,
+            previous_epss_file=arguments.previous_epss_file,
+            risk_as_of=arguments.risk_as_of,
+            risk_max_age_days=arguments.risk_max_age_days,
         )
     if command == "compare":
         return service.compare_dependency_snapshots(

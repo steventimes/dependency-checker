@@ -1,0 +1,37 @@
+
+[package]
+name = "ambient_element"
+edition = "2021"
+description = "Element is a React-inspired virtual tree library for the Ambient runtime."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+rust-version = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+ambient_guest_bridge = { path = "../guest_bridge", default-features = false , version = "0.3.2-dev" }
+ambient_element_component = { path = "../element_component" , version = "0.3.2-dev" }
+ambient_cb = { path = "../../libs/cb" , version = "0.3.2-dev" }
+ambient_friendly_id = { path = "../../libs/friendly_id" , version = "0.3.2-dev" }
+
+# Only on native
+ambient_sys = { path = "../../crates/sys", optional = true , version = "0.3.2-dev" }
+ambient_core = { path = "../../crates/core", optional = true , version = "0.3.2-dev" }
+tokio = { workspace = true, optional = true }
+
+parking_lot = { workspace = true }
+itertools = { workspace = true }
+as-any = { workspace = true }
+dyn-clonable = { workspace = true }
+derivative = { workspace = true }
+tracing = { workspace = true }
+profiling = { workspace = true }
+atomic_refcell = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[features]
+default = ["native"]
+native = ["dep:ambient_sys", "dep:ambient_core", "dep:tokio", "ambient_guest_bridge/native"]
+guest = ["ambient_guest_bridge/guest"]

@@ -1,0 +1,82 @@
+[package]
+authors = ["Wez Furlong"]
+name = "termwiz"
+version = "0.16.0"
+edition = "2018"
+repository = "https://github.com/wez/wezterm"
+description = "Terminal Wizardry for Unix and Windows"
+license = "MIT"
+documentation = "https://docs.rs/termwiz"
+keywords = ["terminal", "readline", "console", "curses"]
+readme = "README.md"
+
+[dependencies]
+base64 = "0.13"
+bitflags = "1.3"
+cassowary = {version="0.3", optional=true}
+cfg-if = "1.0"
+anyhow = "1.0"
+filedescriptor = { version="0.8", path = "../filedescriptor" }
+fnv = {version="1.0", optional=true}
+hex = "0.4"
+image = {version="0.24", optional=true}
+lazy_static = "1.4"
+libc = "0.2"
+log = "0.4"
+memmem = "0.1"
+num-traits = "0.2"
+ordered-float = "3.0"
+pest = "2.1"
+pest_derive = "2.1"
+phf = "0.10"
+regex = "1"
+semver = "0.11"
+serde = {version="1.0", features = ["rc", "derive"], optional=true}
+sha2 = "0.9"
+terminfo = "0.7"
+thiserror = "1.0"
+unicode-segmentation = "1.8"
+ucd-trie = "0.1"
+vtparse = { version="0.6", path="../vtparse" }
+wezterm-bidi = { path = "../bidi", version="0.1" }
+wezterm-color-types = { path = "../color-types", version="0.1" }
+wezterm-dynamic = { path = "../wezterm-dynamic" }
+
+[features]
+widgets = ["cassowary", "fnv"]
+use_serde = ["serde", "wezterm-color-types/use_serde"]
+use_image = ["image"]
+docs = ["widgets", "use_serde"]
+
+[dev-dependencies]
+varbincode = "0.1"
+k9 = "0.11"
+env_logger = "0.9"
+
+[dependencies.num-derive]
+features = ["full-syntax"]
+version = "0.3"
+
+[target."cfg(unix)".dependencies]
+signal-hook = "0.1"
+termios = "0.3"
+nix = "0.24"
+
+[target."cfg(windows)".dependencies.winapi]
+features = [
+    "winbase",
+    "winerror",
+    "winnls",
+    "winuser",
+    "consoleapi",
+    "handleapi",
+    "fileapi",
+    "synchapi",
+    "memoryapi",
+    "winnt",
+]
+version = "0.3"
+
+[package.metadata.docs.rs]
+features = ["docs"]
+rustdoc-args = ["--cfg", "feature=\"docs\""]

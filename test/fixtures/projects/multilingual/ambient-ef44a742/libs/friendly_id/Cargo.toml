@@ -1,0 +1,11 @@
+[package]
+name = "ambient_friendly_id"
+edition = "2021"
+description = "Streamlined replacement of `friendly_id`."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+rust-version = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+rand = { workspace = true }

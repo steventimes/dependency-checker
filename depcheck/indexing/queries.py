@@ -9,6 +9,8 @@ from typing import Any
 
 from packaging.utils import canonicalize_name
 
+from depcheck.evidence.input import parse_evidence_json
+
 
 def findings(
     connection: sqlite3.Connection, *, package: str | None = None, limit: int = 100
@@ -43,13 +45,14 @@ def projects(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     capabilities: dict[str, dict[str, dict[str, Any]]] = {}
     for row in connection.execute(
         """
-        SELECT project_id, name, complete, reason
+        SELECT project_id, name, complete, state, reason
         FROM capabilities
         ORDER BY project_id, name
         """
     ):
         capabilities.setdefault(str(row["project_id"]), {})[str(row["name"])] = {
             "complete": bool(row["complete"]),
+            "state": str(row["state"]),
             "reason": row["reason"],
         }
     source_files: dict[str, list[str]] = {}
@@ -285,7 +288,8 @@ def dependency_inventory(
     resolved_rows = connection.execute(
         """
         SELECT project_id, ecosystem, package, display_name, purl, version,
-               source_path, line, column_number, direct, integrity, instance_id, origin_json
+               source_path, line, column_number, direct, integrity, instance_id,
+               origin_json, metadata_json
         FROM resolved_dependencies
         ORDER BY project_id, ecosystem, package, version
         """
@@ -301,6 +305,9 @@ def dependency_inventory(
                     "instance": row["instance_id"],
                     "purl": row["purl"],
                     "origin": origin,
+                    "metadata": parse_evidence_json(
+                        str(row["metadata_json"]).encode("utf-8")
+                    ),
                     "location": _row_location(row, "source_path"),
                 }
             )

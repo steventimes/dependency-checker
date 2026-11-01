@@ -17,18 +17,10 @@ from xml.etree import ElementTree as ET
 
 from packageurl import PackageURL
 
-from depcheck.bounded_io import read_bytes
-from depcheck.evidence_input import (
-    objects as objects,
-)
-from depcheck.evidence_input import (
-    parse_evidence_json,
-    read_evidence_json,
-)
-from depcheck.evidence_input import (
-    text as text,
-)
-from depcheck.path_policy import require_within_project
+from depcheck.evidence.input import objects as objects
+from depcheck.evidence.input import parse_evidence_json, read_evidence_json
+from depcheck.evidence.input import text as text
+from depcheck.filesystem import read_bytes, require_within_project
 
 
 def timestamp(value: Any) -> str:

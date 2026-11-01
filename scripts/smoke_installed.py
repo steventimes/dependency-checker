@@ -26,6 +26,16 @@ def main() -> None:
     )
     check(find_spec("mcp") is None, "Run in a base-install environment without extras")
 
+    from depcheck import RepositoryScanner, RepositoryScanOptions, ScanResult
+    from depcheck.output import (
+        PolicyEvaluation,
+        build_cyclonedx,
+        build_sarif,
+        evaluate_policy,
+        render_json,
+        render_text,
+    )
+
     with TemporaryDirectory(prefix="depcheck-wheel-") as directory:
         root = Path(directory)
         (root / "requirements.txt").write_text("requests==2.31.0\n")
@@ -50,12 +60,90 @@ def main() -> None:
             )
         scan = json.loads(run("scan", ".", "--offline", "--format", "json"))
         check(scan["schema"] == "depcheck.scan.v1", "Unexpected scan schema")
+        result = RepositoryScanner().scan(
+            root, options=RepositoryScanOptions(security=False, compatibility=False)
+        )
+        check(isinstance(result, ScanResult), "Public scan result type changed")
+        api_scan = json.loads(render_json(result))
+        cli_scan = {
+            **scan,
+            "metadata": {k: v for k, v in scan["metadata"].items() if k != "policy"},
+        }
+        check(api_scan == cli_scan, "Python API and CLI disagree")
+        check(render_text(result).startswith("depcheck:"), "Text rendering failed")
+        check(build_sarif(result)["version"] == "2.1.0", "Public SARIF import failed")
+        check(
+            build_cyclonedx(result)["bomFormat"] == "CycloneDX",
+            "Public CycloneDX import failed",
+        )
+        check(
+            isinstance(evaluate_policy(result, {}), PolicyEvaluation)
+            and evaluate_policy(result, {}).to_dict() == scan["metadata"]["policy"],
+            "Public policy imports failed",
+        )
         check(
             scan["capabilities"]["security"]["state"] == "skipped",
             "Offline security was not skipped",
         )
         evidence = root / ".tmp"
         evidence.mkdir()
+        (evidence / "maven-inventory.json").write_text(
+            json.dumps(
+                {
+                    "schema": "depcheck.scan.v1",
+                    "inventory": {
+                        "resolved_dependencies": [
+                            {
+                                "identity": {
+                                    "ecosystem": "Maven",
+                                    "package": "group:artifact",
+                                    "version": version,
+                                },
+                                "origin": {"public": True},
+                            }
+                            for version in ("1.0.Final", "1.0-sp1")
+                        ]
+                    },
+                }
+            )
+        )
+        (evidence / "maven-advisory.json").write_text(
+            json.dumps(
+                {
+                    "id": "OSV-MAVEN-SMOKE",
+                    "modified": "2026-10-23T00:00:00Z",
+                    "affected": [
+                        {
+                            "package": {"ecosystem": "Maven", "name": "group:artifact"},
+                            "ranges": [
+                                {
+                                    "type": "ECOSYSTEM",
+                                    "events": [
+                                        {"introduced": "0"},
+                                        {"fixed": "1.0-sp1"},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+        maven = json.loads(
+            run(
+                "reevaluate",
+                ".",
+                ".tmp/maven-inventory.json",
+                ".tmp/maven-advisory.json",
+            )
+        )
+        check(
+            [row["status"] for row in maven["observations"]]
+            == ["matched", "not-matched-in-supplied-records"]
+            and maven["observations"][0]["vulnerabilities"][0]["fix_version"]
+            == "1.0-sp1",
+            "Installed wheel lost Maven ordering, release aliases or fixed boundaries",
+        )
         (evidence / "before.json").write_text(json.dumps(scan))
         (evidence / "after.json").write_text(json.dumps(scan))
         comparison = json.loads(

@@ -2,10 +2,321 @@
 
 ## Unreleased
 
+No changes recorded after the 0.6.0 release line.
+
+## 0.6.0 — 2026-11-01
+
+This release uses analysis revision 88, index schema v8 and nineteen MCP tools.
+Rebuild older indexes with the matching backend. The entries below retain their
+implementation-time revision history; those historical 0.5.0 references describe
+unreleased source work, not separate published packages.
+
+- Reorganize ecosystem tests and Cargo workspace, override and lock collection
+  without changing evidence semantics. Merge duplicate Go invalid-manifest
+  setup while retaining all nine cases.
+- Separate representative daily CI from explicitly selected full compatibility
+  qualification, retaining native OS, installed-wheel and Skill bundle checks.
+- Include the two repository guidance resources referenced by AGENTS, and keep
+  the original Ambient build-crate manifest in the source distribution.
+
+- Add opt-in `depcheck compare --fail-on-changes` for script exit status based
+  on all observed changes, including those outside the current page.
+
+- Add `depcheck compare --format text` for paged terminal summaries of saved
+  scan comparisons. JSON remains the default; both retain comparability and
+  incomplete-evidence diagnostics.
+
+- Preserve each project's capability state and reason in index context, while
+  retaining the existing `complete` boolean. Analysis revision is 88 and index
+  schema is v8; rebuild older indexes before querying them.
+
+- Collect `setup.cfg` setup/test requirements with build and development scopes,
+  preserving literal positions, duplicates, markers and extras. Share the fixed
+  field/group mapping with the existing static `setup.py` reader and keep one
+  interpolation budget across runtime, build, test and extras. Unsupported
+  directives remain diagnosed without execution. Analysis revision advances to
+  87; package 0.5.0 and index schema v7 stay unchanged.
+
+- Accept relative requirements includes through parent directories when the
+  normalized target remains inside the selected repository root. Preserve root
+  and symlink escape refusal, absolute-path policy, include limits, source
+  positions and direct/constraint roles. Analysis revision advances to 86;
+  package 0.5.0 and index schema v7 stay unchanged.
+
+- Capture explicit Maven profile library and management declarations as
+  conditional inventory, retaining repeated rows, profile conditions, declaring
+  positions and raw requests. Keep profile properties and effective merging
+  unevaluated; conditional management does not resolve unconditional versions,
+  satisfy Java imports or enable public advisory queries. Analysis revision
+  advances to 85; package 0.5.0 and index schema v7 stay unchanged.
+
+- Collect explicit Maven build extensions as conditional build evidence with
+  declaring-POM ownership, source positions, version requests and raw
+  scope/type/classifier fields. Keep activation, inheritance, installation and
+  public origin unknown; do not merge parent extension configuration or infer
+  application dependencies. Analysis revision advances to 84; package 0.5.0
+  and index schema v7 stay unchanged.
+
+- Capture explicit Maven compiler `annotationProcessorPaths` as conditional build
+  evidence with processor classpath, owner plugin, source positions and inherited
+  context. Keep processors separate from application dependencies, installed
+  versions and public advisory coordinates. Arbitrary plugin configuration and
+  lifecycle/profile execution remain uncollected. Analysis revision advances to
+  83; package 0.5.0 and index schema v7 stay unchanged.
+
+- Retain repeated Maven dependency and management declarations from the nearest
+  declaring local POM, including their physical source positions. Keep explicit
+  dependency versions ahead of management defaults and preserve unknown external
+  parent/BOM versions. Repeated declarations do not establish extra installations.
+  Analysis revision advances to 82; package 0.5.0 and index schema v7 stay unchanged.
+
+- Mark uncollected `setup(**kwargs)` keyword expansions as incomplete instead
+  of reporting an empty, complete manifest. Retain explicit literal arguments
+  and diagnostic positions without executing target code. Add a pinned original
+  scikit-learn setup fixture with its license. Analysis revision advances to 81;
+  package 0.5.0 remains unchanged. Index schema v7 separates source and manifest
+  file digests so setup.py can occupy both roles without an indexing collision.
+  Existing read-only queries reject older caches; indexing rebuilds them.
+
+- Preserve independently locked Python records when a same-name direct
+  declaration is excluded by the requested Python version. A transitive
+  dependency can still reference that lock record. Continue evaluating each
+  record's own marker; lock presence does not establish installation or active
+  selection. Analysis revision advances to 80; package 0.5.0 and index v6 remain
+  unchanged.
+
+- Reuse bounded TOML source-position parsing within a scan, while rereading and
+  validating every input. Limit reuse to four captured path/text entries and
+  discard it at scan exit. Larger inputs are still fully parsed. Preserve
+  member evidence, diagnostics and freshness; package, analysis revision and
+  index schema stay unchanged.
+
+- Preserve TOML boolean syntax items and dotted-key parent positions, including
+  Cargo workspace declarations previously located only to a file. Keep explicit
+  headers, repeated occurrences and inherited root provenance distinct. Use an
+  iterative syntax walk and retain file-only fallback when positions are
+  unavailable. Analysis revision advances to 79; package 0.5.0, index v6 and
+  19 tools remain unchanged.
+
+- Match explicitly supplied RubyGems inventories and CycloneDX `pkg:gem`
+  coordinates against OSV records using bounded native Gem::Version ordering,
+  normalized equality and forward fix candidates. Preserve unknown private,
+  qualified and incomparable inputs. Retain pinned original ordering tests and
+  MIT attribution. Correct the existing lodash-rails advisory corpus miss;
+  Gemfile collection and online RubyGems scanning remain uncollected. Analysis
+  revision advances to 78; package 0.5.0, index v6 and 19 tools stay unchanged.
+
+- Read bounded native PEP 751 v1.0 pylock inventories with Packaging's structural
+  validator. Preserve physical occurrences, unknown source-tree versions,
+  artifact/condition assertions and informational record selectors without
+  choosing an environment or creating required installation edges. Add original
+  pip fixtures with license and provenance. Raise the Packaging minimum to the
+  already locked 26.3; all locked package versions remain unchanged. Analysis
+  revision advances to 77; package 0.5.0, index v6 and 19 tools stay unchanged.
+  Discover default and named files, including lock-only Python components and
+  selected scans. Track additions, changes and removals in index freshness;
+  unsupported format versions retain explicit coverage diagnostics.
+
+- Read supplied native pip installation reports through the existing evidence
+  interface. Keep selected records, download information, extras and yanked flags
+  separate from installed state and public package identity; reports may describe
+  dry-runs. Reuse the bounded pip report reader and validate real installation
+  reports during wheel smoke checks. Reject credential-bearing field names in
+  either native report without echoing them. Analysis revision advances to 75.
+
+- Keep malformed, colliding and over-budget uv source tables unverified instead
+  of falling back to public PyPI. Share bounded source interpretation between
+  root and workspace declarations, retain conditional alternatives without host
+  selection, and omit unsupported details with content fingerprints. Preserve
+  declared origins separately. Analysis revision advances to 74; package 0.5.0,
+  index schema v6 and 19 tools remain unchanged.
+- Capture bounded uv project index configuration, including legacy index URLs
+  and uv.toml precedence. Start workspace lookup at the root, preserve config
+  locations and unknown selection, and keep uv pip settings separate. Private,
+  invalid and over-budget configuration cannot establish public PyPI identity.
+  Selected member caches track config changes. Analysis revision advances to 73;
+  package 0.5.0, index schema v6 and 19 tools remain unchanged.
+- Inherit uv workspace root source and index assertions in member declarations.
+  Respect whole-entry member source overrides, including conditional ones, and
+  retain source positions and relative path bases. Ambiguous membership, invalid
+  tables and exhausted budgets stay unverified without public PyPI queries.
+  Keep lock-only registry fields in uv source tables unverified; actual lock
+  registry assertions retain their classification. Shared lock activation remains
+  unknown. Analysis revision advances to 72;
+  package 0.5.0, index schema v6 and 19 tools remain unchanged.
+- Add opt-in offline KEV JSON and EPSS CSV/gzip context to vulnerability
+  reevaluation. Validate complete supplied snapshots, retain explicit stale
+  fallback, dates, model, source hashes and missing states, and associate only
+  existing CVE IDs or OSV aliases. Probability and percentile remain separate;
+  these assertions do not alter matches, severity or exploitation conclusions.
+  Analysis revision advances to 71; package 0.5.0, schema v6 and 19 tools remain.
+- Bind Python direct declarations to unique compatible public lock occurrences
+  using version constraints and captured Pipenv categories. Preserve ambiguous,
+  private and over-budget bindings as unknown without merging occurrences or
+  changing advisory coordinates. Retain binding metadata in caches and exports.
+  Analysis revision advances to 70; index schema v6 and package 0.5.0 remain.
+- Retain workspace-root Cargo patch/replace assertions in member views. Keep
+  potentially affected source bindings and directness unknown, preserve explicit
+  version contradictions, and report ignored member-local overrides. Bound and
+  redact override details without changing raw lock instances or public source
+  eligibility. Analysis revision advances to 69; index schema v6 and package
+  version 0.5.0 remain unchanged.
+- Support Python 3.15 in the test matrix and Ubuntu/macOS/Windows build checks.
+  Require Pydantic 2.14 or newer for agent/test extras on 3.15 and retain lazy
+  import references without executing them. The Python 3.11 minimum remains.
+- Preserve Pipenv custom categories, repeated lock occurrences and bounded
+  marker, extra and source context through scans, caches and exports. Flat
+  Pipenv locks do not establish dependency edges or active category selection.
+  Preserve conditional lock metadata in compatibility scans. Analysis revision
+  advances to 68; index schema v6 and package version 0.5.0 remain unchanged.
+
+- Keep repeated Poetry and PDM lock rows, groups and extras as separate source
+  assertions. Preserve uv lock origins alongside declaration overrides, and bind
+  only unconditional, uniquely identified Python lock dependency edges. Qualified
+  omissions and conditional selection remain incomplete.
+- Apply captured private index policy to default-source transitive Python lock
+  rows. Conditional lock inventories cannot seed a flat compatibility graph;
+  source-qualified known versions remain eligible for advisory matching.
+- Retain Cargo lock source qualification across canonical reports, index queries
+  and CycloneDX. Match Git dependency references without their target's precise
+  commit fragment while preserving query/revision distinctions and ambiguity.
+  Redact credentials in lock identities and declaration output.
+- Add seven pinned Python/Cargo project corpora with original inputs, licenses,
+  independent inventory labels and selected advisory boundaries. Analysis
+  revision advances to 67 and index schema v6 preserves Python requirement
+  metadata across incremental refreshes. Queries reject older caches without
+  changing them; explicit indexing rebuilds the derived data. Package version
+  0.5.0 remains.
+
+- Add five unmodified Bitnami and Hackage advisories with licenses and independent
+  package-level severity labels. Corpus checks retain unsupported version states
+  and distinguish source scores from public registry eligibility.
+
+- Preserve package-level OSV severity with source pointers, package coordinates
+  and version applicability. Keep uncertain or conflicting scopes qualified,
+  retain raw assertions and bound score projections without erasing CVE matches.
+  Alias groups preserve each source's scope and incomplete metadata. These
+  assertions do not change vulnerability policy levels or calculate CVSS scores.
+
+- Match supplied Go module versions against OSV `ECOSYSTEM` ranges. Normalize
+  Go's optional leading `v` consistently in version lists and fix comparisons,
+  while keeping `SEMVER` boundaries strict. Add a fifth pinned upstream advisory
+  and independent Go boundary labels to the existing offline corpus gate.
+- Keep fix candidates unknown when same-package affected entries lack version
+  evidence, including alias groups. Preserve supported vulnerability matches
+  and raw fixed boundaries instead of presenting an unconfirmed fix.
+
+- Retain npm lock context separately from identity, origin and required edges:
+  optional and peer requests, platform restrictions, and dependency-tree flags
+  remain supplied assertions with unknown activation. Respect optional overrides
+  without letting shadowed requests change the effective identity or origin.
+- Preserve resolution metadata in scan JSON, index queries, CycloneDX and offline
+  observations. Snapshot and inventory comparisons expose context-only changes.
+  Index schema v5 adds resolution metadata; rebuild older caches explicitly.
+- Keep legacy origin qualification consistent across canonical and CycloneDX
+  inventories. Private or null legacy origins stay unknown unless an explicit
+  origin assertion takes precedence.
+
+- Resolve legacy npm dependency edges from `requires` assertions, including
+  hoisted instances. Keep physical nesting separate from dependency edges;
+  missing assertions and conflicting explicit aliases leave qualified gaps.
+- Evaluate two pinned historical npm projects from their original manifests
+  and locks through inventory, offline advisory matching and CycloneDX
+  round trips. Keep selected CVE labels and a synthetic registry variant
+  separate from unlabelled inventory and general accuracy claims.
+- Preserve captured manifest origins in CycloneDX components without locked
+  versions. Conflicting origin assertions remain ambiguous and retain their
+  evidence without a public PURL.
+
+- Reject exponent overflow and lone Unicode surrogates in shared JSON inputs
+  and OSV responses, including successive-object evidence streams. Preserve
+  supported byte encodings, valid non-BMP text and manifest duplicate-key rules.
+- Stop npm parent lookups at a fixed point, reject noncanonical instance
+  paths and bound ancestor candidate work per modern lock. Preserve valid
+  neighbors and source-qualified unknown edges when lock
+  nodes are malformed or unsupported. CycloneDX retains unresolved assertions
+  instead of binding them to a different instance or public origin.
+
+- Keep index freshness checks and result projection in one read-only database
+  view. A cache replacement during a query cannot switch its results to another
+  generation. Reuse that query's connection while retaining checks on every call
+  and page; trusted explicit SQLite paths use a read transaction.
+
+- Extend opt-in work accounting to index snapshots, refreshes, query freshness
+  and OSV transfers. The offline benchmark now checks fixture and full evidence
+  digests, measures pagination and supports runs without profiling. Normalize
+  macOS peak memory to KiB; report its whole-worker scope.
+
+- Preserve the last published default index when a refresh context fails. Roll
+  back failed commits and release database/directory resources on interrupted
+  setup. Keep the current analysis revision and index schema.
+- Serialize default-cache publication between cooperating writers, check initial
+  absence as well as the captured digest, and reject replaced parent directories.
+  Add injected write failures and real process-interruption/recovery cases to
+  the existing engineering tests. Queries do not acquire a publication lock.
+
+- Support bounded ASCII Maven `ECOSYSTEM` ranges and normalized version equality
+  using Apache Maven's `ComparableVersion` ordering. Use that profile for forward
+  fix candidates while preserving unsupported ranges and literal assertions.
+- Retain Apache attribution in `NOTICE` and include it in wheels, source archives
+  and Skill bundles. Extend the fixed advisory corpus with Log4j branch gaps,
+  prerelease boundaries and equivalent explicit versions, plus upstream ordering
+  assertions without adding a Java runtime dependency.
+
+- Interpret npm and crates.io OSV `ECOSYSTEM` ranges with strict SemVer
+  precedence for membership and forward fix candidates. Preserve unknown
+  results for nonstandard versions and unsupported ecosystem ordering.
+- Extend the existing offline corpus gate with four pinned, attributed upstream
+  advisories and independent version/fix labels. Report known affected cases
+  that remain unknown without treating expected limitations as detected CVEs.
+
+- Group collectors and Python parsers by ecosystem, with separate packages for
+  filesystem access, supplied evidence and report projections. Merge related
+  registration, identity, Gradle, configuration and metadata helpers. Retain
+  the top-level Python API, CLI/MCP entry points and `depcheck.output` imports.
+- Group Skill ecosystem references under `references/ecosystems/` and update
+  their links. Internal module paths change without changing evidence revisions
+  or the index schema.
+
+- Inspect supplied native `pip inspect` v1 reports through the existing evidence
+  CLI/MCP operation. Preserve duplicate instances, optional fields and environment
+  assertions without opening metadata locations or inferring public provenance.
+- Collect literal Hatch environment requirements and Hatch/Poe commands from
+  pyproject files. Keep separate environments outside application hygiene and
+  resolution; qualify inheritance, formatting and separate configuration files.
+- Mark Python entry-point discovery as incomplete usage evidence, preventing
+  conclusions that a plugin is unused based only on imports. Extend the existing pure-module
+  architecture checks to cover indirect imports.
+- Skip TOML source-position indexing when pytest configuration is absent and
+  reuse one position index for its required plugins. Preserve scan evidence.
+
+- Reorganize README and Skill guidance around backend identity, public-coordinate
+  eligibility, cache recovery and bounded network reads. Clarify release/source
+  differences, corpus scope, local candidate builds and platform-check status.
+
+- Preserve requirements source options across includes and collector deduplication.
+  Require caller-qualified public Maven coordinates before OSV lookups. Redact
+  Python URL credentials from retained assertions, requirements and diagnostics.
+- Reject executable or mismatched SQLite cache schemas and bound VM work.
+  Bound shared setup.cfg/Maven expansion, Python call traversal and workspace
+  glob matching; remove JavaScript regex-context prefix rescans. Escape terminal
+  controls in human-readable output.
+- Bound streamed OSV responses, pagination and request work; disable redirects
+  and environment inheritance. Raise the MCP extra minimum to 1.30 and update
+  the lockfile without changing the stdio transport.
+- Add backend identity through `depcheck runtime` and MCP `backend_info`, a pinned
+  inventory corpus evaluator, deterministic Skill bundles and native CI gates.
+  Add security reporting and contribution guidance.
+- Include the Skill, development scripts and bundle metadata in source archives
+  so their checks can run from an extracted source distribution.
+- Current evidence uses analysis revision 67, index schema v6 and tool contract
+  revision 2. Refresh older indexes; package version 0.5.0 remains unchanged.
+
 - Separate shared evidence input, OSV advisory interpretation, Python metadata
   resolution, index preparation and ecosystem parsers into focused modules.
   Offline advisory reevaluation no longer constructs an HTTP session. CLI and
-  MCP contracts, analysis revision 57 and index schema v4 are unchanged.
+  MCP contracts, analysis revision 57 and index schema v4 were unchanged by
+  that internal refactor.
 
 - Publish standalone JSON Schemas for scan, policy-input and provenance output
   through `depcheck schema`. Validate exported scan semantics before deriving

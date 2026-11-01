@@ -1,5 +1,7 @@
 # Usage and policy evidence
 
+For the full collector and advisory constraints, read [Analysis limits](analysis-limits.md).
+
 Read `usages` as well as `imports`: a `kind: "tool"` entry with
 `mapping_confidence: "configured"` records a scoped user declaration in
 `.depcheck.toml`. Preserve its reason and location when explaining use;
@@ -26,9 +28,22 @@ version and outside all comparable affected ranges and explicit affected-version
 lists in that advisory. It does not establish an available release, compatibility,
 selected lock activation or safety against other advisories.
 
-The backend compares PyPI `ECOSYSTEM` ranges with PEP 440 and `SEMVER` ranges
-with SemVer precedence. Other ecosystem ordering, Git ancestry, missing fixes
+The backend compares PyPI `ECOSYSTEM` ranges with PEP 440. npm and crates.io
+`ECOSYSTEM` ranges and `SEMVER` ranges use strict SemVer precedence, including
+prerelease ordering and ignoring build metadata. Legacy/coerced npm or crates.io
+versions remain unknown. Go `ECOSYSTEM` ranges use full module SemVer with an
+optional leading `v`; explicit version lists and fix comparisons use the same
+normalization. `SEMVER` boundaries remain unprefixed. Go minimum requirements
+and checksum assertions do not establish a selected version.
+Maven `ECOSYSTEM` ranges use bounded ASCII
+`ComparableVersion` ordering from Apache Maven 3.10.0, also used unchanged in
+3.9.11 and 3.9.16. This includes qualifier aliases and normalized equality;
+it does not establish Gradle selection or Maven Resolver behavior. Non-ASCII
+ordering, symbolic boundaries, other ecosystems, Git ancestry, missing fixes
 and unconfirmed applicability retain `fix_version: null` and an unknown status.
+Missing version assertions in any same-package affected entry prevent a fix
+candidate, including in alias groups, while preserving a supported positive
+vulnerability match and the raw fixed boundaries.
 Keep `fix_version_reason` in the explanation. Invalid details retain the matched
 advisory ID and diagnostics; they must not become a clean security result.
 
@@ -58,6 +73,17 @@ project, ecosystem, package and version selectors still apply.
 The representative ID is deterministic for the observed source set. Read all
 members before interpreting severity or a fix: severity assertions are combined,
 while group candidates must satisfy all comparable source ranges and versions.
+The issue's `severity` contains supplied scores for an applicable scope.
+`severity_assertions` retains the advisory ID, original JSON-pointer `field`,
+package coordinate, applicability and raw value. Package-level scores require
+a matching package and affected version; disjoint branches do not contribute.
+Unknown applicability, conflicting top/package scopes, malformed nested values
+and projection omissions keep `severity_status: "incomplete"`. Inspect retained
+assertions and diagnostics rather than interpreting an empty score list as low
+risk. Alias groups keep per-source assertions and qualify incomplete aggregates.
+Scores and optional source labels remain provider claims. They are not CVSS
+calculations or exploitability evidence. Finding severity and SARIF level remain
+the existing policy class: vulnerability findings are errors regardless of scores.
 Unavailable details or unconfirmed applicability keep the candidate unknown.
 `osv.alias-group-incomplete` retains aggregate-budget or invalid-metadata errors.
 Individual modification and future-withdrawal timestamps stay in `advisories`;

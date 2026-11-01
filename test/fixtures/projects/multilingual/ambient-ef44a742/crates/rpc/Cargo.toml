@@ -1,0 +1,19 @@
+[package]
+name = "ambient_rpc"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+description = "RPC implementation for the Ambient runtime. Host-only."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { workspace = true }
+bincode = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(not(target_os = "unknown"))'.dev-dependencies]
+tokio = { workspace = true }

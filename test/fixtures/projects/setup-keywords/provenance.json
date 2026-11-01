@@ -1,0 +1,22 @@
+{
+  "upstream": "https://github.com/scikit-learn/scikit-learn",
+  "tag": "1.2.2",
+  "commit": "9aaed498795f68e5956ea762fef9c440ca9eb239",
+  "license": "BSD-3-Clause",
+  "license_file": "COPYING",
+  "files": [
+    {
+      "path": "setup.py",
+      "url": "https://raw.githubusercontent.com/scikit-learn/scikit-learn/9aaed498795f68e5956ea762fef9c440ca9eb239/setup.py",
+      "sha256": "c643b378b5e38f8053252e3ac83bc8ca70342348ccf69ee92d40fc7ed8aee98f",
+      "bytes": 24858
+    },
+    {
+      "path": "COPYING",
+      "url": "https://raw.githubusercontent.com/scikit-learn/scikit-learn/9aaed498795f68e5956ea762fef9c440ca9eb239/COPYING",
+      "sha256": "e39bf18719108f9e94b578020077dae2c8f0cede14cd7caa11e9a13c44b5e5ab",
+      "bytes": 1532
+    }
+  ],
+  "use": "Original setup keyword-expansion coverage regression. Static parsing only; not imported or executed."
+}

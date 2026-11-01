@@ -39,6 +39,13 @@ def scan_security(
             and item.project_id == bundle.project.project_id
             and item.package.ecosystem.lower() == bundle.project.ecosystem.lower()
             and (
+                bundle.project.ecosystem.lower() != "maven"
+                or (
+                    item.origin.get("public") is True
+                    and (item.package.purl or "").startswith("pkg:maven/")
+                )
+            )
+            and (
                 bundle.project.ecosystem.lower() != "pypi"
                 or (item.package.purl or "").startswith("pkg:pypi/")
             )
@@ -69,27 +76,29 @@ def scan_security(
                 query_batches.append(batch)
             batch[package] = version
         diagnostics = list(reports[index].diagnostics)
-        blocked_npm_names = set()
-        if bundle.project.ecosystem.lower() == "npm":
+        blocked_names = set()
+        if bundle.project.ecosystem.lower() in {"npm", "maven"}:
+            ecosystem = bundle.project.ecosystem.lower()
             for item in bundle.resolved:
                 if (
                     item.project_id != bundle.project.project_id
-                    or item.package.ecosystem.lower() != "npm"
+                    or item.package.ecosystem.lower() != ecosystem
                 ):
                     continue
                 if (
                     not item.version
-                    or not (item.package.purl or "").startswith("pkg:npm/")
+                    or not (item.package.purl or "").startswith(f"pkg:{ecosystem}/")
                     or item.origin.get("public") is False
+                    or (ecosystem == "maven" and item.origin.get("public") is not True)
                 ):
-                    blocked_npm_names.add(item.package.name)
+                    blocked_names.add(item.package.name)
                     diagnostics.append(
                         Diagnostic(
                             code="security.identity-unverified"
                             if item.version
                             else "security.version-unresolved",
                             severity="error",
-                            message=f"No public OSV coordinates were established for npm instance {item.package.name} ({item.instance_id or 'unspecified'}); the query was skipped.",
+                            message=f"No public OSV coordinates were established for {ecosystem} instance {item.package.name} ({item.instance_id or 'unspecified'}); the query was skipped.",
                             source=item.source,
                         )
                     )
@@ -140,7 +149,7 @@ def scan_security(
                 item.package.name not in resolved_packages
                 or (bundle.project.ecosystem.lower() == "npm" and not item.package.purl)
             )
-            and item.package.name not in blocked_npm_names
+            and item.package.name not in blocked_names
         ]
         known_versions = {item.package.name for item in bundle.resolved}
         diagnostics.extend(
@@ -195,10 +204,15 @@ def scan_security(
                 for identity in sorted(identities, key=lambda item: item.sort_key):
                     lock_context = next(
                         (
-                            item.origin["lock"]
+                            dict(item.metadata)
+                            if item.metadata.get("conditional")
+                            else item.origin["lock"]
                             for item in bundle.resolved
                             if item.identity == identity
-                            and item.origin.get("lock", {}).get("conditional")
+                            and (
+                                item.metadata.get("conditional")
+                                or item.origin.get("lock", {}).get("conditional")
+                            )
                         ),
                         None,
                     )

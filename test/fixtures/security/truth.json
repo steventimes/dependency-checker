@@ -1,0 +1,1198 @@
+{
+  "schema": "depcheck.security-corpus-truth.v1",
+  "scope": "Fixed advisory package/version membership and fix candidates only; synthetic public-origin inventory assertions, not installation, reachability, exploitation, current database coverage or general accuracy.",
+  "annotation_method": "Manual labels from the pinned affected ranges, explicit version assertions and published first-patched versions, without running depcheck. Prerelease cases use OSV boundary ordering, not package-manager dependency selector admission. known_affected is null for private, unqualified or invalid coordinates; expected unknown states remain distinct from known upstream affectedness. Go prerelease and pseudo-version strings are version-boundary probes against the retained 0-to-0.17.0 range, not assertions that those tags or commits exist.",
+  "ordering_sources": [
+    "https://ossf.github.io/osv-schema/#affectedrangesevents-fields",
+    "https://github.com/google/osv.dev/blob/f3587068a556471d5bfc94c96159f86f9dccd7a0/osv/ecosystems/_ecosystems.py",
+    "https://github.com/google/osv.dev/blob/f3587068a556471d5bfc94c96159f86f9dccd7a0/osv/ecosystems/semver_ecosystem_helper.py"
+  ],
+  "cases": [
+    {
+      "id": "requests-2.31.0",
+      "advisory": "GHSA-9wx4-h78v-vm56",
+      "ecosystem": "PyPI",
+      "package": "requests",
+      "version": "2.31.0",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2024-35195"
+      ],
+      "expected_fix_version": "2.32.0",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "requests-2.32.0rc1",
+      "advisory": "GHSA-9wx4-h78v-vm56",
+      "ecosystem": "PyPI",
+      "package": "requests",
+      "version": "2.32.0rc1",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2024-35195"
+      ],
+      "expected_fix_version": "2.32.0",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "requests-2.32.0",
+      "advisory": "GHSA-9wx4-h78v-vm56",
+      "ecosystem": "PyPI",
+      "package": "requests",
+      "version": "2.32.0",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "requests-2.32.0.post1",
+      "advisory": "GHSA-9wx4-h78v-vm56",
+      "ecosystem": "PyPI",
+      "package": "requests",
+      "version": "2.32.0.post1",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "requests-normalized-name",
+      "advisory": "GHSA-9wx4-h78v-vm56",
+      "ecosystem": "PyPI",
+      "package": "Requests",
+      "version": "2.31.0",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2024-35195"
+      ],
+      "expected_fix_version": "2.32.0",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "requests-private",
+      "advisory": "GHSA-9wx4-h78v-vm56",
+      "ecosystem": "PyPI",
+      "package": "requests",
+      "version": "2.31.0",
+      "known_affected": null,
+      "expected_status": "unknown",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null,
+      "origin": {
+        "public": false
+      }
+    },
+    {
+      "id": "requests-no-origin",
+      "advisory": "GHSA-9wx4-h78v-vm56",
+      "ecosystem": "PyPI",
+      "package": "requests",
+      "version": "2.31.0",
+      "known_affected": null,
+      "expected_status": "unknown",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null,
+      "origin": null
+    },
+    {
+      "id": "requests-other-ecosystem",
+      "advisory": "GHSA-9wx4-h78v-vm56",
+      "ecosystem": "npm",
+      "package": "requests",
+      "version": "2.31.0",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "lodash-4.17.20",
+      "advisory": "GHSA-35jh-r3h4-6jhm",
+      "ecosystem": "npm",
+      "package": "lodash",
+      "version": "4.17.20",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "expected_fix_version": "4.17.21",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "lodash-4.17.21-beta.1",
+      "advisory": "GHSA-35jh-r3h4-6jhm",
+      "ecosystem": "npm",
+      "package": "lodash",
+      "version": "4.17.21-beta.1",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "expected_fix_version": "4.17.21",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "lodash-4.17.21",
+      "advisory": "GHSA-35jh-r3h4-6jhm",
+      "ecosystem": "npm",
+      "package": "lodash",
+      "version": "4.17.21",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "lodash-4.17.21+build.1",
+      "advisory": "GHSA-35jh-r3h4-6jhm",
+      "ecosystem": "npm",
+      "package": "lodash",
+      "version": "4.17.21+build.1",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "lodash-4.17",
+      "advisory": "GHSA-35jh-r3h4-6jhm",
+      "ecosystem": "npm",
+      "package": "lodash",
+      "version": "4.17",
+      "known_affected": null,
+      "expected_status": "unknown",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "lodash-es",
+      "advisory": "GHSA-35jh-r3h4-6jhm",
+      "ecosystem": "npm",
+      "package": "lodash-es",
+      "version": "4.17.20",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "expected_fix_version": "4.17.21",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "lodash-last-affected",
+      "advisory": "GHSA-35jh-r3h4-6jhm",
+      "ecosystem": "npm",
+      "package": "lodash.template",
+      "version": "4.5.0",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "expected_fix_version": null,
+      "expected_fix_status": "unknown"
+    },
+    {
+      "id": "lodash-after-last-affected",
+      "advisory": "GHSA-35jh-r3h4-6jhm",
+      "ecosystem": "npm",
+      "package": "lodash.template",
+      "version": "4.5.1",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "lodash-different-ecosystem",
+      "advisory": "GHSA-35jh-r3h4-6jhm",
+      "ecosystem": "RubyGems",
+      "package": "lodash-rails",
+      "version": "4.17.20",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "expected_fix_version": "4.17.21",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "smallvec-0.6.4",
+      "advisory": "GHSA-mm7v-vpv8-xfc3",
+      "ecosystem": "cargo",
+      "package": "smallvec",
+      "version": "0.6.4",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "smallvec-0.6.5",
+      "advisory": "GHSA-mm7v-vpv8-xfc3",
+      "ecosystem": "cargo",
+      "package": "smallvec",
+      "version": "0.6.5",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2019-15551"
+      ],
+      "expected_fix_version": "0.6.10",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "smallvec-0.6.9",
+      "advisory": "GHSA-mm7v-vpv8-xfc3",
+      "ecosystem": "cargo",
+      "package": "smallvec",
+      "version": "0.6.9",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2019-15551"
+      ],
+      "expected_fix_version": "0.6.10",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "smallvec-0.6.10-beta.2",
+      "advisory": "GHSA-mm7v-vpv8-xfc3",
+      "ecosystem": "cargo",
+      "package": "smallvec",
+      "version": "0.6.10-beta.2",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2019-15551"
+      ],
+      "expected_fix_version": "0.6.10",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "smallvec-0.6.10",
+      "advisory": "GHSA-mm7v-vpv8-xfc3",
+      "ecosystem": "cargo",
+      "package": "smallvec",
+      "version": "0.6.10",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "smallvec-0.6.10+build.1",
+      "advisory": "GHSA-mm7v-vpv8-xfc3",
+      "ecosystem": "cargo",
+      "package": "smallvec",
+      "version": "0.6.10+build.1",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "smallvec-private",
+      "advisory": "GHSA-mm7v-vpv8-xfc3",
+      "ecosystem": "cargo",
+      "package": "smallvec",
+      "version": "0.6.9",
+      "known_affected": null,
+      "expected_status": "unknown",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null,
+      "origin": {
+        "public": false
+      }
+    },
+    {
+      "id": "log4j-2.14.1",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.14.1",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "expected_fix_version": "2.15.0",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "log4j-2.15.0",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.15.0",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "log4j-2.3.1",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.3.1",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "log4j-enumerated",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.xbib.elasticsearch:log4j",
+      "version": "6.3.2.1",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "expected_fix_version": null,
+      "expected_fix_status": "unknown"
+    },
+    {
+      "id": "log4j-nonliteral-equality",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.xbib.elasticsearch:log4j",
+      "version": "6.3.2.2",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "log4j-custom-exact",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "uk.co.nichesolutions.logging.log4j:log4j-core",
+      "version": "2.6.3-CUSTOM",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "expected_fix_version": null,
+      "expected_fix_status": "unknown"
+    },
+    {
+      "id": "log4j-before-introduction",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.0-beta8",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "log4j-beta-introduction",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.0-beta9",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "expected_fix_version": "2.3.1",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "log4j-old-branch",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.3.0",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "expected_fix_version": "2.3.1",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "log4j-in-safe-gap",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.3.2",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "log4j-middle-branch",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.12.1",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "expected_fix_version": "2.12.2",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "log4j-middle-branch-fixed",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.12.2",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "log4j-release-alias",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.15.0.Final",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "log4j-fixed-rc",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.apache.logging.log4j:log4j-core",
+      "version": "2.15.0-rc1",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "expected_fix_version": "2.15.0",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "log4j-enumerated-equivalent",
+      "advisory": "GHSA-jfh8-c2jp-5v3q",
+      "ecosystem": "Maven",
+      "package": "org.xbib.elasticsearch:log4j",
+      "version": "6.3.2.1.0",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2021-44228"
+      ],
+      "expected_fix_version": null,
+      "expected_fix_status": "unknown"
+    },
+    {
+      "id": "x-net-v0.16.0",
+      "advisory": "GHSA-4374-p667-p6c8",
+      "ecosystem": "Go",
+      "package": "golang.org/x/net",
+      "version": "v0.16.0",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2023-39325"
+      ],
+      "expected_fix_version": "0.17.0",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "x-net-v0.17.0",
+      "advisory": "GHSA-4374-p667-p6c8",
+      "ecosystem": "Go",
+      "package": "golang.org/x/net",
+      "version": "v0.17.0",
+      "known_affected": false,
+      "expected_status": "not-matched-in-supplied-records",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    },
+    {
+      "id": "x-net-fixed-prerelease-probe",
+      "advisory": "GHSA-4374-p667-p6c8",
+      "ecosystem": "Go",
+      "package": "golang.org/x/net",
+      "version": "v0.17.0-rc.1",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2023-39325"
+      ],
+      "expected_fix_version": "0.17.0",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "x-net-pseudo-version-probe",
+      "advisory": "GHSA-4374-p667-p6c8",
+      "ecosystem": "Go",
+      "package": "golang.org/x/net",
+      "version": "v0.16.1-0.20231010120000-0123456789ab",
+      "known_affected": true,
+      "expected_status": "matched",
+      "expected_cve_ids": [
+        "CVE-2023-39325"
+      ],
+      "expected_fix_version": "0.17.0",
+      "expected_fix_status": "candidate"
+    },
+    {
+      "id": "x-net-private-homonym",
+      "advisory": "GHSA-4374-p667-p6c8",
+      "ecosystem": "Go",
+      "package": "golang.org/x/net",
+      "version": "v0.16.0",
+      "known_affected": null,
+      "expected_status": "unknown",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null,
+      "origin": {
+        "public": false
+      }
+    },
+    {
+      "id": "x-net-invalid-version",
+      "advisory": "GHSA-4374-p667-p6c8",
+      "ecosystem": "Go",
+      "package": "golang.org/x/net",
+      "version": "v0.16",
+      "known_affected": null,
+      "expected_status": "unknown",
+      "expected_cve_ids": [],
+      "expected_fix_version": null,
+      "expected_fix_status": null
+    }
+  ],
+  "maven_ordering": {
+    "profile": "Apache Maven ComparableVersion 3.10.0, bounded ASCII artifact versions; no Resolver or Gradle selection semantics",
+    "source_commit": "c43a36b8d67be7e0805a411bc0898af1a51f5472",
+    "test_source_sha256": "6e180a9c3107261e5e2686c216d6b6bf4a0c8f456902010c504cfb81bcd631ae",
+    "source": "https://github.com/apache/maven/blob/c43a36b8d67be7e0805a411bc0898af1a51f5472/maven-artifact/src/test/java/org/apache/maven/artifact/versioning/ComparableVersionTest.java",
+    "license": "Apache-2.0",
+    "notice": "Apache Maven, Copyright 2001-2019 The Apache Software Foundation; see root NOTICE and LICENSE",
+    "annotation_method": "Ordering/equality assertions transcribed from the pinned official Java tests, including literal calls, ordered arrays, generated leading zero arrays and qualifier substitutions. No depcheck output is used as truth.",
+    "ordered_sequences": [
+      [
+        "1-alpha2snapshot",
+        "1-alpha2",
+        "1-alpha-123",
+        "1-beta-2",
+        "1-beta123",
+        "1-m2",
+        "1-m11",
+        "1-rc",
+        "1-cr2",
+        "1-rc123",
+        "1-SNAPSHOT",
+        "1",
+        "1-sp",
+        "1-sp2",
+        "1-sp123",
+        "1-abc",
+        "1-def",
+        "1-pom-1",
+        "1-1-snapshot",
+        "1-1",
+        "1-2",
+        "1-123"
+      ],
+      [
+        "2.0",
+        "2.0.a",
+        "2-1",
+        "2.0.2",
+        "2.0.123",
+        "2.1.0",
+        "2.1-a",
+        "2.1b",
+        "2.1-c",
+        "2.1-1",
+        "2.1.0.1",
+        "2.2",
+        "2.123",
+        "11.a2",
+        "11.a11",
+        "11.b2",
+        "11.b11",
+        "11.m2",
+        "11.m11",
+        "11",
+        "11.a",
+        "11b",
+        "11c",
+        "11m"
+      ],
+      [
+        "6.1.0rc3",
+        "6.1.0",
+        "6.1H.5-beta"
+      ],
+      [
+        "20190126.230843",
+        "1234567890.12345",
+        "123456789012345.1H.5-beta",
+        "12345678901234567890.1H.5-beta"
+      ],
+      [
+        "1-0.alpha",
+        "1-0.beta",
+        "1"
+      ]
+    ],
+    "equivalent_groups": [
+      [
+        "0",
+        "00",
+        "000",
+        "0000",
+        "00000",
+        "000000",
+        "0000000",
+        "00000000",
+        "000000000",
+        "0000000000",
+        "00000000000",
+        "000000000000",
+        "0000000000000",
+        "00000000000000",
+        "000000000000000",
+        "0000000000000000",
+        "00000000000000000",
+        "000000000000000000",
+        "0000000000000000000"
+      ],
+      [
+        "1",
+        "01",
+        "001",
+        "0001",
+        "00001",
+        "000001",
+        "0000001",
+        "00000001",
+        "000000001",
+        "0000000001",
+        "00000000001",
+        "000000000001",
+        "0000000000001",
+        "00000000000001",
+        "000000000000001",
+        "0000000000000001",
+        "00000000000000001",
+        "000000000000000001",
+        "0000000000000000001"
+      ]
+    ],
+    "equal_pairs": [
+      [
+        "1",
+        "1"
+      ],
+      [
+        "1",
+        "1.0"
+      ],
+      [
+        "1",
+        "1.0.0"
+      ],
+      [
+        "1.0",
+        "1.0.0"
+      ],
+      [
+        "1",
+        "1-0"
+      ],
+      [
+        "1",
+        "1.0-0"
+      ],
+      [
+        "1.0",
+        "1.0-0"
+      ],
+      [
+        "1a",
+        "1-a"
+      ],
+      [
+        "1a",
+        "1.0-a"
+      ],
+      [
+        "1a",
+        "1.0.0-a"
+      ],
+      [
+        "1.0a",
+        "1-a"
+      ],
+      [
+        "1.0.0a",
+        "1-a"
+      ],
+      [
+        "1x",
+        "1-x"
+      ],
+      [
+        "1x",
+        "1.0-x"
+      ],
+      [
+        "1x",
+        "1.0.0-x"
+      ],
+      [
+        "1.0x",
+        "1-x"
+      ],
+      [
+        "1.0.0x",
+        "1-x"
+      ],
+      [
+        "1ga",
+        "1"
+      ],
+      [
+        "1release",
+        "1"
+      ],
+      [
+        "1final",
+        "1"
+      ],
+      [
+        "1cr",
+        "1rc"
+      ],
+      [
+        "1a1",
+        "1-alpha-1"
+      ],
+      [
+        "1b2",
+        "1-beta-2"
+      ],
+      [
+        "1m3",
+        "1-milestone-3"
+      ],
+      [
+        "1X",
+        "1x"
+      ],
+      [
+        "1A",
+        "1a"
+      ],
+      [
+        "1B",
+        "1b"
+      ],
+      [
+        "1M",
+        "1m"
+      ],
+      [
+        "1Ga",
+        "1"
+      ],
+      [
+        "1GA",
+        "1"
+      ],
+      [
+        "1RELEASE",
+        "1"
+      ],
+      [
+        "1release",
+        "1"
+      ],
+      [
+        "1RELeaSE",
+        "1"
+      ],
+      [
+        "1Final",
+        "1"
+      ],
+      [
+        "1FinaL",
+        "1"
+      ],
+      [
+        "1FINAL",
+        "1"
+      ],
+      [
+        "1Cr",
+        "1Rc"
+      ],
+      [
+        "1cR",
+        "1rC"
+      ],
+      [
+        "1m3",
+        "1Milestone3"
+      ],
+      [
+        "1m3",
+        "1MileStone3"
+      ],
+      [
+        "1m3",
+        "1MILESTONE3"
+      ],
+      [
+        "1-abcdefghijklmnopqrstuvwxyz",
+        "1-ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      ],
+      [
+        "2-abc",
+        "2.0.abc"
+      ],
+      [
+        "2-abc",
+        "2.0.0.abc"
+      ],
+      [
+        "2.0.abc",
+        "2.0.0.abc"
+      ],
+      [
+        "2-alpha",
+        "2.0.alpha"
+      ],
+      [
+        "2-alpha",
+        "2.0.0.alpha"
+      ],
+      [
+        "2.0.alpha",
+        "2.0.0.alpha"
+      ],
+      [
+        "2-a",
+        "2.0.a"
+      ],
+      [
+        "2-a",
+        "2.0.0.a"
+      ],
+      [
+        "2.0.a",
+        "2.0.0.a"
+      ],
+      [
+        "2-beta",
+        "2.0.beta"
+      ],
+      [
+        "2-beta",
+        "2.0.0.beta"
+      ],
+      [
+        "2.0.beta",
+        "2.0.0.beta"
+      ],
+      [
+        "2-b",
+        "2.0.b"
+      ],
+      [
+        "2-b",
+        "2.0.0.b"
+      ],
+      [
+        "2.0.b",
+        "2.0.0.b"
+      ],
+      [
+        "2-def",
+        "2.0.def"
+      ],
+      [
+        "2-def",
+        "2.0.0.def"
+      ],
+      [
+        "2.0.def",
+        "2.0.0.def"
+      ],
+      [
+        "2-milestone",
+        "2.0.milestone"
+      ],
+      [
+        "2-milestone",
+        "2.0.0.milestone"
+      ],
+      [
+        "2.0.milestone",
+        "2.0.0.milestone"
+      ],
+      [
+        "2-m",
+        "2.0.m"
+      ],
+      [
+        "2-m",
+        "2.0.0.m"
+      ],
+      [
+        "2.0.m",
+        "2.0.0.m"
+      ],
+      [
+        "2-RC",
+        "2.0.RC"
+      ],
+      [
+        "2-RC",
+        "2.0.0.RC"
+      ],
+      [
+        "2.0.RC",
+        "2.0.0.RC"
+      ],
+      [
+        "1-abcdefghijklmnopqrstuvwxyz",
+        "1-ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      ]
+    ],
+    "ordered_pairs": [
+      [
+        "1",
+        "2"
+      ],
+      [
+        "1.5",
+        "2"
+      ],
+      [
+        "1",
+        "2.5"
+      ],
+      [
+        "1.0",
+        "1.1"
+      ],
+      [
+        "1.1",
+        "1.2"
+      ],
+      [
+        "1.0.0",
+        "1.1"
+      ],
+      [
+        "1.0.1",
+        "1.1"
+      ],
+      [
+        "1.1",
+        "1.2.0"
+      ],
+      [
+        "1.0-alpha-1",
+        "1.0"
+      ],
+      [
+        "1.0-alpha-1",
+        "1.0-alpha-2"
+      ],
+      [
+        "1.0-alpha-1",
+        "1.0-beta-1"
+      ],
+      [
+        "1.0-beta-1",
+        "1.0-SNAPSHOT"
+      ],
+      [
+        "1.0-SNAPSHOT",
+        "1.0"
+      ],
+      [
+        "1.0-alpha-1-SNAPSHOT",
+        "1.0-alpha-1"
+      ],
+      [
+        "1.0",
+        "1.0-1"
+      ],
+      [
+        "1.0-1",
+        "1.0-2"
+      ],
+      [
+        "1.0.0",
+        "1.0-1"
+      ],
+      [
+        "2.0-1",
+        "2.0.1"
+      ],
+      [
+        "2.0.1-klm",
+        "2.0.1-lmn"
+      ],
+      [
+        "2.0.1",
+        "2.0.1-xyz"
+      ],
+      [
+        "2.0.1",
+        "2.0.1-123"
+      ],
+      [
+        "2.0.1-xyz",
+        "2.0.1-123"
+      ],
+      [
+        "1.0.0.abc1",
+        "1.0.0-abc2"
+      ],
+      [
+        "1.0.0.alpha1",
+        "1.0.0-alpha2"
+      ],
+      [
+        "1.0.0.a1",
+        "1.0.0-a2"
+      ],
+      [
+        "1.0.0.beta1",
+        "1.0.0-beta2"
+      ],
+      [
+        "1.0.0.b1",
+        "1.0.0-b2"
+      ],
+      [
+        "1.0.0.def1",
+        "1.0.0-def2"
+      ],
+      [
+        "1.0.0.milestone1",
+        "1.0.0-milestone2"
+      ],
+      [
+        "1.0.0.m1",
+        "1.0.0-m2"
+      ],
+      [
+        "1.0.0.RC1",
+        "1.0.0-RC2"
+      ]
+    ]
+  },
+  "severity_annotation_method": "Manual transcription of the five pinned upstream top-level severity arrays and their /severity location; opaque provider assertions, no CVSS computation. Constructed package/version/conflict scopes are tested separately, not represented as observed upstream records.",
+  "advisory_severity": {
+    "GHSA-35jh-r3h4-6jhm": {
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H"
+        }
+      ],
+      "severity_status": "reported",
+      "assertion_fields": [
+        "/severity"
+      ]
+    },
+    "GHSA-9wx4-h78v-vm56": {
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:H/I:H/A:N"
+        }
+      ],
+      "severity_status": "reported",
+      "assertion_fields": [
+        "/severity"
+      ]
+    },
+    "GHSA-jfh8-c2jp-5v3q": {
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H/E:H"
+        }
+      ],
+      "severity_status": "reported",
+      "assertion_fields": [
+        "/severity"
+      ]
+    },
+    "GHSA-mm7v-vpv8-xfc3": {
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+        }
+      ],
+      "severity_status": "reported",
+      "assertion_fields": [
+        "/severity"
+      ]
+    },
+    "GHSA-4374-p667-p6c8": {
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+        }
+      ],
+      "severity_status": "reported",
+      "assertion_fields": [
+        "/severity"
+      ]
+    }
+  }
+}

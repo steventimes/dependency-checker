@@ -1,0 +1,28 @@
+[package]
+name = "ambient_asset_timeline"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ambient_sys = { path = "../sys" }
+ambient_ecs = { path = "../ecs" }
+ambient_native_std = { path = "../native_std" }
+ambient_ui_native = { path = "../ui_native" }
+ambient_core = { path = "../core" }
+ambient_element = { path = "../../shared_crates/element" }
+ambient_renderer = { path = "../renderer" }
+itertools = { workspace = true }
+chrono = { workspace = true }
+glam = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+ambient_app = { path = "../app" }
+ambient_cameras = { path = "../cameras" }
+ambient_model = { path = "../model" }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }

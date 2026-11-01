@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from depcheck.profiling import measured
-
 import json
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+import depcheck.filesystem as bounded_io
+from depcheck.evidence.input import evidence_json_decoder
 from depcheck.model import SourceLocation
-from depcheck import bounded_io
+from depcheck.profiling import measured
 
 DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
     {
@@ -140,7 +140,7 @@ def read_json(
 @measured("parsing.json")
 def parse_json(text: str, path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(text)
+        value = evidence_json_decoder(unique_keys=False).decode(text)
     except json.JSONDecodeError as exc:
         raise StaticReadError(
             f"invalid JSON in {path}: {exc}",
@@ -150,6 +150,8 @@ def parse_json(text: str, path: Path) -> dict[str, Any]:
         raise StaticReadError(
             f"JSON nesting exceeds the parser limit in {path}"
         ) from exc
+    except ValueError as exc:
+        raise StaticReadError(f"invalid JSON in {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise StaticReadError(f"JSON root in {path} must be an object")
     return value

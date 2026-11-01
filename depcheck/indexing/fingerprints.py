@@ -8,25 +8,21 @@ import os
 from dataclasses import asdict
 from pathlib import Path
 
-from depcheck.bounded_io import ReadLimitError, read_bytes
 from depcheck.config import DepcheckConfig, load_project_config
-from depcheck.ecosystems.commands import discover_command_files
+from depcheck.ecosystems.configuration.commands import discover_command_files
+from depcheck.ecosystems.configuration.tools import discover_tool_config_files
 from depcheck.ecosystems.coverage import uncovered_manifest_files
-from depcheck.ecosystems.python_manifest import (
+from depcheck.ecosystems.python.manifest import (
     IGNORED_DIRECTORIES as PYTHON_IGNORED_DIRECTORIES,
 )
-from depcheck.ecosystems.python_manifest import (
-    is_requirements_file,
-    parser_map,
-)
+from depcheck.ecosystems.python.manifest import is_requirements_file, parser_map
 from depcheck.ecosystems.static import (
     DEFAULT_EXCLUDED_DIRECTORIES,
     discover_files,
     is_excluded,
 )
-from depcheck.ecosystems.tool_configs import discover_tool_config_files
+from depcheck.filesystem import ReadLimitError, read_bytes, require_within_project
 from depcheck.model import ANALYSIS_REVISION, EvidenceBundle
-from depcheck.path_policy import require_within_project
 from depcheck.profiling import measured
 
 _ECOSYSTEM_MANIFEST_NAMES = frozenset(

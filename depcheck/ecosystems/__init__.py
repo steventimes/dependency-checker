@@ -2,8 +2,9 @@
 
 from collections.abc import Mapping
 
-from depcheck.ecosystems.base import (
+from depcheck.ecosystems.registry import (
     EcosystemPack,
+    EcosystemRegistry,
     EvidenceCollector,
     ManifestProvider,
     ProjectDetector,
@@ -23,21 +24,20 @@ from depcheck.model import (
     UsageEvidence,
     VersionConstraint,
 )
-from depcheck.ecosystems.registry import EcosystemRegistry
 
 
 def create_default_registry(
     import_mapping: Mapping[str, str] | None = None,
 ) -> EcosystemRegistry:
     """Create a fresh registry containing all built-in packs."""
-    from depcheck.ecosystems.cargo import create_cargo_pack
-    from depcheck.ecosystems.bazel import create_bazel_pack
-    from depcheck.ecosystems.cmake import create_cmake_pack
-    from depcheck.ecosystems.javascript import create_npm_pack
+    from depcheck.ecosystems.cpp.bazel import create_bazel_pack
+    from depcheck.ecosystems.cpp.cmake import create_cmake_pack
+    from depcheck.ecosystems.cpp.collector import create_conan_pack, create_vcpkg_pack
     from depcheck.ecosystems.go import create_go_pack
-    from depcheck.ecosystems.java import create_maven_pack
-    from depcheck.ecosystems.cpp import create_conan_pack, create_vcpkg_pack
-    from depcheck.ecosystems.python import create_python_pack
+    from depcheck.ecosystems.java.collector import create_maven_pack
+    from depcheck.ecosystems.javascript.collector import create_npm_pack
+    from depcheck.ecosystems.python.collector import create_python_pack
+    from depcheck.ecosystems.rust.collector import create_cargo_pack
 
     registry = EcosystemRegistry()
     registry.register(create_python_pack(import_mapping))

@@ -1,0 +1,109 @@
+{
+  "schema_version": "1.4.0",
+  "id": "GHSA-9hjg-9r4m-mvj7",
+  "modified": "2026-10-19T19:50:58Z",
+  "published": "2025-06-09T19:06:08Z",
+  "aliases": [
+    "CVE-2024-47081"
+  ],
+  "summary": "Requests vulnerable to .netrc credentials leak via malicious URLs",
+  "details": "### Impact\n\nDue to a URL parsing issue, Requests releases prior to 2.32.4 may leak .netrc credentials to third parties for specific maliciously-crafted URLs.\n\n### Workarounds\nFor older versions of Requests, use of the .netrc file can be disabled with `trust_env=False` on your Requests Session ([docs](https://requests.readthedocs.io/en/latest/api/#requests.Session.trust_env)).\n\n### References\nhttps://github.com/psf/requests/pull/6965\nhttps://seclists.org/fulldisclosure/2025/Jun/2",
+  "severity": [
+    {
+      "type": "CVSS_V3",
+      "score": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N"
+    }
+  ],
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "requests"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "2.32.4"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "references": [
+    {
+      "type": "WEB",
+      "url": "https://github.com/psf/requests/security/advisories/GHSA-9hjg-9r4m-mvj7"
+    },
+    {
+      "type": "ADVISORY",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-47081"
+    },
+    {
+      "type": "WEB",
+      "url": "https://github.com/psf/requests/pull/6965"
+    },
+    {
+      "type": "WEB",
+      "url": "https://github.com/psf/requests/commit/96ba401c1296ab1dda74a2365ef36d88f7d144ef"
+    },
+    {
+      "type": "ADVISORY",
+      "url": "https://github.com/advisories/GHSA-9hjg-9r4m-mvj7"
+    },
+    {
+      "type": "PACKAGE",
+      "url": "https://github.com/psf/requests"
+    },
+    {
+      "type": "WEB",
+      "url": "https://github.com/psf/requests/releases/tag/v2.32.4"
+    },
+    {
+      "type": "WEB",
+      "url": "https://github.com/pypa/advisory-database/tree/main/vulns/requests/PYSEC-2026-1872.yaml"
+    },
+    {
+      "type": "WEB",
+      "url": "https://pypi.org/project/requests"
+    },
+    {
+      "type": "WEB",
+      "url": "https://requests.readthedocs.io/en/latest/api/#requests.Session.trust_env"
+    },
+    {
+      "type": "WEB",
+      "url": "https://seclists.org/fulldisclosure/2025/Jun/2"
+    },
+    {
+      "type": "WEB",
+      "url": "http://www.openwall.com/lists/oss-security/2025/06/03/11"
+    },
+    {
+      "type": "WEB",
+      "url": "http://www.openwall.com/lists/oss-security/2025/06/03/9"
+    },
+    {
+      "type": "WEB",
+      "url": "http://www.openwall.com/lists/oss-security/2025/06/04/1"
+    },
+    {
+      "type": "WEB",
+      "url": "http://www.openwall.com/lists/oss-security/2025/06/04/6"
+    }
+  ],
+  "database_specific": {
+    "cwe_ids": [
+      "CWE-522"
+    ],
+    "severity": "MODERATE",
+    "github_reviewed": true,
+    "github_reviewed_at": "2025-06-09T19:06:08Z",
+    "nvd_published_at": "2025-06-09T18:15:24Z"
+  }
+}

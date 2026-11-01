@@ -1,4 +1,18 @@
 recursive-include test/fixtures *.yaml *.txt *.json
+graft test/fixtures/projects/multilingual
+graft test/fixtures/projects/pipenv
+graft test/fixtures/projects/pylock-pip
+graft test/fixtures/projects/setup-keywords
+graft test/fixtures/security/rubygems
 include REFERENCES.md
+include .github/readme/banner.svg
 include test/conftest.py
 prune .tmp
+
+include SECURITY.md CONTRIBUTING.md
+include NOTICE
+include AGENTS.md CHANGELOG.md uv.lock plugin.json mcp.json .mcp.json .codex-plugin/plugin.json
+include .codex/guidance/readme.md .codex/guidance/actions.md
+recursive-include scripts *.py
+recursive-include skills *
+global-exclude *.pyc *.pyo

@@ -12,7 +12,9 @@ from urllib.parse import quote
 import requests  # type: ignore[import-untyped]
 
 from depcheck._version import USER_AGENT
+from depcheck.evidence.input import parse_evidence_json
 from depcheck.model import Diagnostic
+from depcheck.profiling import count_work, measured
 
 from .advisories import (
     advisory_timestamp as _timestamp,
@@ -27,6 +29,10 @@ from .advisories import (
 from .advisories import (
     match_affected_version as match_affected_version,
 )
+
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_SCAN_RESPONSE_BYTES = 64 * 1024 * 1024
+MAX_ADVISORY_RECORDS = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,20 +71,30 @@ class OSVClient:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.session = session or requests.Session()
+        if session is None:
+            self.session.trust_env = False
         self.timeout_s = timeout_s
         self.max_attempts = max(1, max_attempts)
         self.batch_size = max(1, batch_size)
         self.sleep = sleep
         self._detail_cache: dict[str, dict[str, Any]] = {}
+        self._remaining_requests = 4096
+        self._remaining_bytes = MAX_SCAN_RESPONSE_BYTES
+        self._deadline = time.monotonic() + 60
 
     def scan(self, packages: Mapping[str, str]) -> OSVScanResult:
         return self.scan_ecosystem(packages, "PyPI")
 
+    @measured("security.osv-scan")
     def scan_ecosystem(
         self,
         packages: Mapping[str, str],
         ecosystem: str,
     ) -> OSVScanResult:
+        count_work("osv.work", scan_calls=1, input_coordinates=len(packages))
+        self._remaining_requests = 4096
+        self._remaining_bytes = MAX_SCAN_RESPONSE_BYTES
+        self._deadline = time.monotonic() + 60
         queried: dict[str, str] = {}
         for package, version in packages.items():
             normalized = self._normalize_package(str(package), ecosystem)
@@ -89,6 +105,9 @@ class OSVClient:
             return OSVScanResult({}, (), queried)
 
         ids_by_package: dict[str, list[str]] = {package: [] for package in queried}
+        seen_ids: dict[str, set[str]] = {package: set() for package in queried}
+        records_remaining = MAX_ADVISORY_RECORDS
+        interpretation_exhausted = False
         pending = [
             (
                 package,
@@ -115,6 +134,7 @@ class OSVClient:
             for offset in range(0, len(pending), self.batch_size):
                 chunk = pending[offset : offset + self.batch_size]
                 payload = {"queries": [query for _, query in chunk]}
+                count_work("osv.work", batch_calls=1, batch_coordinates=len(chunk))
                 data, diagnostic = self._request_json(
                     "post", self.QUERY_BATCH_URL, payload
                 )
@@ -150,6 +170,17 @@ class OSVClient:
                         )
                         continue
                     for item in vulns:
+                        records_remaining -= 1
+                        if records_remaining < 0 or time.monotonic() > self._deadline:
+                            diagnostics.append(
+                                Diagnostic(
+                                    code="osv.interpretation-budget",
+                                    severity="error",
+                                    message="OSV advisory record or interpretation deadline budget exhausted; coverage is incomplete",
+                                )
+                            )
+                            interpretation_exhausted = True
+                            break
                         if (
                             not isinstance(item, dict)
                             or not isinstance(item.get("id"), str)
@@ -162,7 +193,8 @@ class OSVClient:
                             )
                             continue
                         vuln_id = item["id"]
-                        if vuln_id not in ids_by_package[package]:
+                        if vuln_id not in seen_ids[package]:
+                            seen_ids[package].add(vuln_id)
                             ids_by_package[package].append(vuln_id)
                         revision = None
                         if "modified" in item:
@@ -178,18 +210,27 @@ class OSVClient:
                             revisions[vuln_id] = max(
                                 revisions.get(vuln_id, revision), revision
                             )
+                    if interpretation_exhausted:
+                        break
                     token = result.get("next_page_token")
                     if token:
-                        if not isinstance(token, str) or token in seen_tokens[package]:
+                        if (
+                            not isinstance(token, str)
+                            or token in seen_tokens[package]
+                            or len(seen_tokens[package]) >= 64
+                        ):
                             diagnostics.append(
                                 self._invalid_result(
-                                    package, "invalid or repeated pagination token"
+                                    package,
+                                    "invalid, repeated or excessive pagination token",
                                 )
                             )
                             continue
                         seen_tokens[package].add(token)
                         next_page.append((package, {**query, "page_token": token}))
-            pending = next_page
+                if interpretation_exhausted:
+                    break
+            pending = [] if interpretation_exhausted else next_page
 
         vulnerabilities: dict[str, list[dict[str, Any]]] = {}
         # Share one observation across packages in this batch, even when no
@@ -213,6 +254,8 @@ class OSVClient:
                             "id": vuln_id,
                             "summary": "Vulnerability details unavailable",
                             "severity": [],
+                            "severity_status": "incomplete",
+                            "severity_assertions": [],
                             "aliases": [],
                             "fix_version": None,
                             "fix_versions": [],
@@ -269,6 +312,7 @@ class OSVClient:
             and "modified" in cached
         ):
             if _timestamp(cached["modified"]) >= revision:
+                count_work("osv.work", detail_cache_hits=1)
                 return cached, None
         # A new/unknown revision must not fall back to old metadata after a
         # failed refresh, including on a later call with an older batch result.
@@ -331,27 +375,48 @@ class OSVClient:
         last_error: Exception | None = None
         for attempt in range(self.max_attempts):
             try:
+                self._remaining_requests -= 1
+                if self._remaining_requests < 0 or time.monotonic() > self._deadline:
+                    raise ValueError("OSV scan request or deadline budget exhausted")
+                count_work("osv.work", request_attempts=1)
                 if method == "post":
                     response = self.session.post(
                         url,
                         json=dict(payload or {}),
                         timeout=self.timeout_s,
                         headers=self.DEFAULT_HEADERS,
+                        stream=True,
+                        allow_redirects=False,
                     )
                 else:
                     response = self.session.get(
                         url,
                         timeout=self.timeout_s,
                         headers=self.DEFAULT_HEADERS,
+                        stream=True,
+                        allow_redirects=False,
                     )
-                response.raise_for_status()
-                data = response.json()
-                if not isinstance(data, dict):
-                    return None, Diagnostic(
-                        code="osv.invalid-response",
-                        severity="error",
-                        message="OSV 响应不是 JSON 对象",
-                    )
+                try:
+                    response.raise_for_status()
+                    if 300 <= response.status_code < 400:
+                        raise ValueError("OSV redirects are not followed")
+                    chunks = bytearray()
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        count_work("osv.work", response_bytes=len(chunk))
+                        self._remaining_bytes -= len(chunk)
+                        if (
+                            self._remaining_bytes < 0
+                            or time.monotonic() > self._deadline
+                        ):
+                            raise ValueError(
+                                "OSV scan response or deadline budget exhausted"
+                            )
+                        if len(chunks) + len(chunk) > MAX_RESPONSE_BYTES:
+                            raise ValueError("OSV response exceeds 8 MiB")
+                        chunks.extend(chunk)
+                    data = parse_evidence_json(bytes(chunks))
+                finally:
+                    response.close()
                 return data, None
             except (requests.RequestException, OSError) as exc:
                 last_error = exc

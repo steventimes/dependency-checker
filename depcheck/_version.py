@@ -1,3 +1,3 @@
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
-USER_AGENT = f"depcheck/{__version__} (+https://pypi.org/project/depcheck/)"
+USER_AGENT = f"depcheck/{__version__} (+https://github.com/steventimes/dependency-checker)"

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from depcheck.bounded_io import DEFAULT_MAX_BYTES, repository_operation
-
 import base64
 import binascii
 import re
@@ -10,24 +8,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-from depcheck.model import Diagnostic, SourceLocation
-from depcheck.ecosystems.base import EcosystemPack, ProviderContext
-from depcheck.model import (
-    Capability,
-    CapabilityState,
-    DependencyDeclaration,
-    EvidenceBundle,
-    MappingConfidence,
-    PackageRef,
-    ProjectUnit,
-    UsageEvidence,
-    VersionConstraint,
-)
+from depcheck.ecosystems.registry import EcosystemPack, ProviderContext
 from depcheck.ecosystems.static import (
     StaticReadError,
     discover_files,
     exclusions_for,
     read_text,
+)
+from depcheck.filesystem import DEFAULT_MAX_BYTES, repository_operation
+from depcheck.model import (
+    Capability,
+    CapabilityState,
+    DependencyDeclaration,
+    Diagnostic,
+    EvidenceBundle,
+    MappingConfidence,
+    PackageRef,
+    ProjectUnit,
+    SourceLocation,
+    UsageEvidence,
+    VersionConstraint,
 )
 
 _IMPORT_SINGLE = re.compile(r'^\s*import\s+(?:[._A-Za-z][\w]*\s+)?"([^"]+)"')

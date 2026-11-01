@@ -1,0 +1,47 @@
+[package]
+name = "ambient_audio"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+description = "Ambient audio implementation. Host-only."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ambient_sys = { path = "../sys", version = "0.3.2-dev" }
+flume = { workspace = true }
+derive_more = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+slotmap = { workspace = true }
+rand = { workspace = true }
+glam = { workspace = true }
+itertools = { workspace = true }
+tracing = { workspace = true }
+ordered-float = { workspace = true }
+dashmap = { workspace = true }
+derivative = { workspace = true }
+
+ambient_ui_native = { path = "../ui_native" , version = "0.3.2-dev" }
+cpal = "0.14.2"
+lewton = "0.10.2"
+hound = "3.5.0"
+ambient_native_std = { path = "../native_std" , version = "0.3.2-dev" }
+serde = { workspace = true, features = ["derive"] }
+
+circular-queue = "0.2"
+num = "0.4"
+byteorder = "1.4"
+rayon = "1.8"
+rustfft = { version = "6.1.0" }
+
+[dev-dependencies]
+color-eyre = "0.6.2"
+pretty_assertions = "1.4"
+macroquad = { version = "=0.3.24", default-features = false, features = [] }
+lyon = "1.0"
+approx = "0.5"

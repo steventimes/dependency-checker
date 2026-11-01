@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
 import json
-from pathlib import Path
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
 
 
 def main() -> int:

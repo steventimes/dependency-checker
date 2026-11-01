@@ -1,17 +1,20 @@
+"""Release metadata access shared by the bounded resolver and its facade."""
+
 from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
 from urllib.parse import quote
 
 import requests  # type: ignore[import-untyped]
-from packaging.utils import canonicalize_name
+from packaging.utils import NormalizedName, canonicalize_name
 
 from depcheck._version import USER_AGENT
-from depcheck.evidence_input import parse_evidence_json
+from depcheck.compatibility.models import append_diagnostic
+from depcheck.evidence.input import parse_evidence_json
 from depcheck.model import Diagnostic
 
 logger = logging.getLogger(__name__)
@@ -147,3 +150,59 @@ class PyPIClient:
                 f"https://pypi.org/pypi/{package_part}/{quote(version, safe='')}/json"
             )
         return f"https://pypi.org/pypi/{package_part}/json"
+
+
+class ReleaseMetadata:
+    def __init__(self, client: PyPIClient) -> None:
+        self.client = client
+
+    def info(
+        self,
+        package: NormalizedName,
+        version: str,
+        diagnostics: list[Diagnostic],
+    ) -> Mapping[str, Any] | None:
+        result = self.client.fetch_metadata(str(package), version)
+        if result.diagnostic is not None:
+            append_diagnostic(diagnostics, result.diagnostic)
+            return None
+        data = result.data or {}
+        info = data.get("info")
+        if not isinstance(info, dict):
+            append_diagnostic(
+                diagnostics,
+                Diagnostic(
+                    code="pypi.invalid-response",
+                    severity="error",
+                    message=f"PyPI 元数据缺少 info 对象：{package}=={version}",
+                ),
+            )
+            return None
+        return info
+
+    def versions(
+        self,
+        package: str,
+    ) -> tuple[list[str], Diagnostic | None]:
+        result = self.client.fetch_metadata(package)
+        if result.diagnostic is not None:
+            return [], result.diagnostic
+        data = result.data or {}
+        releases = data.get("releases")
+        if not isinstance(releases, dict):
+            return [], Diagnostic(
+                code="pypi.invalid-response",
+                severity="error",
+                message=f"PyPI releases 不是对象：{package}",
+            )
+
+        versions: list[str] = []
+        for raw, files in releases.items():
+            if not isinstance(files, list) or not files:
+                continue
+            if any(
+                isinstance(file_data, dict) and not file_data.get("yanked", False)
+                for file_data in files
+            ):
+                versions.append(str(raw))
+        return versions, None

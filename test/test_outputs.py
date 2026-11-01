@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from conftest import JsonResponse
 
 from depcheck.agent import DependencyAgentService
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
@@ -32,6 +33,83 @@ from depcheck.output import (
     render_text,
 )
 from depcheck.security.osv_client import OSVClient, OSVScanResult
+
+
+def test_rubygems_advisory_offline_sbom_retains_instances_sources_and_pagination(
+    tmp_path,
+):
+    fixture = Path(__file__).parent / "fixtures/security/GHSA-35jh-r3h4-6jhm.json"
+    (tmp_path / "advisory.json").write_bytes(fixture.read_bytes())
+    components = [
+        {
+            "type": "library",
+            "bom-ref": key,
+            "name": "lodash-rails",
+            "purl": purl,
+            "properties": properties,
+        }
+        for key, purl, properties in [
+            ("affected", "pkg:gem/lodash-rails@4.17.20", []),
+            ("same-native-version", "pkg:gem/lodash-rails@4.17.20.0", []),
+            ("fixed", "pkg:gem/lodash-rails@4.17.21", []),
+            (
+                "private",
+                "pkg:gem/lodash-rails@4.17.20",
+                [
+                    {
+                        "name": "depcheck:source:origin",
+                        "value": '{"public":false,"kind":"registry"}',
+                    }
+                ],
+            ),
+            ("platform", "pkg:gem/lodash-rails@4.17.20?platform=java", []),
+            ("unsupported", "pkg:gem/lodash-rails@4.17.20+metadata", []),
+        ]
+    ]
+    (tmp_path / "bom.json").write_text(
+        json.dumps(
+            {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
+        )
+    )
+    originals = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.iterdir()}
+    service = DependencyAgentService(tmp_path)
+    rows = []
+    for offset in range(0, len(components), 2):
+        page = service.reevaluate_vulnerabilities(
+            "bom.json", "advisory.json", offset=offset, limit=2
+        )
+        rows.extend(page["observations"])
+        assert page["next_offset"] == (offset + 2 if offset < 4 else None)
+    assert [r["status"] for r in rows] == [
+        "matched",
+        "matched",
+        "not-matched-in-supplied-records",
+        "unknown",
+        "unknown",
+        "unknown",
+    ]
+    assert all(r["identity"]["ecosystem"] == "RubyGems" for r in rows)
+    for row in rows[:2]:
+        (issue,) = row["vulnerabilities"]
+        assert issue["cve_ids"] == ["CVE-2021-23337"]
+        assert (
+            issue["fix_version"] == "4.17.21"
+            and issue["fix_version_status"] == "candidate"
+        )
+        assert row["identity"]["package"] == "lodash-rails"
+    assert all(
+        (p.read_bytes(), p.stat().st_mtime_ns) == value
+        for p, value in originals.items()
+    )
+    assert not (tmp_path / ".depcheck").exists()
+    components[0]["purl"] = "pkg:gem/namespace/lodash-rails@4.17.20"
+    (tmp_path / "bom.json").write_text(
+        json.dumps(
+            {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
+        )
+    )
+    with pytest.raises(ValueError, match="Malformed SBOM"):
+        service.inspect_dependency_sbom("bom.json")
 
 
 def sample_result() -> ScanResult:
@@ -110,6 +188,293 @@ def sample_result() -> ScanResult:
         findings=(finding,),
         bundles=(bundle,),
     )
+
+
+@pytest.mark.parametrize("unknown_scope", [False, True])
+def test_scoped_severity_survives_scanner_exports_policy_and_offline_inventory(
+    tmp_path, monkeypatch, unknown_scope
+):
+    (tmp_path / "requirements.txt").write_text("demo==1.5\n")
+    (tmp_path / "app.py").write_text("import demo\n")
+    coordinate = {"ecosystem": "PyPI", "name": "demo"}
+    scoped_score = {
+        "type": "CVSS_V3",
+        "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    }
+    global_score = {"type": "CVSS_V2", "score": "AV:N/AC:L/Au:N/C:P/I:P/A:P"}
+    excluded_score = {
+        "type": "CVSS_V3",
+        "score": "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N",
+    }
+    # Constructed records test source qualification, not provider accuracy.
+    records = {
+        identifier: {
+            "id": identifier,
+            "modified": "2026-10-23T00:00:00Z",
+            "aliases": ["CVE-2026-12345"],
+            "affected": [
+                {
+                    "package": coordinate,
+                    "ranges": [
+                        {
+                            "type": "ECOSYSTEM",
+                            "events": [{"introduced": "0"}, {"fixed": "2"}],
+                        }
+                    ],
+                }
+            ],
+        }
+        for identifier in ("OSV-SCOPED-A", "OSV-SCOPED-B")
+    }
+    first = records["OSV-SCOPED-A"]
+    first["affected"][0]["severity"] = [scoped_score]
+    first["affected"].extend(
+        [
+            {
+                "package": coordinate,
+                "versions": ["3"],
+                "severity": [excluded_score],
+            },
+            {
+                "package": {"ecosystem": "PyPI", "name": "other"},
+                "versions": ["1.5"],
+                "severity": [excluded_score],
+            },
+        ]
+    )
+    if unknown_scope:
+        first["affected"].append({"package": coordinate, "severity": [excluded_score]})
+    records["OSV-SCOPED-B"]["severity"] = [global_score]
+
+    class Session:
+        def post(self, url, *, json, **kwargs):
+            assert json == {"queries": [{"package": coordinate, "version": "1.5"}]}
+            return JsonResponse(
+                json=lambda: {
+                    "results": [
+                        {
+                            "vulns": [
+                                {"id": key, "modified": value["modified"]}
+                                for key, value in records.items()
+                            ]
+                        }
+                    ]
+                }
+            )
+
+        def get(self, url, **kwargs):
+            return JsonResponse(json=lambda: records[url.rsplit("/", 1)[-1]])
+
+    result = RepositoryScanner(osv_client=OSVClient(session=Session())).scan(
+        tmp_path, RepositoryScanOptions(security=True, compatibility=False)
+    )
+    (finding,) = [f for f in result.findings if f.code == "security.vulnerability"]
+    details = finding.details
+    expected_status = "incomplete" if unknown_scope else "reported"
+    assert finding.severity == "error"
+    assert details["severity_status"] == expected_status
+    assert details["severity"] == [global_score, scoped_score]
+    assert details["cve_ids"] == ["CVE-2026-12345"]
+    assertions = {
+        (item["advisory_id"], item["field"]): item
+        for item in details["severity_assertions"]
+    }
+    scoped = assertions["OSV-SCOPED-A", "/affected/0/severity"]
+    assert scoped["package"] == coordinate
+    assert scoped["applicability"] == "affected"
+    assert scoped["severity"] == [scoped_score]
+    for index in (1, 2):
+        assert (
+            assertions["OSV-SCOPED-A", f"/affected/{index}/severity"]["applicability"]
+            == "not-affected"
+        )
+    global_assertion = assertions["OSV-SCOPED-B", "/severity"]
+    assert global_assertion["package"] is None
+    assert global_assertion["applicability"] == "affected"
+    if unknown_scope:
+        unknown = assertions["OSV-SCOPED-A", "/affected/3/severity"]
+        assert unknown["applicability"] == "unknown"
+        assert unknown["severity"] == [excluded_score]
+        assert unknown["reason"]
+    assert all(item["reason"] for item in assertions.values())
+    assert [item["id"] for item in details["advisories"]] == list(records)
+    canonical = json.loads(render_json(result))
+    exported = canonical["findings"][0]["details"]
+    sarif = build_sarif(result)["runs"][0]["results"][0]
+    assert sarif["level"] == "error"
+    severity_fields = ("severity", "severity_status", "severity_assertions")
+    for key in severity_fields:
+        assert exported[key] == details[key] == sarif["properties"][key]
+    policy = {
+        "fail_on": ["vuln"],
+        "exemptions": [
+            {
+                "risk": "vuln",
+                "package": "demo",
+                "ecosystem": "PyPI",
+                "project_id": finding.package.project_id,
+                "advisory_ids": ["OSV-SCOPED-B"],
+                "versions": ["1.5"],
+                "reason": "Reviewed temporary mitigation",
+                "owner": "platform",
+                "expires_at": "2027-01-01",
+            }
+        ],
+    }
+    evaluated = evaluate_policy(result, policy, today=date(2026, 10, 23))
+    assert not evaluated.should_fail()
+    assert evaluated.result.findings == result.findings
+    assert evaluate_policy(result, {"fail_on": ["vuln"]}).should_fail()
+
+    (tmp_path / "scan.json").write_text(render_json(result))
+    (tmp_path / "bom.json").write_text(json.dumps(build_cyclonedx(result)))
+    (tmp_path / "osv.json").write_text(
+        json.dumps(
+            {"schema": "depcheck.osv-database.v1", "records": list(records.values())}
+        )
+    )
+    before = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in tmp_path.iterdir()
+    }
+
+    def reject_session(*args, **kwargs):
+        pytest.fail("offline severity reevaluation constructed an HTTP session")
+
+    monkeypatch.setattr("requests.Session", reject_session)
+    service = DependencyAgentService(tmp_path)
+    for inventory in ("scan.json", "bom.json"):
+        offline = service.reevaluate_vulnerabilities(inventory, "osv.json")
+        (row,) = offline["observations"]
+        assert row["status"] == "matched"
+        (issue,) = row["vulnerabilities"]
+        for key in severity_fields:
+            assert issue[key] == details[key]
+        assert offline["read_only"] is True
+        assert offline["global_vulnerability_coverage"] == "unknown"
+    assert before == {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in tmp_path.iterdir()
+    }
+    assert not (tmp_path / ".depcheck").exists()
+
+
+@pytest.mark.parametrize(
+    "advisory_variant", ["upstream", "prefixed-versions", "missing-version-evidence"]
+)
+def test_go_advisory_matches_supplied_inventory_across_exports(
+    tmp_path, monkeypatch, advisory_variant
+):
+    project = ProjectUnit("go:gomod:.", Path("."), "go", "Go", "gomod")
+    package = PackageRef(
+        "Go", "golang.org/x/net", "golang.org/x/net", "pkg:golang/golang.org/x/net"
+    )
+    cases = [
+        ("affected", "v0.16.0", True, "matched"),
+        ("fixed", "v0.17.0", True, "not-matched-in-supplied-records"),
+        ("prerelease-probe", "v0.17.0-rc.1", True, "matched"),
+        (
+            "pseudo-version-probe",
+            "v0.16.1-0.20231010120000-0123456789ab",
+            True,
+            "matched",
+        ),
+        ("private-homonym", "v0.16.0", False, "unknown"),
+        ("invalid-version", "v0.16", True, "unknown"),
+    ]
+    # These supplied version/origin assertions establish neither an MVS build
+    # list nor installation. Prerelease/pseudo-version probes need no real tag.
+    resolutions = tuple(
+        ResolvedDependency(
+            project.project_id,
+            package,
+            version,
+            SourceLocation(tmp_path / "producer-inventory.json"),
+            instance_id=instance,
+            origin={"kind": "supplied-origin-assertion", "public": public},
+            metadata={"installation": "unknown", "producer_instance": instance},
+        )
+        for instance, version, public, _status in cases
+    )
+    result = ScanResult(
+        root=tmp_path,
+        capabilities=(Capability("security", CapabilityState.SKIPPED),),
+        findings=(),
+        bundles=(EvidenceBundle(project=project, resolved=resolutions),),
+    )
+    (tmp_path / "scan.json").write_text(render_json(result))
+    (tmp_path / "bom.json").write_text(json.dumps(build_cyclonedx(result)))
+    advisory = json.loads(
+        (
+            Path(__file__).parent / "fixtures/security/GHSA-4374-p667-p6c8.json"
+        ).read_text()
+    )
+    if advisory_variant == "prefixed-versions":
+        advisory["affected"][0]["versions"] = ["v0.16.0", "v0.17.0-rc.1"]
+    elif advisory_variant == "missing-version-evidence":
+        advisory["affected"].append(
+            {"package": {"ecosystem": "Go", "name": "golang.org/x/net"}}
+        )
+    (tmp_path / "advisory.json").write_text(json.dumps(advisory))
+    original = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+
+    def reject_session(*args, **kwargs):
+        pytest.fail("offline Go reevaluation constructed an HTTP session")
+
+    monkeypatch.setattr("requests.Session", reject_session)
+    service = DependencyAgentService(tmp_path)
+    projections = []
+    for inventory in ("scan.json", "bom.json"):
+        observations = []
+        for offset in (0, 2, 4):
+            page = service.reevaluate_vulnerabilities(
+                inventory, "advisory.json", limit=2, offset=offset
+            )
+            assert page["total"] == len(cases)
+            assert page["offset"] == offset
+            assert page["next_offset"] == (offset + 2 if offset < 4 else None)
+            assert page["global_vulnerability_coverage"] == "unknown"
+            assert page["database"]["scope"] == "supplied-records-only"
+            assert page["read_only"] is True
+            observations.extend(page["observations"])
+        rows = {row["identity"]["instance"]: row for row in observations}
+        assert len(rows) == len(cases)
+        projection = {}
+        for instance, version, public, expected in cases:
+            row = rows[instance]
+            if instance == "fixed" and advisory_variant == "missing-version-evidence":
+                expected = "unknown"
+                assert row["matching_complete"] is False
+            assert row["status"] == expected
+            assert row["identity"]["package"] == package.name
+            assert row["identity"]["ecosystem"] == "Go"
+            assert row["identity"]["version"] == version
+            assert row["identity"]["origin"]["public"] is public
+            assert row["metadata"] == {
+                "installation": "unknown",
+                "producer_instance": instance,
+            }
+            issues = row["vulnerabilities"]
+            if expected == "matched":
+                assert row["matching_complete"] is True
+                (issue,) = issues
+                assert issue["id"] == "GHSA-4374-p667-p6c8"
+                assert issue["cve_ids"] == ["CVE-2023-39325"]
+                assert issue["cwe_ids"] == ["CWE-400", "CWE-770"]
+                assert issue["fix_versions"] == ["0.17.0"]
+                if advisory_variant == "missing-version-evidence":
+                    assert issue["fix_version"] is None
+                    assert issue["fix_version_status"] == "unknown"
+                else:
+                    assert issue["fix_version"] == "0.17.0"
+                    assert issue["fix_version_status"] == "candidate"
+            else:
+                assert issues == []
+            projection[instance] = (row["status"], row["metadata"], issues)
+        projections.append(projection)
+    assert projections[0] == projections[1]
+    assert original == {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    assert not (tmp_path / ".depcheck").exists()
 
 
 @pytest.mark.parametrize(
@@ -210,6 +575,7 @@ def test_npm_origins_isolate_public_findings_and_survive_exports_and_index(
         nodes["wrapper"]["resolved"] = "wrapper/-/wrapper-2.0.0.tgz"
         nodes["git-tool"] = {"version": "git+https://git.example/project#abc"}
         nodes["wrapper"]["dependencies"] = {"dual": private}
+        nodes["wrapper"]["requires"] = {"dual": "1.0.0"}
         document = {"lockfileVersion": 1, "dependencies": nodes}
     else:
         nodes["wrapper"]["dependencies"] = {"dual": "1.0.0"}
@@ -412,7 +778,6 @@ def test_uv_declared_local_source_blocks_stale_public_lock_query(tmp_path):
 
 
 def test_uv_fork_security_checks_candidates_and_qualifies_activation(tmp_path):
-    from types import SimpleNamespace
 
     from depcheck.compatibility.checker import CompatibilityChecker
 
@@ -436,7 +801,7 @@ def test_uv_fork_security_checks_candidates_and_qualifies_activation(tmp_path):
             self.calls.append(
                 {q["package"]["name"]: q["version"] for q in json["queries"]}
             )
-            return SimpleNamespace(
+            return JsonResponse(
                 raise_for_status=lambda: None,
                 json=lambda: {
                     "results": [
@@ -454,7 +819,7 @@ def test_uv_fork_security_checks_candidates_and_qualifies_activation(tmp_path):
 
         def get(self, *args, **kwargs):
             self.detail_calls += 1
-            return SimpleNamespace(
+            return JsonResponse(
                 raise_for_status=lambda: None,
                 json=lambda: {
                     "id": "TEST-1",
@@ -547,7 +912,6 @@ def test_osv_withdrawal_is_record_scoped_and_refreshes_repository_outputs(
 ):
     from datetime import datetime, timezone
     from decimal import localcontext
-    from types import SimpleNamespace
 
     class Clock(datetime):
         @classmethod
@@ -579,7 +943,7 @@ def test_osv_withdrawal_is_record_scoped_and_refreshes_repository_outputs(
             return f"2020-01-01T00:00:00.12345678{digit}Z"
 
         def post(self, *args, **kwargs):
-            return SimpleNamespace(
+            return JsonResponse(
                 raise_for_status=lambda: None,
                 json=lambda: {
                     "results": [
@@ -634,7 +998,7 @@ def test_osv_withdrawal_is_record_scoped_and_refreshes_repository_outputs(
                 detail["withdrawn"] = "2020-01-01T00:00:00Z"
             elif identifier == "TEST-future":
                 detail["withdrawn"] = "2026-10-17T00:00:00.123456001Z"
-            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: detail)
+            return JsonResponse(raise_for_status=lambda: None, json=lambda: detail)
 
     session = Session()
     scanner = RepositoryScanner(osv_client=OSVClient(session=session))
@@ -810,7 +1174,18 @@ def test_pipenv_source_selection_controls_public_queries_and_persists(
         tmp_path, RepositoryScanOptions(security=True, compatibility=False)
     )
     assert bool(osv.queries) is public
-    assert result.capability("security").complete is public
+    assert result.capability("security").complete is (public and filename == "Pipfile")
+    if filename == "Pipfile.lock":
+        assert all(
+            item.metadata["conditional"] is True
+            and item.metadata["activation"] == "unknown"
+            and item.metadata["dependency_status"] == "uncollected"
+            for bundle in result.bundles
+            for item in bundle.resolved
+        )
+        assert "resolution.python-lock-selection-unknown" in {
+            diagnostic.code for diagnostic in result.diagnostics
+        }
     service = DependencyAgentService(tmp_path)
     service.index_repository()
     (tmp_path / "app.py").write_text("import requests\n# source edit\n")
@@ -858,6 +1233,436 @@ def test_sarif_and_cyclonedx_preserve_locations_and_dependency_edges() -> None:
         item for item in cyclonedx["dependencies"] if item["ref"] == components["1.0.0"]
     )
     assert app_edge["dependsOn"] == [components["2.0.0"]]
+
+
+@pytest.mark.parametrize(
+    "instance, public, version, linked",
+    [
+        ("node_modules/missing/child-lib", True, None, False),
+        (None, False, None, False),
+        (None, True, "exact", True),
+        ("same", False, "exact", False),
+    ],
+)
+def test_cyclonedx_unknown_edges_do_not_rebind_instances_or_origins(
+    instance, public, version, linked
+):
+    result = sample_result()
+    bundle = result.bundles[0]
+    parent, child = bundle.resolved
+    if instance == "same":
+        instance = child.instance_id
+    if version == "exact":
+        version = child.version
+    reference = replace(child.package, purl=child.package.purl if public else None)
+    link = ResolvedDependencyLink(reference, version, instance)
+    parent = replace(parent, dependency_links=(link,))
+    result = replace(result, bundles=(replace(bundle, resolved=(parent, child)),))
+    bom = build_cyclonedx(result)
+    parent_component = next(
+        item for item in bom["components"] if item["name"] == "app-lib"
+    )
+    child_component = next(
+        item for item in bom["components"] if item["name"] == "child-lib"
+    )
+    edge = next(
+        item
+        for item in bom["dependencies"]
+        if item["ref"] == parent_component["bom-ref"]
+    )
+    assert edge["dependsOn"] == ([child_component["bom-ref"]] if linked else [])
+    unresolved = [
+        target
+        for item in parent_component["properties"]
+        if item["name"] == "depcheck:dependency:unresolved"
+        for target in json.loads(item["value"])
+    ]
+    if linked:
+        assert unresolved == []
+    else:
+        assert len(unresolved) == 1
+        assert unresolved[0]["package"] == "child-lib"
+        assert unresolved[0].get("instance") == instance
+        assert unresolved[0].get("purl") == reference.purl
+
+
+def test_cyclonedx_unknown_edges_round_trip_without_duplicate_properties(tmp_path):
+    from depcheck.evidence.sbom import inspect_sbom
+
+    result = sample_result()
+    bundle = result.bundles[0]
+    parent, child = bundle.resolved
+    links = (
+        ResolvedDependencyLink(child.package, None, "node_modules/missing/first"),
+        ResolvedDependencyLink(child.package, None, "node_modules/missing/second"),
+    )
+    parent = replace(parent, dependency_links=links)
+    bom = build_cyclonedx(
+        replace(result, bundles=(replace(bundle, resolved=(parent, child)),))
+    )
+    component = next(item for item in bom["components"] if item["name"] == "app-lib")
+    properties = [
+        item
+        for item in component["properties"]
+        if item["name"] == "depcheck:dependency:unresolved"
+    ]
+    assert len(properties) == 1
+    assert [item["instance"] for item in json.loads(properties[0]["value"])] == [
+        link.instance_id for link in links
+    ]
+    (tmp_path / "bom.json").write_text(json.dumps(bom))
+    imported = inspect_sbom(tmp_path, "bom.json", limit=20)
+    assert imported["total"] == len(bom["components"])
+    row = next(
+        item
+        for item in imported["components"]
+        if item["identity"]["package"] == "app-lib"
+    )
+    assert properties[0] in row["assertion"]["properties"]
+
+
+def test_npm_resolution_context_survives_reports_and_offline_matching(tmp_path):
+    from depcheck.evidence.sbom import inspect_sbom
+
+    manifest = tmp_path / "package.json"
+    manifest.write_text('{"dependencies":{"host":"1.0.0"}}')
+    source = tmp_path / "main.js"
+    source.write_text('import "host";\n')
+    lock = tmp_path / "package-lock.json"
+    lock.write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {
+                    "node_modules/host": {
+                        "version": "1.0.0",
+                        "dependencies": {"demo": "1.0.0", "extra": "1.0.0"},
+                        "optionalDependencies": {"extra": "1.0.0"},
+                        "peerDependencies": {"peer": "^1.0.0"},
+                        "peerDependenciesMeta": {"peer": {"optional": True}},
+                    },
+                    "node_modules/demo": {
+                        "version": "1.0.0",
+                        "optional": True,
+                        "os": ["darwin"],
+                        "cpu": ["arm64"],
+                        "libc": ["musl"],
+                    },
+                    "node_modules/host/node_modules/demo": {
+                        "version": "1.0.0",
+                        "peer": True,
+                        "os": ["linux"],
+                        "cpu": ["x64"],
+                        "libc": ["glibc"],
+                    },
+                    "node_modules/extra": {"version": "1.0.0", "optional": True},
+                    "node_modules/peer": {"version": "1.0.0", "peer": True},
+                },
+            }
+        )
+    )
+    result = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, compatibility=False)
+    )
+    bundle = result.bundles[0]
+    resolutions = {item.instance_id: item for item in bundle.resolved}
+    expected = {instance: dict(item.metadata) for instance, item in resolutions.items()}
+    root_instance = "node_modules/demo"
+    nested_instance = "node_modules/host/node_modules/demo"
+    assert expected[root_instance]["context"]["os"] == ["darwin"]
+    assert expected[nested_instance]["context"]["os"] == ["linux"]
+    assert all(metadata["activation"] == "unknown" for metadata in expected.values())
+    assert not next(
+        cap for cap in bundle.capabilities if cap.name == "resolution"
+    ).complete
+
+    for path in (manifest, source, lock):
+        path.unlink()
+    canonical = json.loads(render_json(result))
+    assert {
+        item["identity"]["instance"]: item["metadata"]
+        for item in canonical["inventory"]["resolved_dependencies"]
+    } == expected
+    assert {
+        item["identity"]["instance"]: item["metadata"]
+        for item in bundle.to_dict(tmp_path)["resolved"]
+    } == expected
+    bom = build_cyclonedx(result)
+    components = {}
+    for component in bom["components"]:
+        names = [prop["name"] for prop in component["properties"]]
+        assert len(names) == len(set(names))
+        properties = {prop["name"]: prop["value"] for prop in component["properties"]}
+        instance = properties["depcheck:identity:instance"]
+        components[instance] = component
+        assert (
+            json.loads(properties["depcheck:resolution:metadata"]) == expected[instance]
+        )
+        assert "scope" not in component
+    edges = {entry["ref"]: entry["dependsOn"] for entry in bom["dependencies"]}
+    assert edges[components["node_modules/host"]["bom-ref"]] == [
+        components[nested_instance]["bom-ref"]
+    ]
+    assert edges[components[root_instance]["bom-ref"]] == []
+    assert edges[components["node_modules/extra"]["bom-ref"]] == []
+    assert edges[components["node_modules/peer"]["bom-ref"]] == []
+    (tmp_path / "scan.json").write_text(json.dumps(canonical))
+    (tmp_path / "bom.json").write_text(json.dumps(bom))
+    imported = inspect_sbom(tmp_path, "bom.json", limit=20)
+    assert {
+        item["identity"]["instance"]: json.loads(
+            next(
+                prop["value"]
+                for prop in item["properties"]
+                if prop["name"] == "depcheck:resolution:metadata"
+            )
+        )
+        for item in imported["components"]
+    } == expected
+    (tmp_path / "advisories.json").write_text(
+        json.dumps(
+            {
+                "schema": "depcheck.osv-database.v1",
+                "records": [
+                    {
+                        "id": "OSV-DEMO",
+                        "modified": "2026-10-18T00:00:00Z",
+                        "affected": [
+                            {
+                                "package": {"ecosystem": "npm", "name": "demo"},
+                                "versions": ["1.0.0"],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    service = DependencyAgentService(tmp_path)
+    for inventory in ("scan.json", "bom.json"):
+        observations = service.reevaluate_vulnerabilities(inventory, "advisories.json")[
+            "observations"
+        ]
+        assert {
+            item["identity"]["instance"]: item["metadata"] for item in observations
+        } == expected
+        assert all("metadata" not in item["identity"] for item in observations)
+        matched = [item for item in observations if item["status"] == "matched"]
+        assert {item["identity"]["instance"] for item in matched} == {
+            root_instance,
+            nested_instance,
+        }
+        assert all(item["vulnerabilities"][0]["id"] == "OSV-DEMO" for item in matched)
+    comparison = service.compare_inventories("scan.json", "bom.json")
+    assert comparison["matched_occurrences"] == len(expected)
+    assert comparison["differences"] == []
+    metadata_property = next(
+        prop
+        for prop in components[root_instance]["properties"]
+        if prop["name"] == "depcheck:resolution:metadata"
+    )
+    changed_metadata = json.loads(metadata_property["value"])
+    changed_metadata["context"]["os"] = ["win32"]
+    metadata_property["value"] = json.dumps(changed_metadata)
+    (tmp_path / "changed.json").write_text(json.dumps(bom))
+    changed = service.compare_inventories("scan.json", "changed.json")
+    assert changed["matched_occurrences"] == len(expected) - 1
+    assert len(changed["differences"]) == 2
+    assert {
+        tuple(row["coordinate"]["metadata"]["context"]["os"])
+        for row in changed["differences"]
+    } == {("darwin",), ("win32",)}
+    metadata_property["value"] = "[]"
+    (tmp_path / "invalid.json").write_text(json.dumps(bom))
+    with pytest.raises(ValueError, match="object"):
+        service.reevaluate_vulnerabilities("invalid.json", "advisories.json")
+
+
+@pytest.mark.parametrize(
+    "legacy_public,explicit_public,expected_status",
+    [
+        (False, None, "unknown"),
+        (None, None, "unknown"),
+        (True, None, "matched"),
+        (False, True, "matched"),
+        (True, False, "unknown"),
+        (None, True, "matched"),
+        (None, False, "unknown"),
+    ],
+)
+def test_offline_sbom_matches_canonical_legacy_origin_precedence(
+    tmp_path, legacy_public, explicit_public, expected_status
+):
+    (tmp_path / "package.json").write_text('{"dependencies":{"lodash":"4.17.14"}}')
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {"node_modules/lodash": {"version": "4.17.14"}},
+            }
+        )
+    )
+    result = RepositoryScanner().scan(
+        tmp_path, RepositoryScanOptions(security=False, compatibility=False)
+    )
+    bundle = result.bundles[0]
+    legacy_origin = (
+        None
+        if legacy_public is None
+        else {"kind": "registry", "public": legacy_public, "basis": "legacy-assertion"}
+    )
+    explicit_origin = (
+        {}
+        if explicit_public is None
+        else {
+            "kind": "registry",
+            "public": explicit_public,
+            "basis": "source-assertion",
+        }
+    )
+    metadata = {
+        "origin": legacy_origin,
+        "context": {"optional": True, "os": ["uninterpreted-platform"]},
+        "activation": "unknown",
+    }
+    resolution = replace(bundle.resolved[0], origin=explicit_origin, metadata=metadata)
+    result = replace(result, bundles=(replace(bundle, resolved=(resolution,)),))
+    (tmp_path / "scan.json").write_text(render_json(result))
+    (tmp_path / "bom.json").write_text(json.dumps(build_cyclonedx(result)))
+    advisory = (
+        Path(__file__).parent / "fixtures/security/GHSA-35jh-r3h4-6jhm.json"
+    ).read_bytes()
+    (tmp_path / "advisory.json").write_bytes(advisory)
+    original = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    service = DependencyAgentService(tmp_path)
+    rows = []
+    for inventory in ("scan.json", "bom.json"):
+        (row,) = service.reevaluate_vulnerabilities(inventory, "advisory.json")[
+            "observations"
+        ]
+        assert row["status"] == expected_status
+        assert row["metadata"] == metadata
+        assert "metadata" not in row["identity"]
+        assert row["identity"]["origin"] == (
+            legacy_origin if explicit_public is None else explicit_origin
+        )
+        if explicit_public is None:
+            assert "assertion_kind" not in row["identity"]
+        if expected_status == "matched":
+            assert row["vulnerabilities"][0]["id"] == "GHSA-35jh-r3h4-6jhm"
+            assert "CVE-2021-23337" in row["vulnerabilities"][0]["aliases"]
+        rows.append(row)
+    for field in ("metadata", "status", "vulnerabilities", "advisory_checks"):
+        assert rows[0].get(field) == rows[1].get(field)
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == original
+    assert not (tmp_path / ".depcheck").exists()
+
+
+@pytest.mark.parametrize("conflicting", [False, True])
+def test_cyclonedx_manifest_origins_survive_private_and_conflicting_assertions(
+    tmp_path, conflicting
+):
+    from depcheck.evidence.sbom import inspect_sbom
+
+    (tmp_path / "package.json").write_text('{"dependencies":{"lodash":"*"}}')
+    (tmp_path / ".npmrc").write_text("registry=https://registry.example.invalid/\n")
+    scan = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    bundle = scan.bundles[0]
+    (declaration,) = bundle.declarations
+    private = dict(declaration.metadata["origin"])
+    if conflicting:
+        public = {
+            "kind": "registry",
+            "public": True,
+            "location": "https://registry.npmjs.org/",
+        }
+        alternate = replace(
+            declaration,
+            package=replace(declaration.package, purl="pkg:npm/lodash"),
+            metadata={**declaration.metadata, "origin": public},
+        )
+        scan = replace(
+            scan, bundles=(replace(bundle, declarations=(alternate, declaration)),)
+        )
+    exported = build_cyclonedx(scan)
+    (component,) = exported["components"]
+    assert "purl" not in component
+    values = [
+        prop["value"]
+        for prop in component["properties"]
+        if prop["name"] == "depcheck:source:origin"
+    ]
+    assert len(values) == 1
+    origin = json.loads(values[0])
+    if conflicting:
+        assert origin == {
+            "kind": "ambiguous",
+            "public": False,
+            "assertions": [public, private],
+        }
+    else:
+        assert origin == private
+    path = tmp_path / "sbom.json"
+    path.write_text(json.dumps(exported))
+    (restored,) = inspect_sbom(tmp_path, "sbom.json", limit=20)["components"]
+    assert (
+        next(
+            prop["value"]
+            for prop in restored["properties"]
+            if prop["name"] == "depcheck:source:origin"
+        )
+        == values[0]
+    )
+
+    (tmp_path / "advisories.json").write_text(
+        '{"schema":"depcheck.osv-database.v1","records":[]}'
+    )
+    observations = DependencyAgentService(tmp_path).reevaluate_vulnerabilities(
+        "sbom.json", "advisories.json"
+    )["observations"]
+    from scripts.evaluate_corpus import _project_transport_mismatches
+
+    assert _project_transport_mismatches(scan, [], observations) == ([], 1)
+
+
+def test_cyclonedx_unknown_npm_edge_cannot_bind_a_private_sibling(tmp_path):
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / ".npmrc").write_text("registry=https://private.example.invalid/\n")
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {
+                    "node_modules/parent": {
+                        "version": "1.0.0",
+                        "dependencies": {"child": "*"},
+                    },
+                    "node_modules/sibling/node_modules/child": {"version": "2.0.0"},
+                },
+            }
+        )
+    )
+    result = RepositoryScanner().scan(tmp_path, RepositoryScanOptions(security=False))
+    parent = next(
+        item
+        for bundle in result.bundles
+        for item in bundle.resolved
+        if item.package.name == "parent"
+    )
+    assert parent.dependency_links[0].version is None
+    assert parent.dependency_links[0].instance_id is None
+    bom = build_cyclonedx(result)
+    component = next(item for item in bom["components"] if item["name"] == "parent")
+    edge = next(
+        item for item in bom["dependencies"] if item["ref"] == component["bom-ref"]
+    )
+    assert edge["dependsOn"] == []
+    assertion = next(
+        item
+        for item in component["properties"]
+        if item["name"] == "depcheck:dependency:unresolved"
+    )
+    assert json.loads(assertion["value"])[0]["package"] == "child"
 
 
 def test_policy_exemptions_apply_to_qualified_findings() -> None:
@@ -1791,3 +2596,18 @@ def test_sarif_fallback_requires_a_manifest_from_the_affected_project(known_proj
     else:
         assert report["locations"] == []
         assert report["properties"]["depcheck:location-status"] == "unavailable"
+
+
+def test_terminal_output_escapes_data_controls_and_preserves_unicode():
+    result = sample_result()
+    malicious = "package\x1b]52;c;DUMMY\x07\r\nPASS\x85\u202e中文"
+    finding = replace(result.findings[0], message=malicious)
+    result = replace(result, findings=(finding,))
+    rendered = render_text(result)
+    assert all(
+        character not in rendered
+        for character in ("\x1b", "\x07", "\r", "\x85", "\u202e")
+    )
+    assert "\\u000aPASS" in rendered
+    assert "中文" in rendered
+    assert json.loads(render_json(result))["findings"][0]["message"] == malicious

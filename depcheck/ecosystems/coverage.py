@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ UNCOVERED_MANIFEST_NAMES = frozenset(
         "BUILD",
         "BUILD.bazel",
         "MODULE.bazel.lock",
+        "pylock.toml",
     }
 )
 UNCOVERED_MANIFEST_SUFFIXES = frozenset(
@@ -39,6 +41,11 @@ UNCOVERED_MANIFEST_SUFFIXES = frozenset(
         ".bzl",
     }
 )
+
+
+def is_pylock_file(path: Path) -> bool:
+    """Recognize the PEP 751 default and named lock filename forms."""
+    return re.fullmatch(r"pylock(?:\.[^.]+)?\.toml", path.name) is not None
 
 
 def uncovered_manifest_files(
@@ -57,6 +64,7 @@ def uncovered_manifest_files(
         if path.name not in {"build.gradle", "build.gradle.kts"}
         and (
             path.name in UNCOVERED_MANIFEST_NAMES
+            or is_pylock_file(path)
             or any(
                 path.name.lower().endswith(suffix)
                 for suffix in UNCOVERED_MANIFEST_SUFFIXES
@@ -78,17 +86,24 @@ def repository_coverage(
         if bundle.project.manager == "gradle-catalog"
         for path in bundle.project.manifests
     }
+    reported_pylocks = {
+        root / path
+        for bundle in bundles
+        if bundle.project.manager == "python"
+        for path in bundle.project.locks
+        if is_pylock_file(path)
+    }
     diagnostics = tuple(
         Diagnostic(
             code="coverage.unsupported-manifest",
             severity="error",
-            message=f"No registered collector handles {path.name}; dependency coverage is incomplete.",
+            message=f"No enabled collector supplied evidence for {path.name}; dependency coverage is incomplete.",
             source=SourceLocation(path),
         )
         for path in (
             () if selected else uncovered_manifest_files(root, excluded_directories)
         )
-        if path not in catalog_files
+        if path not in catalog_files and path not in reported_pylocks
     )
     gaps: dict[tuple[str, str, str], dict[str, Any]] = {}
     for diagnostic in diagnostics:
@@ -108,12 +123,17 @@ def repository_coverage(
                 or diagnostic.code.startswith("manifest.yarn-lock-")
                 or "unsupported" in diagnostic.code
                 or "uncollected" in diagnostic.code
+                or (
+                    is_pylock_file(diagnostic.source.path)
+                    and diagnostic.severity == "error"
+                )
                 or diagnostic.code
                 in {
                     "resolution.cargo-activation-unknown",
                     "resolution.package-manager-ambiguous",
                     "resolution.workspace-ambiguous",
                     "resolution.uv-workspace-activation-unknown",
+                    "resolution.pylock-activation-unknown",
                     "resolution.python-source-unverified",
                     "resolution.cmake-activation-unknown",
                     "resolution.bazel-module-graph-unknown",
@@ -123,6 +143,8 @@ def repository_coverage(
                     "resolution.yarn-activation-unknown",
                     "resolution.script-environment-unknown",
                     "analysis.python-group-selection-unknown",
+                    "analysis.python-environment-selection-unknown",
+                    "resolution.hatch-environment-activation-unknown",
                     "analysis.constraint-intersection-unknown",
                     "configuration.go-tool-owner-unresolved",
                     "configuration.go-tool-budget",

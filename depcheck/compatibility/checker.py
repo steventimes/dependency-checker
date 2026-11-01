@@ -8,6 +8,8 @@ from packaging.requirements import InvalidRequirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from depcheck.compatibility.pypi_client import ReleaseMetadata
+from depcheck.ecosystems.coverage import is_pylock_file
 from depcheck.model import (
     Diagnostic,
     ManifestParseResult,
@@ -15,7 +17,6 @@ from depcheck.model import (
     SourceLocation,
 )
 
-from .metadata import ReleaseMetadata
 from .models import (
     CompatibilityConflict as CompatibilityConflict,
 )
@@ -88,12 +89,22 @@ class CompatibilityChecker:
         python_version: str | None = None,
         dependency_groups: tuple[str, ...] = (),
     ) -> CompatibilityReport:
-        from depcheck.ecosystems.python import filter_python_manifest
+        from depcheck.ecosystems.python.collector import filter_python_manifest
 
         environment = self._target_environment(python_version)
         manifest = filter_python_manifest(manifest, environment["python_full_version"])
         if any(
-            item.code == "manifest.marker-evaluation-unknown"
+            item.code
+            in {
+                "manifest.marker-evaluation-unknown",
+                "resolution.pylock-activation-unknown",
+                "manifest.pylock-unsupported",
+            }
+            or (
+                item.source is not None
+                and is_pylock_file(item.source.path)
+                and item.severity == "error"
+            )
             for item in manifest.diagnostics
         ):
             return CompatibilityReport(
@@ -109,7 +120,8 @@ class CompatibilityChecker:
         conditional_locks = {
             item.source.path: item.source
             for item in locked
-            if item.origin.get("lock", {}).get("conditional")
+            if item.metadata.get("conditional")
+            or item.origin.get("lock", {}).get("conditional")
         }
         if conditional_locks:
             return CompatibilityReport(
@@ -122,9 +134,11 @@ class CompatibilityChecker:
                     *manifest.diagnostics,
                     *(
                         Diagnostic(
-                            code="compatibility.uv-lock-selection-unknown",
+                            code="compatibility.uv-lock-selection-unknown"
+                            if source.path.name == "uv.lock"
+                            else "compatibility.python-lock-selection-unknown",
                             severity="error",
-                            message="Conditional uv lock candidates cannot seed one flat compatibility graph; environment, extras/group selection and installed activation are unknown.",
+                            message="Conditional Python lock candidates cannot seed one flat compatibility graph; environment, extras/group selection and installed activation are unknown.",
                             source=source,
                         )
                         for source in conditional_locks.values()

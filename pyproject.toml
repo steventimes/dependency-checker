@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "depcheck"
-version = "0.5.0"
+version = "0.6.0"
 description = "Static multi-ecosystem dependency evidence, security, and SBOM scanner."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Steven Yang", email = "stevenyang0316@gmail.com" }]
 keywords = ["dependencies", "security", "osv", "sarif", "sbom", "multi-ecosystem"]
 classifiers = [
@@ -18,12 +18,15 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Security",
 ]
 dependencies = [
     "packageurl-python>=0.17.6,<0.18",
-    "packaging>=23.2",
+    "packaging>=26.3",
     "PyYAML>=6.0.2,<7",
     "requests>=2.31",
     "resolvelib>=1.2.1,<1.3",
@@ -33,13 +36,15 @@ dependencies = [
 
 [project.optional-dependencies]
 agent = [
-    "mcp>=1.28,<2",
+    "mcp>=1.30,<2",
+    "pydantic>=2.14,<3; python_version >= '3.15'",
 ]
 test = [
     "build>=1.2,<2",
     "hypothesis>=6.150,<7",
     "jsonschema>=4.26,<5",
-    "mcp>=1.28,<2",
+    "mcp>=1.30,<2",
+    "pydantic>=2.14,<3; python_version >= '3.15'",
     "mypy>=1.10,<2",
     "pytest>=9.0.3,<10",
     "ruff>=0.6,<1",
@@ -69,6 +74,8 @@ depcheck = ["schemas/*.json"]
 target-version = "py311"
 line-length = 88
 cache-dir = ".tmp/ruff-cache"
+# Upstream fixtures are immutable input data, checked by corpus provenance.
+extend-exclude = ["test/fixtures"]
 
 [tool.pytest.ini_options]
 cache_dir = ".tmp/pytest-cache"

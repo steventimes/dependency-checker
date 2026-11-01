@@ -1,0 +1,16 @@
+[package]
+name = "ambient_unity_parser"
+edition = "2021"
+description = "A basic parser for Unity assets."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+rust-version = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+ambient_native_std = { path = "../../crates/native_std" , version = "0.3.2-dev" }
+yaml-rust = { workspace = true }
+itertools = { workspace = true }
+glam = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

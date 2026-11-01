@@ -1,0 +1,15 @@
+[package]
+name = "ambient_color"
+edition = "2021"
+description = "Defines a color type for Ambient, as well as helper operations."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+rust-version = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+glam = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+wgpu = { workspace = true, optional = true }

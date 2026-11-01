@@ -1,0 +1,25 @@
+[package]
+name = "ambient_shared_types"
+edition = "2021"
+description = "Types shared between the host and the guest of the Ambient runtime."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+rust-version = { workspace = true }
+version = { workspace = true }
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["wasm32-wasi"]
+
+[dependencies]
+bitflags = { workspace = true }
+strum = { workspace = true }
+serde = { workspace = true }
+winit = { workspace = true, optional = true }
+ulid = { workspace = true }
+paste = { workspace = true }
+
+ambient_primitive_component_definitions = { path = "../primitive_component_definitions" , version = "0.3.2-dev" }
+
+[features]
+native = ["dep:winit"]

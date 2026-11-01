@@ -2,26 +2,26 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-from collections import Counter
-from importlib.metadata import distributions
 import json
 import os
-import random
 import platform
-import subprocess
+import random
 import shutil
+import statistics
+import subprocess
 import sys
 import tempfile
 import time
-import statistics
+from collections import Counter
+from importlib.metadata import distributions
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
-from depcheck.indexing import RepositoryIndexer, RepositoryIndex
-from depcheck.security.osv_client import OSVScanResult
-from depcheck.bounded_io import capture_reads
+from depcheck.filesystem import capture_reads
+from depcheck.indexing import RepositoryIndex, RepositoryIndexer
 from depcheck.profiling import capture_profile, profile_payload
+from depcheck.security.osv_client import OSVScanResult
 
 
 class CountingOSV:
@@ -49,6 +49,10 @@ def build_fixture(
     seed: int,
     depth: int,
 ) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / ".depcheck.toml").write_text(
+        'repository-id = "depcheck-offline-benchmark"\n', encoding="utf-8"
+    )
     rng = random.Random(seed)
     for index in range(projects):
         suffix = rng.randrange(1000, 9999)
@@ -67,6 +71,7 @@ def _source_digest() -> str:
             for folder in ("depcheck", "scripts")
             for path in (checkout / folder).rglob("*.py")
         ]
+        + list((checkout / "depcheck" / "schemas").glob("*.json"))
         + [checkout / "pyproject.toml", checkout / "uv.lock"]
     )
     digest = hashlib.sha256()
@@ -81,16 +86,75 @@ def _source_digest() -> str:
 def _stable_index(root: Path) -> str:
     index = RepositoryIndex(root)
     payload = {
-        "dependencies": index.dependencies(limit=100000),
-        "findings": index.findings(limit=100000),
+        "dependencies": index.dependencies(limit=sys.maxsize),
+        "findings": index.findings(limit=sys.maxsize),
         "projects": index.context()["projects"],
     }
+    return _canonical_json(payload, root)
+
+
+def _canonical_json(payload: Any, root: Path) -> str:
     return json.dumps(payload, sort_keys=True).replace(
         root.resolve().as_posix(), "<root>"
     )
 
 
-def measure_mutation(root: Path, ecosystem: str) -> dict[str, Any]:
+def _fixture_digest(root: Path, files: Sequence[Path]) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(files):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def measure_pages(
+    root: Path,
+    expected: list[dict[str, Any]],
+    *,
+    page_size: int,
+    profile_enabled: bool,
+) -> dict[str, Any]:
+    """Traverse the public index boundary, including freshness checks per page."""
+    if not 1 <= page_size <= 1000:
+        raise ValueError("page size must be 1..1000")
+    index = RepositoryIndex(root)
+    records: list[dict[str, Any]] = []
+    pages = 0
+    started = time.perf_counter()
+    with capture_profile(enabled=profile_enabled) as profile:
+        while pages < 1000:
+            page = index.dependencies(limit=page_size, offset=len(records))
+            pages += 1
+            if not page:
+                break
+            records.extend(page)
+            if len(records) > len(expected):
+                raise RuntimeError(
+                    "paginated inventory exceeded the complete inventory"
+                )
+        else:
+            raise RuntimeError("benchmark pagination exceeded 1000 calls")
+    seconds = time.perf_counter() - started
+    if _canonical_json(records, root) != _canonical_json(expected, root):
+        raise RuntimeError("paginated inventory differs from the complete inventory")
+    return {
+        "wall_seconds": seconds,
+        "page_size": page_size,
+        "calls_including_empty_terminal": pages,
+        "records": len(records),
+        "evidence_sha256": hashlib.sha256(
+            _canonical_json(records, root).encode()
+        ).hexdigest(),
+        "equivalent": True,
+        "profile": profile_payload(profile),
+    }
+
+
+def measure_mutation(
+    root: Path, ecosystem: str, *, profile_enabled: bool = True
+) -> dict[str, Any]:
     """Compare one incremental refresh against an independent full rebuild."""
     indexer = RepositoryIndexer()
     indexer.refresh(root)
@@ -104,7 +168,8 @@ def measure_mutation(root: Path, ecosystem: str) -> dict[str, Any]:
         raise ValueError("mutation ecosystem must be PyPI or npm")
     source.write_text(content, encoding="utf-8")
     started = time.perf_counter()
-    result = indexer.refresh(root)
+    with capture_profile(enabled=profile_enabled) as profile:
+        result = indexer.refresh(root)
     seconds = time.perf_counter() - started
     stable = _stable_index(root)
     with tempfile.TemporaryDirectory(prefix="depcheck-benchmark-rebuild-") as directory:
@@ -127,6 +192,7 @@ def measure_mutation(root: Path, ecosystem: str) -> dict[str, Any]:
         "changed_reference": "benchmarknewpackage",
         "changed_usage_detected": changed_usage,
         "rebuild_equivalent": equivalent,
+        "profile": profile_payload(profile),
         "counters": {
             "scanned_python_files": result.scanned_python_files,
             "reused_python_files": result.reused_python_files,
@@ -143,6 +209,8 @@ def run_benchmark(
     files_per_project: int,
     seed: int,
     depth: int,
+    profile_enabled: bool = True,
+    page_size: int = 100,
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="depcheck-benchmark-") as temp_dir:
         root = Path(temp_dir)
@@ -154,6 +222,7 @@ def run_benchmark(
             depth=depth,
         )
         fixture_files = tuple(path for path in root.rglob("*") if path.is_file())
+        fixture_digest = _fixture_digest(root, fixture_files)
         total_bytes = sum(path.stat().st_size for path in fixture_files)
         max_depth = max(
             len(path.relative_to(root).parent.parts) for path in fixture_files
@@ -168,7 +237,7 @@ def run_benchmark(
 
         osv = CountingOSV()
         scan_started = time.perf_counter()
-        with capture_profile() as profile, capture_reads():
+        with capture_profile(enabled=profile_enabled) as profile, capture_reads():
             scan = RepositoryScanner(osv_client=osv).scan(
                 root,
                 RepositoryScanOptions(security=True),
@@ -207,14 +276,23 @@ def run_benchmark(
 
         indexer = RepositoryIndexer()
         cold_started = time.perf_counter()
-        cold = indexer.refresh(root)
+        with capture_profile(enabled=profile_enabled) as cold_profile:
+            cold = indexer.refresh(root)
         cold_seconds = time.perf_counter() - cold_started
         hot_started = time.perf_counter()
-        hot = indexer.refresh(root)
+        with capture_profile(enabled=profile_enabled) as hot_profile:
+            hot = indexer.refresh(root)
         hot_seconds = time.perf_counter() - hot_started
         query_started = time.perf_counter()
-        stable_inventory = _stable_index(root)
+        with capture_profile(enabled=profile_enabled) as query_profile:
+            stable_inventory = _stable_index(root)
         query_seconds = time.perf_counter() - query_started
+        pagination = measure_pages(
+            root,
+            json.loads(stable_inventory)["dependencies"],
+            page_size=page_size,
+            profile_enabled=profile_enabled,
+        )
         cold_scanned = cold.scanned_python_files + cold.parsed_manifest_files
         hot_reused = hot.reused_python_files + hot.reused_manifest_files
         if cold_scanned < 1:
@@ -237,7 +315,9 @@ def run_benchmark(
                     seed=seed,
                     depth=depth,
                 )
-                mutations[ecosystem] = measure_mutation(mutation_root, ecosystem)
+                mutations[ecosystem] = measure_mutation(
+                    mutation_root, ecosystem, profile_enabled=profile_enabled
+                )
         peak_rss_kb, peak_rss_source = _peak_rss()
 
         return {
@@ -270,6 +350,8 @@ def run_benchmark(
                 "depth": depth,
                 "project_groups": projects,
                 "files_per_project": files_per_project,
+                "profile_enabled": profile_enabled,
+                "page_size": page_size,
             },
             "correctness": {
                 "passed": True,
@@ -280,11 +362,21 @@ def run_benchmark(
                     stable_inventory.encode()
                 ).hexdigest(),
                 "scan_summary": scan.summary,
+                "scan_evidence_sha256": hashlib.sha256(
+                    _canonical_json(
+                        {
+                            "scan": scan.to_dict(),
+                            "bundles": [b.to_dict(root) for b in scan.bundles],
+                        },
+                        root,
+                    ).encode()
+                ).hexdigest(),
                 "capabilities": {c.name: c.to_dict() for c in scan.capabilities},
                 "diagnostics": [d.to_dict(root) for d in scan.diagnostics],
             },
             "fixture": {
                 "scanned_files": len(fixture_files),
+                "input_sha256": fixture_digest,
                 "total_bytes": total_bytes,
                 "max_depth": max_depth,
                 "npm_lock_entries": npm_lock_entries,
@@ -293,6 +385,7 @@ def run_benchmark(
                 "wall_seconds": scan_seconds,
                 "process_peak_rss_kb": peak_rss_kb,
                 "process_peak_rss_source": peak_rss_source,
+                "process_peak_rss_scope": "whole worker high-water mark, including fixture, index, queries and mutations; not scan-only",
                 "osv_batches": len(osv.calls),
                 "osv_measurement": "offline simulated request count; no service latency",
                 "npm_duplicate_version_packages": npm_duplicate_versions,
@@ -301,6 +394,8 @@ def run_benchmark(
             },
             "index": {
                 "unchanged_query_seconds": query_seconds,
+                "unchanged_query_profile": profile_payload(query_profile),
+                "pagination": pagination,
                 "counter_scope": "Python source/manifests only; other ecosystem parse reuse counts not available",
                 "cold": {
                     "wall_seconds": cold_seconds,
@@ -308,6 +403,7 @@ def run_benchmark(
                     "python_source_files": cold.scanned_python_files,
                     "python_manifest_files": cold.parsed_manifest_files,
                     "status": cold.status,
+                    "profile": profile_payload(cold_profile),
                 },
                 "hot": {
                     "wall_seconds": hot_seconds,
@@ -315,6 +411,7 @@ def run_benchmark(
                     "python_source_files_reused": hot.reused_python_files,
                     "python_manifest_files_reused": hot.reused_manifest_files,
                     "status": hot.status,
+                    "profile": profile_payload(hot_profile),
                 },
                 "reuse_ratio": (
                     hot_reused / reuse_denominator if reuse_denominator else 0.0
@@ -337,6 +434,10 @@ def run_repeated(options: argparse.Namespace) -> dict[str, Any]:
         str(options.seed),
         "--depth",
         str(options.depth),
+        "--profile",
+        options.profile,
+        "--page-size",
+        str(options.page_size),
     ]
     samples = []
     warmups = []
@@ -354,10 +455,22 @@ def run_repeated(options: argparse.Namespace) -> dict[str, Any]:
             )
         sample = json.loads(completed.stdout)
         (warmups if index < options.warmups else samples).append(sample)
-    signatures = {json.dumps(s["correctness"], sort_keys=True) for s in samples}
+    all_samples = warmups + samples
+    if len({s["fixture"]["input_sha256"] for s in all_samples}) != 1:
+        raise RuntimeError("Repeated workers received different fixture bytes")
+    if len({s["environment"]["source_digest"] for s in all_samples}) != 1:
+        raise RuntimeError("Backend source changed between benchmark workers")
+    signatures = {json.dumps(s["correctness"], sort_keys=True) for s in all_samples}
     if len(signatures) != 1:
         raise RuntimeError("Repeated workers produced different evidence")
     seconds = [s["scan"]["wall_seconds"] for s in samples]
+    timings = {
+        "scan": seconds,
+        "index_cold": [s["index"]["cold"]["wall_seconds"] for s in samples],
+        "index_hot": [s["index"]["hot"]["wall_seconds"] for s in samples],
+        "query_complete": [s["index"]["unchanged_query_seconds"] for s in samples],
+        "query_pages": [s["index"]["pagination"]["wall_seconds"] for s in samples],
+    }
     return {
         "schema": "depcheck.benchmark-series.v1",
         "cohort": options.cohort,
@@ -366,13 +479,22 @@ def run_repeated(options: argparse.Namespace) -> dict[str, Any]:
             "discarded_warmup_processes": options.warmups,
             "cache": "fresh derived cache per worker; warm refresh follows cold refresh",
             "os_page_cache": "uncontrolled; no system cache reset",
-            "timing": "instrumented operation wall time; excludes process startup and imports",
+            "timing": "operation wall time; excludes process startup and imports; profiling follows profile_enabled",
             "seed_selection": "fixed before measurement; every retained sample reported",
+            "profile_enabled": options.profile == "on",
         },
         "scan_seconds": {
             "median": statistics.median(seconds),
             "min": min(seconds),
             "max": max(seconds),
+        },
+        "operation_seconds": {
+            name: {
+                "median": statistics.median(values),
+                "min": min(values),
+                "max": max(values),
+            }
+            for name, values in timings.items()
         },
         "warmups": warmups,
         "samples": samples,
@@ -390,6 +512,10 @@ def _peak_rss() -> tuple[int, str]:
     import resource
 
     value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if sys.platform == "darwin":
+        value = (
+            value + 1023
+        ) // 1024  # macOS reports bytes; other supported Unix hosts use KiB.
     return (value if value > 0 else 1), "getrusage"
 
 
@@ -529,6 +655,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--cohort", choices=("development", "evaluation"), default="development"
     )
     parser.add_argument("--timeout", type=int, default=300)
+    parser.add_argument("--profile", choices=("on", "off"), default="on")
+    parser.add_argument("--page-size", type=int, default=100)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.projects < 1 or args.files_per_project < 1 or args.depth < 1:
@@ -537,12 +665,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("repeats must be 1..50, warmups 0..10, and timeout positive")
     if args.cohort == "evaluation" and args.seed == 1729:
         parser.error("Choose a separate --seed for the evaluation cohort")
+    if not 1 <= args.page_size <= 1000:
+        parser.error("page-size must be 1..1000")
     result = (
         run_benchmark(
             projects=args.projects,
             files_per_project=args.files_per_project,
             seed=args.seed,
             depth=args.depth,
+            profile_enabled=args.profile == "on",
+            page_size=args.page_size,
         )
         if args.worker
         else run_repeated(args)

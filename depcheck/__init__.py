@@ -1,5 +1,6 @@
 """Canonical public API for depcheck."""
 
+from ._version import __version__
 from .engine import RepositoryScanner, RepositoryScanOptions
 from .model import (
     AnalysisReport,
@@ -18,8 +19,6 @@ from .model import (
     UsageEvidence,
     VersionConstraint,
 )
-
-from ._version import __version__
 
 __all__ = [
     "AnalysisReport",

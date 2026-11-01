@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+import os
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-import os
 from pathlib import Path
 from typing import Any
+
 from packaging.markers import Marker
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
-ANALYSIS_REVISION = 57
+ANALYSIS_REVISION = 88
 
 
 class CapabilityState(StrEnum):
@@ -169,6 +170,7 @@ class ResolvedDependency:
     instance_id: str | None = None
     dependency_links: tuple[ResolvedDependencyLink, ...] = field(default_factory=tuple)
     origin: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def identity(self) -> PackageIdentity:
@@ -245,6 +247,7 @@ class EvidenceBundle:
                     "direct": item.direct,
                     "integrity": item.integrity,
                     "origin": dict(item.origin),
+                    "metadata": dict(item.metadata),
                     "dependencies": [
                         package.to_dict() for package in item.dependencies
                     ],
@@ -338,6 +341,14 @@ class PythonRequirement:
     group: str = "runtime"
     kind: str = "direct"
     origin: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        from depcheck.evidence.origins import redact_source
+
+        object.__setattr__(self, "origin", redact_source(dict(self.origin)))
+        object.__setattr__(self, "metadata", redact_source(dict(self.metadata)))
+        object.__setattr__(self, "raw_requirement", redact_source(self.raw_requirement))
 
     @classmethod
     def from_requirement(
@@ -348,9 +359,10 @@ class PythonRequirement:
         group: str = "runtime",
         kind: str = "direct",
         origin: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> PythonRequirement:
         parsed = Requirement(raw_requirement.strip())
-        from depcheck.python_sources import python_origin
+        from depcheck.evidence.origins import python_origin, redact_source
 
         # A direct URL takes precedence over a configured registry assertion.
         if parsed.url:
@@ -362,7 +374,7 @@ class PythonRequirement:
         return cls(
             name=str(canonicalize_name(parsed.name)),
             display_name=parsed.name,
-            raw_requirement=raw_requirement.strip(),
+            raw_requirement=redact_source(raw_requirement.strip()),
             specifier=parsed.specifier,
             marker=parsed.marker,
             extras=tuple(sorted(parsed.extras)),
@@ -370,6 +382,7 @@ class PythonRequirement:
             group=group,
             kind=kind,
             origin=selected_origin,
+            metadata=dict(metadata or {}),
         )
 
     def is_active(self, environment: Mapping[str, str] | None = None) -> bool:
@@ -416,6 +429,11 @@ class Diagnostic:
     severity: str
     message: str
     source: SourceLocation | None = None
+
+    def __post_init__(self) -> None:
+        from depcheck.evidence.origins import redact_source
+
+        object.__setattr__(self, "message", redact_source(self.message))
 
     def to_dict(self, root: Path | None = None) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -543,6 +561,7 @@ class ScanResult:
                 "direct": item.direct,
                 "integrity": item.integrity,
                 **({"origin": dict(item.origin)} if item.origin else {}),
+                "metadata": dict(item.metadata),
                 "dependencies": [
                     {
                         "ecosystem": link.package.ecosystem,

@@ -3,20 +3,29 @@ from __future__ import annotations
 import json
 import subprocess
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from depcheck.analyzer.import_scanner import ImportScanner
-from depcheck.bounded_io import repository_operation
 from depcheck.config import DepcheckConfig, load_project_config
 from depcheck.ecosystems import create_default_registry
-from depcheck.ecosystems.python import _uv_workspace_root, named_component_roots
-from depcheck.ecosystems.python_manifest import PythonManifestCollector
-from depcheck.ecosystems.python_script import inline_script_files
+from depcheck.ecosystems.python.collector import (
+    _uv_workspace_root,
+    named_component_roots,
+)
+from depcheck.ecosystems.python.imports import ImportScanner
+from depcheck.ecosystems.python.manifest import PythonManifestCollector
+from depcheck.ecosystems.python.script import inline_script_files
 from depcheck.engine import RepositoryScanner, RepositoryScanOptions
+from depcheck.filesystem import (
+    default_index_path,
+    external_path_executable,
+    repository_operation,
+)
+from depcheck.indexing.models import evidence_metadata
 from depcheck.model import ANALYSIS_REVISION as ANALYSIS_REVISION
 from depcheck.model import ScanResult
-from depcheck.path_policy import default_index_path, external_path_executable
 from depcheck.profiling import measured
 
 from .analysis import _report_from_scan, analyze_cached_evidence
@@ -38,7 +47,6 @@ from .fingerprints import (
     _relative as _relative,
 )
 from .models import INDEX_SCHEMA, IndexRefreshResult
-from .publication import evidence_metadata
 from .store import IndexStore
 
 
@@ -49,6 +57,7 @@ class RepositoryIndexer:
         self.import_scanner = import_scanner or ImportScanner()
 
     @repository_operation("project_root")
+    @measured("index.refresh")
     def refresh(
         self,
         project_root: Path,
@@ -211,7 +220,7 @@ class RepositoryIndexer:
                 manifest_digests = candidate_manifest_digests
 
             with store.transaction():
-                store.remove_files(sorted(removed_python))
+                store.remove_python_files(sorted(removed_python))
                 for relative in sorted(changed_python):
                     absolute = python_by_relative[relative]
                     store.replace_python_file(
@@ -513,6 +522,7 @@ class RepositoryIndex:
             )
         return context
 
+    @measured("query.context")
     def _context(self) -> dict[str, Any]:
         if not self.index_path.is_file():
             return {
@@ -549,91 +559,95 @@ class RepositoryIndex:
                 "refresh_plan": _refresh_plan(["index-missing"], {}),
             }
         with IndexStore(self.project_root, self.index_path, read_only=True) as store:
-            metadata = store.metadata()
-            scope = _scope_from_metadata(metadata)
-            current_digest: str | None
-            if scope["repository_complete"] and metadata.get("refresh_mode") != "scan":
-                current_digest, changes = _workspace_freshness(
-                    self.project_root,
-                    store.file_digests("manifest"),
-                    previous_python=store.file_digests("python"),
-                )
-            else:
-                current_digest, changes = _filtered_workspace_freshness(
-                    self.project_root,
-                    scope,
-                    metadata,
-                    self.index_path,
-                )
-            reasons: list[str] = []
-            if metadata.get("config_digest") != _config_digest(
-                load_project_config(self.project_root)
-            ):
-                reasons.append("configuration-or-analysis-revision")
-            if metadata.get("workspace_digest") != current_digest:
-                reasons.append("workspace-content")
-            if scope["repository_complete"]:
-                current_head = _git_head(self.project_root) or ""
-                if metadata.get("git_head", "") != current_head:
-                    reasons.append("git-head")
-            projects = store.projects()
-            incomplete_reasons = sorted(
-                {
-                    str(capability["reason"])
-                    for project in projects
-                    for capability in project["capabilities"].values()
-                    if not capability["complete"] and capability["reason"]
-                }
+            with store.transaction():
+                return self._context_from_store(store)
+
+    @measured("query.freshness")
+    def _context_from_store(self, store: IndexStore) -> dict[str, Any]:
+        metadata = store.metadata()
+        scope = _scope_from_metadata(metadata)
+        current_digest: str | None
+        if scope["repository_complete"] and metadata.get("refresh_mode") != "scan":
+            current_digest, changes = _workspace_freshness(
+                self.project_root,
+                store.file_digests("manifest"),
+                previous_python=store.file_digests("python"),
             )
-            if not scope["repository_complete"]:
-                incomplete_reasons.append("index-selection")
-            coverage = json.loads(metadata.get("coverage", '{"uncovered": []}'))
-            incomplete_reasons.extend(
-                entry["reason"] for entry in coverage.get("uncovered", [])
+        else:
+            current_digest, changes = _filtered_workspace_freshness(
+                self.project_root,
+                scope,
+                metadata,
+                self.index_path,
             )
-            return {
+        reasons: list[str] = []
+        if metadata.get("config_digest") != _config_digest(
+            load_project_config(self.project_root)
+        ):
+            reasons.append("configuration-or-analysis-revision")
+        if metadata.get("workspace_digest") != current_digest:
+            reasons.append("workspace-content")
+        if scope["repository_complete"]:
+            current_head = _git_head(self.project_root) or ""
+            if metadata.get("git_head", "") != current_head:
+                reasons.append("git-head")
+        projects = store.projects()
+        incomplete_reasons = sorted(
+            {
+                str(capability["reason"])
+                for project in projects
+                for capability in project["capabilities"].values()
+                if not capability["complete"] and capability["reason"]
+            }
+        )
+        if not scope["repository_complete"]:
+            incomplete_reasons.append("index-selection")
+        coverage = json.loads(metadata.get("coverage", '{"uncovered": []}'))
+        incomplete_reasons.extend(
+            entry["reason"] for entry in coverage.get("uncovered", [])
+        )
+        return {
+            "schema": metadata.get("schema"),
+            "root": metadata.get("root"),
+            "index_path": self.index_path.as_posix(),
+            "indexed": True,
+            "indexed_at": metadata.get("indexed_at"),
+            "git_head": metadata.get("git_head") or None,
+            "stale": bool(reasons),
+            "stale_reasons": reasons,
+            "refresh_plan": _refresh_plan(
+                reasons, changes, mode=metadata.get("refresh_mode", "unknown")
+            ),
+            "complete": metadata.get("complete") == "true",
+            "status": metadata.get("status"),
+            "scope": scope,
+            "projects": projects,
+            "ecosystems": store.ecosystem_summary(),
+            "incomplete_reasons": sorted(set(incomplete_reasons)),
+            "coverage": coverage,
+            "index": {
                 "schema": metadata.get("schema"),
-                "root": metadata.get("root"),
-                "index_path": self.index_path.as_posix(),
                 "indexed": True,
                 "indexed_at": metadata.get("indexed_at"),
-                "git_head": metadata.get("git_head") or None,
-                "stale": bool(reasons),
-                "stale_reasons": reasons,
-                "refresh_plan": _refresh_plan(
-                    reasons, changes, mode=metadata.get("refresh_mode", "unknown")
-                ),
-                "complete": metadata.get("complete") == "true",
-                "status": metadata.get("status"),
-                "scope": scope,
-                "projects": projects,
-                "ecosystems": store.ecosystem_summary(),
-                "incomplete_reasons": sorted(set(incomplete_reasons)),
-                "coverage": coverage,
-                "index": {
-                    "schema": metadata.get("schema"),
-                    "indexed": True,
-                    "indexed_at": metadata.get("indexed_at"),
-                },
-                "counts": {
-                    key: int(metadata.get(key, "0"))
-                    for key in (
-                        "source_file_count",
-                        "python_file_count",
-                        "manifest_file_count",
-                        "import_location_count",
-                        "declaration_count",
-                        "finding_count",
-                        "diagnostic_count",
-                    )
-                },
-            }
+            },
+            "counts": {
+                key: int(metadata.get(key, "0"))
+                for key in (
+                    "source_file_count",
+                    "python_file_count",
+                    "manifest_file_count",
+                    "import_location_count",
+                    "declaration_count",
+                    "finding_count",
+                    "diagnostic_count",
+                )
+            },
+        }
 
     def findings(
         self, *, package: str | None = None, limit: int = 100
     ) -> list[dict[str, Any]]:
-        self._require_index()
-        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
+        with self._current_store() as store:
             return store.findings(package=package, limit=limit)
 
     @measured("query.dependencies")
@@ -647,8 +661,7 @@ class RepositoryIndex:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        self._require_index()
-        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
+        with self._current_store() as store:
             return store.dependency_inventory(
                 search=search,
                 package=package,
@@ -661,10 +674,9 @@ class RepositoryIndex:
     def dependency_origins(
         self, project_id: str, package: str, ecosystem: str, *, limit: int, depth: int
     ) -> dict[str, Any]:
-        from depcheck.origins import dependency_origins
+        from depcheck.evidence.origins import dependency_origins
 
-        self._require_index()
-        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
+        with self._current_store() as store:
             return dependency_origins(
                 project_id,
                 package,
@@ -684,10 +696,9 @@ class RepositoryIndex:
         origin_limit: int,
         origin_depth: int,
     ) -> list[dict[str, Any]]:
-        from depcheck.origins import dependency_origins
+        from depcheck.evidence.origins import dependency_origins
 
-        self._require_index()
-        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
+        with self._current_store() as store:
             records = store.dependency_inventory(
                 package=package, ecosystem=ecosystem, project_id=project_id, limit=limit
             )
@@ -703,15 +714,19 @@ class RepositoryIndex:
                 )
             return records
 
-    def _require_index(self) -> None:
+    @contextmanager
+    def _current_store(self) -> Iterator[IndexStore]:
         if not self.index_path.is_file():
             raise FileNotFoundError(
                 f"repository index does not exist: {self.index_path}"
             )
-        if self._context()["stale"]:
-            raise RuntimeError(
-                "repository index is stale; run 'depcheck index' before querying"
-            )
+        with IndexStore(self.project_root, self.index_path, read_only=True) as store:
+            with store.transaction():
+                if self._context_from_store(store)["stale"]:
+                    raise RuntimeError(
+                        "repository index is stale; run 'depcheck index' before querying"
+                    )
+                yield store
 
 
 def _refresh_plan(

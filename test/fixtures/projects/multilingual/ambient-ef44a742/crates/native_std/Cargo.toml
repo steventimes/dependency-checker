@@ -1,0 +1,86 @@
+[package]
+name = "ambient_native_std"
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = "2021"
+description = "Ambient internal standard library. Host-only."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmbientRun/Ambient"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ambient_asset_cache = { path = "../asset_cache/", optional = true, version = "0.3.2-dev" }
+ambient_sys = { path = "../sys", version = "0.3.2-dev" }
+ambient_git_rev = { path = "../git_rev", version = "0.3.2-dev" }
+
+ambient_cb = { path = "../../libs/cb", version = "0.3.2-dev" }
+ambient_color = { path = "../../libs/color", version = "0.3.2-dev" }
+ambient_friendly_id = { path = "../../libs/friendly_id", version = "0.3.2-dev" }
+ambient_math = { path = "../../libs/math", version = "0.3.2-dev" }
+
+ambient_shared_types = { path = "../../shared_crates/shared_types", version = "0.3.2-dev" }
+
+anyhow = { workspace = true }
+tracing = { workspace = true }
+ulid = { workspace = true }
+mikktspace = { workspace = true }
+
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+serde_path_to_error = { workspace = true, optional = true }
+
+glam = { workspace = true, optional = true }
+ordered-float = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["sync"] }
+async-trait = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+sentry-anyhow = { workspace = true, optional = true }
+ring = { workspace = true, optional = true }
+data-encoding = { workspace = true, optional = true }
+bincode = { workspace = true, optional = true }
+convert_case = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+relative-path = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+percent-encoding = { workspace = true, optional = true }
+semver = { workspace = true }
+
+[features]
+# This package was very quickly partitioned to allow its use in build scripts
+# without dragging in all of its dependencies. If you have some free time, try
+# splitting these up into finer-grained features!
+default = ["all"]
+all = ["uncategorized"]
+uncategorized = [
+    "dep:ambient_asset_cache",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:serde_path_to_error",
+    "dep:glam",
+    "dep:ordered-float",
+    "dep:rand",
+    "dep:tokio",
+    "dep:async-trait",
+    "dep:futures",
+    "dep:bytemuck",
+    "dep:reqwest",
+    "dep:thiserror",
+    "dep:sentry-anyhow",
+    "dep:ring",
+    "dep:data-encoding",
+    "dep:bincode",
+    "dep:convert_case",
+    "dep:url",
+    "dep:relative-path",
+    "dep:toml",
+    "dep:percent-encoding",
+]
+
+# Changes in behaviour
+hotload-includes = []
+sentry = []

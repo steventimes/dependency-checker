@@ -1,5 +1,11 @@
 # Backend workflow
 
+0. Call `backend_info` when available. Check backend version, analysis revision
+   (88 for the current source), index schema v8 and tool contract revision. An
+   older server without this tool needs a compatible CLI fallback or restart;
+   do not let it overwrite a newer cache. `depcheck runtime` checks CLI identity.
+   These return `depcheck.runtime.v1` and need no project root. Identity does not
+   establish cache freshness, coverage or source authenticity.
 1. Call `repository_context` with the target `project_root`. If `indexed` is
    false or `stale` is true, refresh once: use `scan_repository` for a hygiene
    audit, or `index_repository` for inventory/explanation only. Reuse the scan's
@@ -8,7 +14,16 @@
    project details. A fresh index can remain incomplete; inspect the reasons
    instead of refreshing again without a relevant file or configuration change.
    An incompatible-schema error needs `index_repository` to rebuild the cache;
-   querying it will not migrate or discard it.
+   querying it will not migrate or discard it. Unsafe executable/mismatched
+   cache schemas are rejected: move the rejected cache aside before rebuilding.
+   A conflict with another publisher needs a new refresh after that writer
+   finishes; do not report the failed attempt as a completed index or loop
+   indefinitely. Failure before replacement preserves the previous default cache;
+   an interruption after replacement can leave a complete new generation. Check
+   context before retrying. Queries do not acquire write locks or repair it.
+   Do not delete an active Windows
+   `.depcheck-publish.lock` guard. Process interruption can leave an unpublished
+   temporary snapshot; it is not an index generation and readers ignore it.
 2. Check `projects`, `ecosystems`, and `scope` against the requested coverage.
    Read scan `metadata.coverage` and context `coverage` for recognized uncovered
    paths and reasons. A repository selection does not establish coverage of

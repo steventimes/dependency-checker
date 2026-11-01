@@ -9,8 +9,12 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import NormalizedName, canonicalize_name
 
-from depcheck.path_policy import require_within_project
-from depcheck.bounded_io import read_bytes, atomic_write, ContentChangedError
+from depcheck.filesystem import (
+    ContentChangedError,
+    atomic_write,
+    read_bytes,
+    require_within_project,
+)
 
 
 @dataclass(frozen=True)

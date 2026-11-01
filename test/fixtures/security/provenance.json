@@ -1,0 +1,42 @@
+{
+  "repository": "github/advisory-database",
+  "commit": "82dfed5ec0514a8dc4970fad6276a8a84f64fe2d",
+  "license": "CC-BY-4.0",
+  "license_url": "https://raw.githubusercontent.com/github/advisory-database/82dfed5ec0514a8dc4970fad6276a8a84f64fe2d/LICENSE.md",
+  "attribution": "GitHub Advisory Database contributors",
+  "retrieved_at": "2026-10-23",
+  "retained": "Unmodified upstream OSV record bytes and license; separate original manual annotations. No scanner-generated labels.",
+  "retained_fixtures": [
+    {
+      "path": "GHSA-35jh-r3h4-6jhm.json",
+      "source": "https://raw.githubusercontent.com/github/advisory-database/82dfed5ec0514a8dc4970fad6276a8a84f64fe2d/advisories/github-reviewed/2021/05/GHSA-35jh-r3h4-6jhm/GHSA-35jh-r3h4-6jhm.json",
+      "sha256": "3060fadb9a686e5041d53fe5c20c7844b2a0a49ce8d7b3d89d70703be02ec4f1"
+    },
+    {
+      "path": "GHSA-9wx4-h78v-vm56.json",
+      "source": "https://raw.githubusercontent.com/github/advisory-database/82dfed5ec0514a8dc4970fad6276a8a84f64fe2d/advisories/github-reviewed/2024/05/GHSA-9wx4-h78v-vm56/GHSA-9wx4-h78v-vm56.json",
+      "sha256": "70512525810537235007b1c284ec69258ef6dc693ad75f30e9e5ebfedf6a5d8e"
+    },
+    {
+      "path": "GHSA-jfh8-c2jp-5v3q.json",
+      "source": "https://raw.githubusercontent.com/github/advisory-database/82dfed5ec0514a8dc4970fad6276a8a84f64fe2d/advisories/github-reviewed/2021/12/GHSA-jfh8-c2jp-5v3q/GHSA-jfh8-c2jp-5v3q.json",
+      "sha256": "eef5e2eb13590f4bf3f98d0eb425a5be2c7c186c4e02ab6879a5f25b506de3bd"
+    },
+    {
+      "path": "GHSA-mm7v-vpv8-xfc3.json",
+      "source": "https://raw.githubusercontent.com/github/advisory-database/82dfed5ec0514a8dc4970fad6276a8a84f64fe2d/advisories/github-reviewed/2021/08/GHSA-mm7v-vpv8-xfc3/GHSA-mm7v-vpv8-xfc3.json",
+      "sha256": "b19fcab3f666efa4a0856d655ded5b9aa652768ed765409937375692c88133e2"
+    },
+    {
+      "path": "GHSA-4374-p667-p6c8.json",
+      "source": "https://raw.githubusercontent.com/github/advisory-database/82dfed5ec0514a8dc4970fad6276a8a84f64fe2d/advisories/github-reviewed/2023/10/GHSA-4374-p667-p6c8/GHSA-4374-p667-p6c8.json",
+      "git_blob_sha": "4087310b22fbf01b50ade0e948e3070c36e02daf",
+      "sha256": "8e1f45491cab440256f5c2a1cd8988753224c2de672ba47fc53df667a9c8ce0e"
+    },
+    {
+      "path": "LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/github/advisory-database/82dfed5ec0514a8dc4970fad6276a8a84f64fe2d/LICENSE.md",
+      "sha256": "9e5f1b3c610b9c2da5c313bf81d577a7d1acec686bdb0384edefa6df0f90cd94"
+    }
+  ]
+}

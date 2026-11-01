@@ -1,0 +1,41 @@
+{
+  "commit": "8a2a14d63da701e980f856d8772d273fd448b8a1",
+  "tag": "v3.6.9",
+  "files": [
+    {
+      "path": "lib/rubygems/version.rb",
+      "url": "https://raw.githubusercontent.com/ruby/rubygems/8a2a14d63da701e980f856d8772d273fd448b8a1/lib/rubygems/version.rb",
+      "sha256": "712bca6acd43c9a6cc226afc65a44cfc38e3eb9737a4b357f734c5e1ed20f519",
+      "bytes": 13668
+    },
+    {
+      "path": "test/rubygems/test_gem_version.rb",
+      "url": "https://raw.githubusercontent.com/ruby/rubygems/8a2a14d63da701e980f856d8772d273fd448b8a1/test/rubygems/test_gem_version.rb",
+      "sha256": "a2b631703449e31a0f78c595a32fb463d1d24f3b4618a5ef8066167d3c54bfa0",
+      "bytes": 8581
+    },
+    {
+      "path": "MIT.txt",
+      "url": "https://raw.githubusercontent.com/ruby/rubygems/8a2a14d63da701e980f856d8772d273fd448b8a1/MIT.txt",
+      "sha256": "4dfcfe3109885eda7274c85053f0fe0e1c99ae8777e4c58297d447bf3e859545",
+      "bytes": 1138
+    },
+    {
+      "path": "LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/ruby/rubygems/8a2a14d63da701e980f856d8772d273fd448b8a1/LICENSE.txt",
+      "sha256": "a47865226d6998fc4da794f7fbfd11c3c21aa64e258b131a867eec8a2908438c",
+      "bytes": 2265
+    }
+  ],
+  "license": "MIT",
+  "retained_fixtures": [
+    {
+      "path": "test_gem_version.rb",
+      "sha256": "a2b631703449e31a0f78c595a32fb463d1d24f3b4618a5ef8066167d3c54bfa0"
+    },
+    {
+      "path": "MIT.txt",
+      "sha256": "4dfcfe3109885eda7274c85053f0fe0e1c99ae8777e4c58297d447bf3e859545"
+    }
+  ]
+}

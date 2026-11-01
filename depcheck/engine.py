@@ -3,11 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from depcheck.bounded_io import repository_operation
 from depcheck.compatibility.checker import CompatibilityChecker
 from depcheck.compatibility.scanning import analyze_compatibility
 from depcheck.config import DepcheckConfig, load_project_config
@@ -18,6 +17,8 @@ from depcheck.ecosystems import (
 )
 from depcheck.ecosystems.coverage import repository_coverage
 from depcheck.ecosystems.preparation import analyze_bundle, without_ignored
+from depcheck.filesystem import repository_operation
+from depcheck.filesystem.positions import toml_position_scope
 from depcheck.model import (
     ANALYSIS_REVISION,
     AnalysisReport,
@@ -44,6 +45,7 @@ class RepositoryScanOptions:
     import_mapping: Mapping[str, str] = field(default_factory=dict)
     python_version: str | None = None
     dependency_groups: tuple[str, ...] = field(default_factory=tuple)
+    public_maven_packages: tuple[str, ...] = field(default_factory=tuple)
 
 
 class RepositoryScanner:
@@ -61,6 +63,7 @@ class RepositoryScanner:
         self.compatibility_checker = compatibility_checker or CompatibilityChecker()
 
     @repository_operation("repository_root")
+    @toml_position_scope()
     def scan(
         self,
         repository_root: Path,
@@ -70,6 +73,16 @@ class RepositoryScanner:
         if not root.is_dir():
             raise ValueError(f"repository root is not a directory: {root}")
         active = options or RepositoryScanOptions()
+        from depcheck.ecosystems.java.coordinates import package_ref as maven_package
+
+        public_maven = {
+            name: maven_package(name, public=True)
+            for name in active.public_maven_packages
+        }
+        if any(package.purl is None for package in public_maven.values()):
+            raise ValueError(
+                "public Maven assertions require exact group:artifact coordinates"
+            )
         config = load_project_config(root)
         enabled = (
             config.enabled_ecosystems
@@ -121,6 +134,29 @@ class RepositoryScanner:
             bundles.append(bundle)
             reports.append(report)
 
+        if public_maven:
+            bundles = [
+                replace(
+                    bundle,
+                    resolved=tuple(
+                        replace(
+                            item,
+                            package=public_maven[item.package.name],
+                            origin={
+                                **item.origin,
+                                "public": True,
+                                "public_assertion": "caller-supplied-coordinate",
+                            },
+                        )
+                        if item.package.ecosystem.lower() == "maven"
+                        and item.package.name in public_maven
+                        else item
+                        for item in bundle.resolved
+                    ),
+                )
+                for bundle in bundles
+            ]
+
         coverage, coverage_diagnostics = repository_coverage(
             root,
             tuple(bundles),
@@ -138,6 +174,8 @@ class RepositoryScanner:
                 tuple(bundles),
                 reports,
             )
+        from depcheck.contracts import backend_info
+
         compatibility_metadata: dict[str, Any] = {}
         compatibility_capability: Capability | None = None
         compatibility_enabled = (
@@ -239,6 +277,7 @@ class RepositoryScanner:
                 identity: tuple(issues) for identity, issues in vulnerabilities.items()
             },
             metadata={
+                "backend": backend_info(),
                 "compatibility": compatibility_metadata,
                 "coverage": coverage,
                 "snapshot": {
@@ -262,6 +301,10 @@ class RepositoryScanner:
                                 "ignored": sorted(active.ignored_packages),
                                 "mappings": dict(active.import_mapping),
                                 "python_version": active.python_version,
+                                "dependency_groups": sorted(active.dependency_groups),
+                                "public_maven_packages": sorted(
+                                    active.public_maven_packages
+                                ),
                             },
                             sort_keys=True,
                         ).encode()
@@ -279,7 +322,7 @@ class RepositoryScanner:
     ):
         pack = registry.get(project.ecosystem)
         if project.ecosystem.lower() == "pypi":
-            from depcheck.ecosystems.python import create_python_pack
+            from depcheck.ecosystems.python.collector import create_python_pack
 
             mapping = config.mapping_for(project.ecosystem, project.project_id)
             mapping.update(
@@ -287,7 +330,7 @@ class RepositoryScanner:
             )
             return create_python_pack(mapping)
         if project.ecosystem.lower() == "npm":
-            from depcheck.ecosystems.javascript import create_npm_pack
+            from depcheck.ecosystems.javascript.collector import create_npm_pack
 
             mapping = config.mapping_for(project.ecosystem, project.project_id)
             mapping.update(
@@ -301,13 +344,16 @@ class RepositoryScanner:
             mapping.update(options.import_mapping)
             return create_go_pack(mapping)
         if project.ecosystem.lower() == "maven":
-            from depcheck.ecosystems.java import create_maven_pack
+            from depcheck.ecosystems.java.collector import create_maven_pack
 
             mapping = config.mapping_for(project.ecosystem, project.project_id)
             mapping.update(options.import_mapping)
             return create_maven_pack(mapping)
         if project.ecosystem.lower() in {"conan", "vcpkg"}:
-            from depcheck.ecosystems.cpp import create_conan_pack, create_vcpkg_pack
+            from depcheck.ecosystems.cpp.collector import (
+                create_conan_pack,
+                create_vcpkg_pack,
+            )
 
             mapping = config.mapping_for(project.ecosystem, project.project_id)
             mapping.update(options.import_mapping)

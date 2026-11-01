@@ -1,0 +1,59 @@
+{
+  "retained": "Unmodified upstream records and license bytes; research assertions are annotated separately.",
+  "licenses": {
+    "Bitnami": "Apache-2.0",
+    "Hackage advisory data": "CC0-1.0; repository processing code is separately licensed"
+  },
+  "retrieved_at": "2026-10-24",
+  "retained_fixtures": [
+    {
+      "path": "BIT-activemq-2023-46604.json",
+      "source": "https://raw.githubusercontent.com/bitnami/vulndb/51c33851f3b6673be5043f4ae50b5b5faf0e2f31/data/activemq/BIT-activemq-2023-46604.json",
+      "commit": "51c33851f3b6673be5043f4ae50b5b5faf0e2f31",
+      "sha256": "edb1f764eef2446f584920dd3eab6a97a42315c30cb2a758ccd175a6515aa48a",
+      "git_blob_sha1": "51a99a728136978dd4d81a32657b5a1aa2691b69"
+    },
+    {
+      "path": "BIT-django-2024-42005.json",
+      "source": "https://raw.githubusercontent.com/bitnami/vulndb/51c33851f3b6673be5043f4ae50b5b5faf0e2f31/data/django/BIT-django-2024-42005.json",
+      "commit": "51c33851f3b6673be5043f4ae50b5b5faf0e2f31",
+      "sha256": "29441bd0cef5dec96bbeed186ae92ec83fb1b2000802c6e3c7f91b13db0286bd",
+      "git_blob_sha1": "fe59acb25d55d8732f614276527216b15d41992f"
+    },
+    {
+      "path": "HSEC-2024-0002.json",
+      "source": "https://raw.githubusercontent.com/haskell/security-advisories/b3b322f94099749633bf31c50a824b2ad1054bb0/2024/HSEC-2024-0002.json",
+      "commit": "b3b322f94099749633bf31c50a824b2ad1054bb0",
+      "sha256": "99c1e83f82f4d842522c53daada7237962fc84537f222e0a39584ec922e9005a",
+      "git_blob_sha1": "19b11c324650d7633f8cbd98aec23aab3b68f419"
+    },
+    {
+      "path": "HSEC-2025-0002.json",
+      "source": "https://raw.githubusercontent.com/haskell/security-advisories/b3b322f94099749633bf31c50a824b2ad1054bb0/2025/HSEC-2025-0002.json",
+      "commit": "b3b322f94099749633bf31c50a824b2ad1054bb0",
+      "sha256": "298e9c03b4cbfd2a4b3fd26e2eef073fa54e7324af3d794caeeaf79302f1c316",
+      "git_blob_sha1": "d89628696e1a3be6a5c9b85267fb956a4e3949a0"
+    },
+    {
+      "path": "HSEC-2026-0010.json",
+      "source": "https://raw.githubusercontent.com/haskell/security-advisories/b3b322f94099749633bf31c50a824b2ad1054bb0/2026/HSEC-2026-0010.json",
+      "commit": "b3b322f94099749633bf31c50a824b2ad1054bb0",
+      "sha256": "1c7751da37a58fe61911c10413b58dc4694e37174f951ef42b507b8a2bc2af72",
+      "git_blob_sha1": "1ee7f50707cdc0d121d557cd2ea9c1be90a46a9e"
+    },
+    {
+      "path": "LICENSE-Bitnami.txt",
+      "source": "https://raw.githubusercontent.com/bitnami/vulndb/51c33851f3b6673be5043f4ae50b5b5faf0e2f31/LICENSE.md",
+      "commit": "51c33851f3b6673be5043f4ae50b5b5faf0e2f31",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "git_blob_sha1": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64"
+    },
+    {
+      "path": "LICENSE-Haskell.txt",
+      "source": "https://raw.githubusercontent.com/haskell/security-advisories/f4418546ae5a26d7c725f5687a7e7197d406b004/LICENSE.txt",
+      "commit": "f4418546ae5a26d7c725f5687a7e7197d406b004",
+      "sha256": "ba9473c6607020f176ab12286718aec1124aaafeef2fad9022190a5eca4bad36",
+      "git_blob_sha1": "d3fbc78689f39f48f6ceab0cc649a4f6d6892463"
+    }
+  ]
+}
