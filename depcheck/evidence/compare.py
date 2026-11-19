@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
 from depcheck.evidence.input import parse_evidence_json as parse_evidence_json
@@ -74,6 +75,14 @@ def compare_snapshots(
             changes[category + "_removed"] = [
                 old[k] for k in sorted(old.keys() - new.keys())
             ]
+        changes["declarations_changed"] = (
+            _changed_declarations(left, right)
+            if inventory_complete
+            and all(
+                _declaration_identities_complete(snapshot) for snapshot in (left, right)
+            )
+            else []
+        )
     if not inventory_complete or not security_complete:
         diagnostics.append(
             {
@@ -201,6 +210,176 @@ def _declarations(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "source": location,
         }
     return result
+
+
+def _changed_declarations(
+    before: dict[str, Any], after: dict[str, Any]
+) -> list[dict[str, Any]]:
+    def raw_constraint(declaration: dict[str, Any]) -> Any:
+        value = declaration["constraint"]
+        return value.get("raw") if isinstance(value, dict) else value
+
+    def grouped(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for declaration in _declarations(snapshot).values():
+            if not all(
+                isinstance(declaration[field], str) and declaration[field].strip()
+                for field in (
+                    "project_id",
+                    "ecosystem",
+                    "package",
+                    "location",
+                    "kind",
+                    "scope",
+                )
+            ):
+                continue
+            ecosystem = declaration["ecosystem"].lower()
+            package = declaration["package"]
+            metadata = declaration["metadata"]
+            if ecosystem == "pypi":
+                package = str(canonicalize_name(package))
+                origin = metadata.get("origin")
+                if isinstance(origin, dict) and origin.get("kind") == "registry":
+                    registry_location = origin.get("location")
+                    registry_assertion = origin.get("assertion")
+                    has_registry_identity = (
+                        isinstance(registry_location, str)
+                        and bool(registry_location.strip())
+                    ) or (
+                        isinstance(registry_assertion, dict)
+                        and isinstance(registry_assertion.get("registry"), str)
+                        and bool(registry_assertion["registry"].strip())
+                    )
+                    raw_requirement = metadata.get("raw_requirement")
+                    extras = metadata.get("extras")
+                    group = metadata.get("group")
+                    constraint = declaration["constraint"]
+                    constraint_raw = raw_constraint(declaration)
+                    valid_constraint = (
+                        isinstance(constraint, dict)
+                        and constraint.get("scheme") == "pep440"
+                        and isinstance(constraint_raw, str)
+                        and (
+                            constraint.get("normalized") == constraint_raw
+                            if constraint_raw.strip()
+                            else constraint_raw == ""
+                            and constraint.get("normalized") is None
+                        )
+                    )
+                    if (
+                        not isinstance(raw_requirement, str)
+                        or not raw_requirement.strip()
+                        or not isinstance(extras, list)
+                        or not all(isinstance(extra, str) and extra for extra in extras)
+                        or not isinstance(group, str)
+                        or not group.strip()
+                        or not isinstance(origin.get("public"), bool)
+                        or not has_registry_identity
+                        or not valid_constraint
+                    ):
+                        continue
+                    # Keep valid unbounded declarations in the identity group;
+                    # the output step below requires a nonempty constraint.
+                    try:
+                        requirement = Requirement(raw_requirement)
+                    except InvalidRequirement:
+                        continue
+                    requirement_marker = (
+                        str(requirement.marker)
+                        if requirement.marker is not None
+                        else None
+                    )
+                    if (
+                        requirement.url is not None
+                        or str(canonicalize_name(requirement.name)) != package
+                        or sorted(requirement.extras) != sorted(extras)
+                        or requirement_marker != declaration["marker"]
+                        or str(requirement.specifier) != constraint_raw
+                    ):
+                        continue
+                    metadata = {
+                        key: value
+                        for key, value in metadata.items()
+                        if key != "raw_requirement"
+                    }
+            identity = {
+                "project_id": declaration["project_id"],
+                "ecosystem": ecosystem,
+                "package": package,
+                "path": declaration["location"],
+                "kind": declaration["kind"],
+                "scope": declaration["scope"],
+                "marker": declaration["marker"],
+                "metadata": metadata,
+            }
+            groups.setdefault(_key(identity), []).append(declaration)
+        return groups
+
+    old, new = grouped(before), grouped(after)
+    changes = []
+
+    for key in sorted(old.keys() & new.keys()):
+        if len(old[key]) != 1 or len(new[key]) != 1:
+            continue
+        previous, current = old[key][0], new[key][0]
+        before_constraint = raw_constraint(previous)
+        after_constraint = raw_constraint(current)
+        if (
+            not isinstance(before_constraint, str)
+            or not before_constraint.strip()
+            or not isinstance(after_constraint, str)
+            or not after_constraint.strip()
+        ):
+            continue
+        if before_constraint == after_constraint:
+            continue
+        changes.append(
+            {
+                "identity": {
+                    "project_id": previous["project_id"],
+                    "ecosystem": previous["ecosystem"].lower(),
+                    "package": previous["package"],
+                },
+                "before_constraint": before_constraint,
+                "after_constraint": after_constraint,
+                "before_source": previous["source"],
+                "after_source": current["source"],
+                "interpretation": "declared-constraint-change; resolved-version-and-remediation-not-established",
+            }
+        )
+    return changes
+
+
+def _declaration_identities_complete(snapshot: dict[str, Any]) -> bool:
+    declarations = _inventory(snapshot).get("declarations")
+    if not isinstance(declarations, list):
+        return False
+    for declaration in declarations:
+        if not isinstance(declaration, dict):
+            return False
+        package = declaration.get("package")
+        location = declaration.get("location")
+        if (
+            not all(
+                isinstance(declaration.get(field), str) and declaration[field].strip()
+                for field in ("project_id", "scope", "kind")
+            )
+            or not isinstance(package, dict)
+            or not isinstance(package.get("name"), str)
+            or not package["name"].strip()
+            or not isinstance(package.get("ecosystem"), str)
+            or not package["ecosystem"].strip()
+            or "marker" not in declaration
+            or declaration["marker"] is not None
+            and not isinstance(declaration["marker"], str)
+            or not isinstance(declaration.get("metadata"), dict)
+            or not isinstance(location, dict)
+            or not isinstance(location.get("path"), str)
+            or not location["path"].strip()
+        ):
+            return False
+    return True
 
 
 def _edges(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -409,6 +409,61 @@ def _import_package(reference: str) -> str | None:
     return value.split("/", 1)[0].lower()
 
 
+def _has_confirmed_self_export(
+    reference: str, package_name: object, exports: object
+) -> bool:
+    """Check a package self-reference only against its exact declared export."""
+    if not isinstance(package_name, str):
+        return False
+    try:
+        name = registry_name(package_name).lower()
+    except StaticReadError:
+        return False
+    if _import_package(reference) != name:
+        return False
+    if reference == name:
+        export_key = "."
+    elif reference.startswith(name + "/"):
+        export_key = "./" + reference[len(name) + 1 :]
+    else:
+        return False
+    if export_key != "." and any(
+        part in {"", ".", "..", "node_modules"} or "%" in part or "\\" in part
+        for part in export_key[2:].split("/")
+    ):
+        return False
+
+    if isinstance(exports, Mapping) and any(
+        isinstance(key, str) and key.startswith(".") for key in exports
+    ):
+        if export_key not in exports:
+            return False
+        target = exports[export_key]
+    elif export_key == ".":
+        target = exports
+    else:
+        return False
+    return _has_static_export_target(target)
+
+
+def _has_static_export_target(value: object) -> bool:
+    if isinstance(value, str):
+        if not value.startswith("./"):
+            return False
+        return all(
+            part not in {"", ".", "..", "node_modules"}
+            and "%" not in part
+            and "\\" not in part
+            and "*" not in part
+            for part in value[2:].split("/")
+        )
+    if isinstance(value, Mapping):
+        return set(value) == {"import", "require"} and all(
+            _has_static_export_target(target) for target in value.values()
+        )
+    return False
+
+
 def _external_reference(reference: str) -> bool:
     if reference.startswith(("node:", "astro:")):
         return False

@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-No changes recorded after the 0.6.0 release line.
+These notes describe unreleased working-tree changes. Published 0.6.0 assets
+remain unchanged.
+
+- Compare uniquely matched direct declaration constraints in saved scan reports,
+  with both source locations; this does not infer installed versions.
+- Accept CWE 5.0/cwe-8 weakness and relationship projections while reporting
+  omitted sections; this is not full Schema 8 XSD validation.
+- Show retained OSV severity source, package and applicability in text output,
+  separately from the finding level.
 
 ## 0.6.0 — 2026-11-01
 

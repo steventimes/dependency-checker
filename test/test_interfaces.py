@@ -970,9 +970,14 @@ def test_sbom_rejects_invalid_application_reference_at_cli_boundary(
 
 def test_snapshot_comparison_keeps_versions_and_skipped_security_distinct(tmp_path):
 
-    (tmp_path / "package.json").write_text('{"dependencies":{"tool":"*"}}')
     (tmp_path / "main.js").write_text('import "tool";\n')
-    for name, version in (("before.json", "1.0.0"), ("after.json", "2.0.0")):
+    for name, version, constraint in (
+        ("before.json", "1.0.0", "^1.0.0"),
+        ("after.json", "2.0.0", "^2.0.0"),
+    ):
+        (tmp_path / "package.json").write_text(
+            json.dumps({"dependencies": {"tool": constraint}})
+        )
         (tmp_path / "package-lock.json").write_text(
             json.dumps({"packages": {"node_modules/tool": {"version": version}}})
         )
@@ -987,6 +992,72 @@ def test_snapshot_comparison_keeps_versions_and_skipped_security_distinct(tmp_pa
     assert comparison["comparable"] and comparison["read_only"]
     assert comparison["changes"]["resolved_added"][0]["version"] == "2.0.0"
     assert comparison["changes"]["resolved_removed"][0]["version"] == "1.0.0"
+    assert comparison["counts"]["declarations_changed"] == 1
+    declaration_change = comparison["changes"]["declarations_changed"][0]
+    assert declaration_change["before_constraint"] == "^1.0.0"
+    assert declaration_change["after_constraint"] == "^2.0.0"
+    assert declaration_change["before_source"]["path"] == "package.json"
+    assert declaration_change["after_source"]["path"] == "package.json"
+    assert "resolved-version" in declaration_change["interpretation"]
+    ambiguous_before = json.loads(before["before.json"])
+    ambiguous_before["inventory"]["declarations"].append(
+        {
+            **ambiguous_before["inventory"]["declarations"][0],
+            "constraint": None,
+        }
+    )
+    (tmp_path / "ambiguous.json").write_text(json.dumps(ambiguous_before))
+    ambiguous = DependencyAgentService(tmp_path).compare_dependency_snapshots(
+        "ambiguous.json", "after.json"
+    )
+    assert ambiguous["counts"]["declarations_changed"] == 0
+    (tmp_path / "ambiguous.json").unlink()
+    missing_raw_before = json.loads(before["before.json"])
+    missing_raw_before["inventory"]["declarations"][0]["constraint"] = {}
+    (tmp_path / "missing-raw.json").write_text(json.dumps(missing_raw_before))
+    missing_raw = DependencyAgentService(tmp_path).compare_dependency_snapshots(
+        "missing-raw.json", "after.json"
+    )
+    assert missing_raw["counts"]["declarations_changed"] == 0
+    (tmp_path / "missing-raw.json").unlink()
+    missing_scope_before = json.loads(before["before.json"])
+    missing_scope_before["inventory"]["declarations"][0].pop("scope")
+    (tmp_path / "missing-scope.json").write_text(json.dumps(missing_scope_before))
+    missing_scope = DependencyAgentService(tmp_path).compare_dependency_snapshots(
+        "missing-scope.json", "after.json"
+    )
+    assert missing_scope["counts"]["declarations_changed"] == 0
+    assert missing_scope["counts"]["resolved_added"] == 1
+    (tmp_path / "missing-scope.json").unlink()
+    missing_marker_before = json.loads(before["before.json"])
+    missing_marker_after = json.loads(before["after.json"])
+    missing_marker_before["inventory"]["declarations"][0].pop("marker")
+    missing_marker_after["inventory"]["declarations"][0].pop("marker")
+    (tmp_path / "missing-marker-before.json").write_text(
+        json.dumps(missing_marker_before)
+    )
+    (tmp_path / "missing-marker-after.json").write_text(
+        json.dumps(missing_marker_after)
+    )
+    missing_marker = DependencyAgentService(tmp_path).compare_dependency_snapshots(
+        "missing-marker-before.json", "missing-marker-after.json"
+    )
+    assert missing_marker["counts"]["declarations_changed"] == 0
+    for name in ("missing-marker-before.json", "missing-marker-after.json"):
+        (tmp_path / name).unlink()
+    for field in ("name", "ecosystem"):
+        invalid_before = json.loads(before["before.json"])
+        candidate = dict(invalid_before["inventory"]["declarations"][0])
+        candidate["package"] = dict(candidate["package"])
+        candidate["package"][field] = " "
+        invalid_before["inventory"]["declarations"].append(candidate)
+        path = f"invalid-{field}.json"
+        (tmp_path / path).write_text(json.dumps(invalid_before))
+        invalid = DependencyAgentService(tmp_path).compare_dependency_snapshots(
+            path, "after.json"
+        )
+        assert invalid["counts"]["declarations_changed"] == 0
+        (tmp_path / path).unlink()
     assert comparison["capabilities"]["security"]["state"] == "incomplete"
     assert not comparison["remediation_verified"]
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == before
@@ -1142,6 +1213,163 @@ def test_snapshot_comparison_preserves_npm_context_only_changes(tmp_path):
     equivalent = service.compare_dependency_snapshots("before.json", "after.json")
     assert equivalent["counts"]["resolved_added"] == 0
     assert equivalent["counts"]["resolved_removed"] == 0
+
+
+def test_snapshot_comparison_pairs_only_matching_pep508_registry_context(tmp_path):
+    service = DependencyAgentService(tmp_path)
+    snapshots = {}
+    for name, requirement in (
+        ("before", 'requests[socks]>=2.31,<3; python_version >= "3.8"'),
+        ("after", 'requests[socks]>=2.32,<3; python_version >= "3.8"'),
+    ):
+        (tmp_path / "requirements.txt").write_text(requirement + "\n")
+        snapshot = (
+            RepositoryScanner()
+            .scan(tmp_path, RepositoryScanOptions(security=False, compatibility=False))
+            .to_dict()
+        )
+        snapshots[name] = snapshot
+        (tmp_path / f"{name}.json").write_text(json.dumps(snapshot))
+
+    comparison = service.compare_dependency_snapshots("before.json", "after.json")
+    assert comparison["counts"]["declarations_changed"] == 1
+    assert (
+        comparison["changes"]["declarations_changed"][0]["before_constraint"]
+        == "<3,>=2.31"
+    )
+    assert (
+        comparison["changes"]["declarations_changed"][0]["after_constraint"]
+        == "<3,>=2.32"
+    )
+    assert comparison["counts"]["declarations_added"] == 1
+    assert comparison["counts"]["declarations_removed"] == 1
+    change = comparison["changes"]["declarations_changed"][0]
+    assert change["before_source"]["path"] == "requirements.txt"
+    assert change["after_source"]["path"] == "requirements.txt"
+    cli_result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "depcheck",
+            "compare",
+            str(tmp_path),
+            "before.json",
+            "after.json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert cli_result.returncode == 0
+    cli_comparison = json.loads(cli_result.stdout)
+    assert cli_comparison["counts"]["declarations_changed"] == 1
+    assert (
+        cli_comparison["changes"]["declarations_added"][0]["metadata"][
+            "raw_requirement"
+        ]
+        == 'requests[socks]>=2.32,<3; python_version >= "3.8"'
+    )
+
+    unbounded_root = tmp_path / "unbounded-project"
+    unbounded_root.mkdir()
+    for name, requirements in (
+        (
+            "unbounded-before",
+            'requests[socks]>=2.31,<3; python_version >= "3.8"\n'
+            'requests[socks]; python_version >= "3.8"\n',
+        ),
+        (
+            "unbounded-after",
+            'requests[socks]>=2.32,<3; python_version >= "3.8"\n',
+        ),
+    ):
+        (unbounded_root / "requirements.txt").write_text(requirements)
+        snapshot = (
+            RepositoryScanner()
+            .scan(
+                unbounded_root,
+                RepositoryScanOptions(security=False, compatibility=False),
+            )
+            .to_dict()
+        )
+        (tmp_path / f"{name}.json").write_text(json.dumps(snapshot))
+
+    unbounded_change = service.compare_dependency_snapshots(
+        "unbounded-before.json", "unbounded-after.json"
+    )
+    assert unbounded_change["counts"]["declarations_changed"] == 0
+    assert unbounded_change["counts"]["declarations_added"] == 1
+    assert unbounded_change["counts"]["declarations_removed"] == 2
+    assert {
+        declaration["constraint"]["raw"]
+        for declaration in unbounded_change["changes"]["declarations_removed"]
+    } == {"", "<3,>=2.31"}
+
+    def compare_variant(after):
+        (tmp_path / "variant.json").write_text(json.dumps(after))
+        return service.compare_dependency_snapshots("before.json", "variant.json")
+
+    before_declaration = snapshots["before"]["inventory"]["declarations"][0]
+    after = json.loads(json.dumps(snapshots["after"]))
+    declaration = after["inventory"]["declarations"][0]
+    declaration["metadata"]["extras"] = ["security"]
+    declaration["metadata"]["raw_requirement"] = (
+        'requests[security]>=2.32,<3; python_version >= "3.8"'
+    )
+    assert compare_variant(after)["counts"]["declarations_changed"] == 0
+
+    after = json.loads(json.dumps(snapshots["after"]))
+    declaration = after["inventory"]["declarations"][0]
+    declaration["marker"] = 'python_version < "3.8"'
+    declaration["metadata"]["raw_requirement"] = (
+        'requests[socks]>=2.32,<3; python_version < "3.8"'
+    )
+    assert compare_variant(after)["counts"]["declarations_changed"] == 0
+
+    after = json.loads(json.dumps(snapshots["after"]))
+    after["inventory"]["declarations"][0]["metadata"]["group"] = "dev"
+    assert compare_variant(after)["counts"]["declarations_changed"] == 0
+
+    after = json.loads(json.dumps(snapshots["after"]))
+    after["inventory"]["declarations"][0]["scope"] = "dev"
+    assert compare_variant(after)["counts"]["declarations_changed"] == 0
+
+    after = json.loads(json.dumps(snapshots["after"]))
+    after["inventory"]["declarations"][0]["metadata"]["raw_requirement"] = (
+        'requests[socks]>=2.33,<3; python_version >= "3.8"'
+    )
+    assert compare_variant(after)["counts"]["declarations_changed"] == 0
+
+    after = json.loads(json.dumps(snapshots["after"]))
+    declaration = after["inventory"]["declarations"][0]
+    declaration["metadata"]["origin"] = {
+        "kind": "registry",
+        "public": False,
+        "assertion": {"registry": "https://packages.example/simple"},
+    }
+    assert compare_variant(after)["counts"]["declarations_changed"] == 0
+
+    after = json.loads(json.dumps(snapshots["after"]))
+    declaration = after["inventory"]["declarations"][0]
+    declaration["metadata"]["origin"] = {
+        "kind": "url",
+        "public": False,
+        "assertion": {"url": "https://packages.example/requests.whl"},
+    }
+    declaration["metadata"]["raw_requirement"] = (
+        "requests @ https://packages.example/requests.whl"
+    )
+    assert compare_variant(after)["counts"]["declarations_changed"] == 0
+
+    ambiguous = json.loads(json.dumps(snapshots["before"]))
+    ambiguous["inventory"]["declarations"].append(before_declaration)
+    (tmp_path / "ambiguous.json").write_text(json.dumps(ambiguous))
+    assert (
+        service.compare_dependency_snapshots("ambiguous.json", "after.json")["counts"][
+            "declarations_changed"
+        ]
+        == 0
+    )
 
 
 def test_snapshot_comparison_preserves_go_checksum_only_changes(tmp_path):
@@ -3236,13 +3464,63 @@ def test_cwe_catalog_projection_is_versioned_bounded_and_rejects_entities(tmp_pa
     )
     result = service.inspect_evidence("cwe.xml", "cwe")
     assert result["metadata"]["version"] == "4.20"
+    assert result["metadata"]["schema_version"] == "7.x"
     assert result["records"][0]["relationships"][0]["CWE_ID"] == "74"
     assert result["finding_effect"] == "none"
+    path.write_text(path.read_text().replace('Version="4.20"', 'Version="4.21"'))
+    assert service.inspect_evidence("cwe.xml", "cwe")["metadata"]["version"] == "4.21"
+    # This fixture follows MITRE's published Schema 8 namespace and element names;
+    # it checks the supported projection, not full XSD conformance.
+    path.write_text(
+        '<Weakness_Catalog xmlns="http://cwe.mitre.org/cwe-8" Name="sample" '
+        'Version="5.0" Date="2026-10-28"><Weaknesses><Weakness ID="1475" '
+        'Name="Incomplete Data/State Propagation" Abstraction="Base" '
+        'Status="Stable"><Description>Reported classification</Description>'
+        "<Technical_Nuance>Not part of the current projection</Technical_Nuance>"
+        "<Dimensions><Dimension>Behavior</Dimension></Dimensions>"
+        '<Related_Weaknesses><Related_Weakness Nature="Overlaps" CWE_ID="1464">'
+        "<Dimensions><Dimension>Behavior</Dimension></Dimensions><Note>Not projected"
+        "</Note></Related_Weakness></Related_Weaknesses></Weakness></Weaknesses>"
+        '<Groupings><Grouping ID="1459" Name="Example"/></Groupings>'
+        "</Weakness_Catalog>"
+    )
+    result = service.inspect_evidence("cwe.xml", "cwe")
+    assert result["metadata"]["version"] == "5.0"
+    assert result["metadata"]["schema_version"] == "8.0"
+    assert "groupings" in result["metadata"]["omitted_sections"]
+    assert "technical-nuance" in result["metadata"]["omitted_sections"]
+    assert "relationship-dimensions-and-notes" in result["metadata"]["omitted_sections"]
+    assert result["records"][0]["relationships"][0]["Nature"] == "Overlaps"
+    assert result["finding_effect"] == "none"
+    for namespace, version in (("cwe-7", "5.0"), ("cwe-8", "4.21")):
+        path.write_text(
+            f'<Weakness_Catalog xmlns="http://cwe.mitre.org/{namespace}" '
+            f'Name="sample" Version="{version}" Date="2026-10-28">'
+            "<Weaknesses/></Weakness_Catalog>"
+        )
+        with pytest.raises(ValueError, match="Only CWE"):
+            service.inspect_evidence("cwe.xml", "cwe")
     path.write_text(
         '<!DOCTYPE x [<!ENTITY secret SYSTEM "file:///etc/passwd">]><x>&secret;</x>'
     )
     with pytest.raises(ValueError, match="DTD/entity"):
         service.inspect_evidence("cwe.xml", "cwe")
+
+
+def test_cwe_catalog_accepts_full_catalog_scale_with_bounded_output(tmp_path):
+    path = tmp_path / "cwe.xml"
+    header = (
+        b'<Weakness_Catalog xmlns="http://cwe.mitre.org/cwe-8" Version="5.0">'
+        b'<Weaknesses><Weakness ID="79"/></Weaknesses><Groupings>'
+    )
+    footer = b"</Groupings></Weakness_Catalog>"
+    grouping = b"<Grouping>" + b"x" * 85 + b"</Grouping>"
+    path.write_bytes(header + grouping * 100_001 + footer)
+    result = DependencyAgentService(tmp_path).inspect_evidence("cwe.xml", "cwe")
+    assert result["metadata"]["version"] == "5.0"
+    assert result["metadata"]["schema_version"] == "8.0"
+    assert result["total"] == 1
+    assert [record["id"] for record in result["records"]] == ["CWE-79"]
 
 
 def test_govulncheck_import_uses_findings_modes_and_granularity(tmp_path):

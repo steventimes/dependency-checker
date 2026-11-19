@@ -4,7 +4,8 @@ These operations read repository-relative files without refreshing the index,
 executing target code or fetching linked resources. JSON uses unique keys and
 finite floating-point values, including exponent overflow checks, and Unicode
 scalar strings and keys. Valid non-BMP characters and supported byte encodings
-remain accepted. Inputs retain the normal 8 MiB limit. Each tool has explicit
+remain accepted. The normal input limit is 8 MiB. CWE XML accepts up to 24 MiB
+and 300,000 elements, with a maximum depth of 64. Each tool has explicit
 format/entry budgets. Unsupported inputs return an operation error. Inspect
 source hashes, reported tool versions, modes, unknown states and omitted fields.
 An imported claim is not an authenticated observation.
@@ -18,7 +19,7 @@ for every table/record collection. Supported kinds:
 | Kind | Accepted input | Meaning |
 | --- | --- | --- |
 | `cve` | CVE JSON 5.0, 5.1 or 5.1.1 | CNA and ADP assertions remain separate, including affected products, weaknesses, revisions and rejection state; no product-name/CPE expansion into findings |
-| `cwe` | Uncompressed CWE 4.x XML, `cwe-7` namespace | Classification/version/relationships only; no vulnerability match; DTD/entity declarations rejected |
+| `cwe` | Uncompressed CWE 4.x XML in `cwe-7`, or [CWE 5.0 / Schema 8](https://cwe.mitre.org/documents/schema/schema_v8.0.html) XML in `cwe-8` | Supported weakness/relationship projection only; Schema 8-only Groupings, technical nuance, dimensions, custom phases and relationship notes/dimensions are reported as omitted; no vulnerability match or full XSD validation; DTD/entity declarations rejected |
 | `vex` | Standalone OpenVEX 0.2.0 | Explicit products, timestamps, statuses and required explanations retained; no signature verification, precedence application or finding suppression |
 | `attestation` | in-toto Statement v0.1/v1, optionally DSSE | Subjects, digests, predicate and signatures retained; no verification commands, key access or signature verification |
 | `govulncheck` | Native JSON object stream, protocol v1.0.0 | Config/toolchain/mode and module/package/symbol findings retained; EOF does not prove successful producer completion |
@@ -108,7 +109,10 @@ Matched issues preserve top-level and matching package-level severity assertions
 with source pointers, raw scores and version applicability. Unknown or conflicting
 scopes remain qualified in `severity_assertions` and `severity_status`; scores
 from unrelated packages or nonaffected branches do not become effective severity.
-These are supplied ratings, not computed CVSS scores or proof of exploitation.
+The text report labels these as OSV severity evidence and shows each retained
+assertion's score type, raw score, supplied source (or that no source was supplied)
+and applicability. An `ERROR` finding level is not a CVSS rating. These are supplied
+ratings, not computed CVSS scores or proof of exploitation.
 PEP 440 equality and supported SemVer equality apply to explicit versions.
 Go `ECOSYSTEM` ranges, explicit versions and fix comparisons accept full module
 SemVer with an optional leading `v`. Prereleases and pseudo-versions follow

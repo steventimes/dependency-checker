@@ -79,6 +79,59 @@ def render_text(result: ScanResult) -> str:
                         "   Weakness classification: "
                         + finding.details["weaknesses_status"]
                     )
+                severity_status = finding.details.get("severity_status", "unknown")
+                lines.append(
+                    "   OSV severity evidence (not finding level): "
+                    + str(severity_status)
+                )
+                for assertion in finding.details.get("severity_assertions", []):
+                    package = json.dumps(
+                        assertion.get("package"), sort_keys=True, ensure_ascii=False
+                    )
+                    lines.append(
+                        f"     {assertion.get('advisory_id', 'unknown')} "
+                        f"{assertion.get('field', 'unknown field')}: "
+                        f"applicability={assertion.get('applicability', 'unknown')}; "
+                        f"package={package}"
+                    )
+                    raw_scores = assertion.get("severity")
+                    scores = (
+                        raw_scores if isinstance(raw_scores, list) else [raw_scores]
+                    )
+                    for score in scores:
+                        if isinstance(score, Mapping):
+                            source = (
+                                json.dumps(score["source"], ensure_ascii=False)
+                                if "source" in score
+                                else "not supplied"
+                            )
+                            lines.append(
+                                "       type="
+                                f"{json.dumps(score.get('type'), ensure_ascii=False)} "
+                                "score="
+                                f"{json.dumps(score.get('score'), ensure_ascii=False)} "
+                                f"source={source}"
+                            )
+                        else:
+                            lines.append(
+                                "       raw severity assertion: "
+                                + json.dumps(score, sort_keys=True, ensure_ascii=False)
+                                + "; source=not supplied"
+                            )
+                omitted = {
+                    key: finding.details[key]
+                    for key in (
+                        "severity_assertions_omitted",
+                        "severity_scores_omitted",
+                        "severity_scopes_omitted",
+                    )
+                    if finding.details.get(key)
+                }
+                if omitted:
+                    lines.append(
+                        "   OSV severity evidence omitted: "
+                        + json.dumps(omitted, sort_keys=True)
+                    )
             for location in finding.locations:
                 rendered = _relative(location.path, result.root)
                 if location.line is not None:

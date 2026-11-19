@@ -266,6 +266,67 @@ def test_npm_subpath_aliases_preserve_unknown_and_configured_usage(
     assert not configured.findings
 
 
+def test_npm_self_references_require_current_package_exports(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "@scope/app",
+                "exports": {
+                    ".": {
+                        "import": "./src/index.js",
+                        "require": "./src/index.cjs",
+                    },
+                    "./feature": "./src/feature.js",
+                    "./conditional": {
+                        "import": None,
+                        "require": "./src/conditional.cjs",
+                    },
+                    "./require-only": {"require": "./src/require-only.cjs"},
+                },
+                "imports": {"#local": "./src/local.js"},
+            }
+        )
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/local.js").write_text("export {}\n")
+    (tmp_path / "app.js").write_text(
+        'import "@scope/app";\n'
+        'import "@scope/app/feature";\n'
+        'import "@scope/app/conditional";\n'
+        'import "@scope/app/require-only";\n'
+        'import "@scope/app/private";\n'
+        'import "@scope/other/feature";\n'
+        'import "missing-package";\n'
+        'import "#local";\n'
+    )
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "app.test.js").write_text('import "missing-test-package";\n')
+
+    result = RepositoryScanner().scan(
+        tmp_path,
+        RepositoryScanOptions(
+            security=False, compatibility=False, enabled_ecosystems=("npm",)
+        ),
+    )
+
+    usages = result.bundles[0].usages
+    assert [(item.reference, item.scope) for item in usages] == [
+        ("@scope/app/conditional", "runtime"),
+        ("@scope/app/require-only", "runtime"),
+        ("@scope/app/private", "runtime"),
+        ("@scope/other/feature", "runtime"),
+        ("missing-package", "runtime"),
+        ("missing-test-package", "test"),
+    ]
+    assert {item.package.name for item in result.findings} == {
+        "@scope/app",
+        "@scope/other",
+        "missing-package",
+        "missing-test-package",
+    }
+
+
 @pytest.mark.parametrize(
     "document",
     [{"packages": 42}, {"dependencies": []}, {"packages": {"node_modules/lodash": []}}],

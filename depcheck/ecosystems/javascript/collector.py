@@ -15,6 +15,7 @@ from depcheck.ecosystems.javascript.packages import (
     AliasResolution,
     NpmSources,
     _external_reference,
+    _has_confirmed_self_export,
     _import_package,
     resolve_package_import,
 )
@@ -289,6 +290,8 @@ class NpmEvidenceCollector:
                 for item in declarations
                 if item.kind == "direct"
             },
+            document.get("name"),
+            document.get("exports"),
         )
         diagnostics.extend(usage_diagnostics)
         if any(
@@ -356,6 +359,8 @@ class NpmEvidenceCollector:
         excluded_directories: Sequence[str] = (),
         imports: object = None,
         installation_names: Mapping[str, str] | None = None,
+        self_package_name: object = None,
+        exports: object = None,
     ) -> tuple[tuple[UsageEvidence, ...], tuple[Path, ...], list[Diagnostic], bool]:
         usages: list[UsageEvidence] = []
         diagnostics: list[Diagnostic] = []
@@ -524,6 +529,14 @@ class NpmEvidenceCollector:
                             severity="warning",
                         )
                     )
+                    continue
+                if (
+                    load.context == "module"
+                    and mapped_name is None
+                    and _has_confirmed_self_export(
+                        load.reference, self_package_name, exports
+                    )
+                ):
                     continue
                 if load.reference.startswith("#") and mapped_name is None:
                     if load.reference not in alias_resolutions:

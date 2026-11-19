@@ -19,20 +19,23 @@ run its package managers.
 [CLI](#cli) · [Coverage](#ecosystem-coverage) · [Architecture](#architecture) ·
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-This source uses release line **0.6.0**. Download versioned Agent Skill bundles
+The latest published release is **0.6.0**. This candidate retains 0.6.0
+package markers and includes unreleased local changes. Download versioned Agent
+Skill bundles
 and their SHA-256 checksums from [GitHub Releases](https://github.com/steventimes/dependency-checker/releases).
 The backend is distributed in the bundle and as GitHub wheel/source assets.
 The PyPI project named `depcheck` belongs to a different project; do not use
 `pip install depcheck` to install this tool.
 
-Version 0.6.0 includes the changes documented in the
-[changelog](CHANGELOG.md#060--2026-11-01). Older bundles retain their original
+Published 0.6.0 assets include the changes documented under that release
+heading in the [changelog](CHANGELOG.md#060--2026-11-01). The `Unreleased`
+section describes these candidate changes. Older bundles retain their original
 backend and evidence contracts:
 
 | Backend | Package version | Analysis revision | Index schema | MCP tools |
 | --- | --- | --- | --- | --- |
 | Previous 0.5.0 release | 0.5.0 | 57 | v4 | 18 |
-| 0.6.0 source/bundle | 0.6.0 | 88 | v8 | 19 |
+| Published 0.6.0 bundle | 0.6.0 | 88 | v8 | 19 |
 
 For the current source, `depcheck runtime` or MCP `backend_info` identifies the
 running backend. Neither operation refreshes the index. Check context freshness
@@ -283,7 +286,9 @@ depcheck compare . .tmp/snapshots/before.json .tmp/snapshots/after.json --format
 ```
 
 Omit `--format text` for JSON. The result reports incompatible snapshots and
-incomplete evidence; observed version changes do not verify remediation.
+incomplete evidence. `declarations_changed` pairs only unique declarations with
+complete matching identity fields, and reports changed constraints with source
+locations; it does not infer installed-version changes.
 Follow `next_offset` for additional pages.
 For scripts, add `--fail-on-changes`: exit 1 means observed changes across all
 pages, exit 2 means invalid or incomparable inputs, and exit 0 means no
@@ -628,6 +633,11 @@ required edge is malformed. Noncanonical instance paths, omitted versions and
 linked packages leave explicit gaps. An unavailable nearer instance cannot bind
 to a healthy hoisted package. CycloneDX retains unresolved edge assertions as
 `depcheck:dependency:unresolved` properties without inventing a resolved edge.
+An import of the current package's own name is treated as a self-reference only
+when `package.json` declares the root or exact subpath in `exports` with a static
+relative target. Conditional targets are skipped only when both `import` and
+`require` branches are static; other condition shapes remain qualified. Export
+patterns and `imports` aliases keep their existing handling.
 
 For pnpm v9, each project reads its importer from the nearest `pnpm-lock.yaml`
 inside the repository. Registry versions, peer instances, and dependency edges

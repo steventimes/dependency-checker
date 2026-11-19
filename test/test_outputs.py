@@ -200,8 +200,13 @@ def test_scoped_severity_survives_scanner_exports_policy_and_offline_inventory(
     scoped_score = {
         "type": "CVSS_V3",
         "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "source": "CNA",
     }
-    global_score = {"type": "CVSS_V2", "score": "AV:N/AC:L/Au:N/C:P/I:P/A:P"}
+    global_score = {
+        "type": "CVSS_V2",
+        "score": "AV:N/AC:L/Au:N/C:P/I:P/A:P",
+        "source": "NVD",
+    }
     excluded_score = {
         "type": "CVSS_V3",
         "score": "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N",
@@ -305,6 +310,32 @@ def test_scoped_severity_survives_scanner_exports_policy_and_offline_inventory(
     severity_fields = ("severity", "severity_status", "severity_assertions")
     for key in severity_fields:
         assert exported[key] == details[key] == sarif["properties"][key]
+    text = render_text(result)
+    assert "[ERROR] security.vulnerability" in text
+    assert "OSV severity evidence (not finding level): " + expected_status in text
+    assert 'type="CVSS_V3"' in text and 'source="CNA"' in text
+    assert 'type="CVSS_V2"' in text and 'source="NVD"' in text
+    assert scoped_score["score"] in text
+    assert global_score["score"] in text
+    assert "applicability=not-affected" in text
+    assert (
+        "applicability=unknown" in text
+        if unknown_scope
+        else "applicability=affected" in text
+    )
+    assert "source=not supplied" in text
+    without_scores = replace(
+        finding,
+        details={
+            **finding.details,
+            "severity": [],
+            "severity_assertions": [],
+            "severity_status": "not-provided",
+        },
+    )
+    assert "OSV severity evidence (not finding level): not-provided" in render_text(
+        replace(result, findings=(without_scores,))
+    )
     policy = {
         "fail_on": ["vuln"],
         "exemptions": [

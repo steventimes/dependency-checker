@@ -22,6 +22,9 @@ from depcheck.evidence.input import parse_evidence_json, read_evidence_json
 from depcheck.evidence.input import text as text
 from depcheck.filesystem import read_bytes, require_within_project
 
+_CWE_MAX_BYTES = 24 * 1024 * 1024
+_CWE_MAX_NODES = 300_000
+
 
 def timestamp(value: Any) -> str:
     value = text(value, "timestamp")
@@ -157,7 +160,8 @@ def _cwe(root: Path, relative: str) -> tuple[list[dict[str, Any]], dict[str, Any
         raise ValueError("CWE catalog path must be repository-relative")
     target = root / path
     require_within_project(root, target, operation="read CWE catalog")
-    raw = read_bytes(target)
+    # The full CWE 5.0 catalog is about 18.2 MiB and 250,000 elements.
+    raw = read_bytes(target, max_bytes=_CWE_MAX_BYTES)
     if b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper() or b"\x00" in raw:
         raise ValueError(
             "CWE XML must not contain DTD/entity declarations or UTF-16/32"
@@ -175,21 +179,23 @@ def _cwe(root: Path, relative: str) -> tuple[list[dict[str, Any]], dict[str, Any
                 depth += 1
                 if catalog is None:
                     catalog = element
-                if nodes > 100000 or depth > 64:
+                if nodes > _CWE_MAX_NODES or depth > 64:
                     raise ValueError("CWE XML node/depth budget exhausted")
             else:
                 depth -= 1
     parser.close()
-    if (
-        catalog is None
-        or catalog.tag != "{http://cwe.mitre.org/cwe-7}Weakness_Catalog"
-        or not catalog.get("Version")
-    ):
-        raise ValueError(
-            "Expected a versioned CWE 4.x catalog using the cwe-7 namespace"
-        )
-    if not catalog.get("Version", "").startswith("4."):
-        raise ValueError("Only CWE catalog 4.x is supported")
+    if catalog is None:
+        raise ValueError("Expected a versioned CWE 4.x/cwe-7 or 5.0/cwe-8 catalog")
+    catalog_namespace, separator, catalog_name = catalog.tag[1:].partition("}")
+    if not separator or catalog_name != "Weakness_Catalog":
+        raise ValueError("Expected a versioned CWE 4.x/cwe-7 or 5.0/cwe-8 catalog")
+    version = catalog.get("Version", "")
+    if catalog_namespace == "http://cwe.mitre.org/cwe-7" and version.startswith("4."):
+        schema_version = "7.x"
+    elif catalog_namespace == "http://cwe.mitre.org/cwe-8" and version == "5.0":
+        schema_version = "8.0"
+    else:
+        raise ValueError("Only CWE 4.x/cwe-7 and CWE 5.0/cwe-8 catalogs are supported")
     rows = []
     identifiers = set()
     for weakness in catalog.findall("{*}Weaknesses/{*}Weakness"):
@@ -219,16 +225,28 @@ def _cwe(root: Path, relative: str) -> tuple[list[dict[str, Any]], dict[str, Any
         rows,
         {
             "format": "CWE-XML",
-            "version": catalog.get("Version"),
+            "version": version,
+            "schema_version": schema_version,
             "catalog": catalog.get("Name"),
             "date": catalog.get("Date"),
             "vulnerability_matching": "not-applicable",
             "omitted_sections": [
-                "categories",
+                "groupings" if version == "5.0" else "categories",
                 "views",
                 "external-references",
                 "examples",
                 "mitigations",
+                *(
+                    [
+                        "technical-nuance",
+                        "dimensions",
+                        "custom-phases",
+                        "relationship-dimensions-and-notes",
+                        "content-history",
+                    ]
+                    if version == "5.0"
+                    else []
+                ),
             ],
             "schema_validation": "supported-projection; not-full-schema",
         },
