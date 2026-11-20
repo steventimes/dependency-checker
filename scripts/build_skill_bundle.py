@@ -16,7 +16,6 @@ from zipfile import ZIP_STORED, ZipFile, ZipInfo
 _ROOT_FILES = (
     "README.md",
     "CHANGELOG.md",
-    "REFERENCES.md",
     "LICENSE",
     "NOTICE",
     "SECURITY.md",

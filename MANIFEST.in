@@ -4,7 +4,6 @@ graft test/fixtures/projects/pipenv
 graft test/fixtures/projects/pylock-pip
 graft test/fixtures/projects/setup-keywords
 graft test/fixtures/security/rubygems
-include REFERENCES.md
 include .github/readme/banner.svg
 include test/conftest.py
 prune .tmp

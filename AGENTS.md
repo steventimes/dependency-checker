@@ -24,11 +24,8 @@ Release publication and CI status must be verified separately. The PyPI name
 Do not change the package name or publish to PyPI without a separately approved
 namespace. See [Unreleased](CHANGELOG.md#unreleased) for future source changes.
 
-Historical implementation and verification records remain under `.tmp/`.
-`.tmp/implementation-report-20261018.md` is archived. Continue the active record
-in `.tmp/implementation-report-20261019.md`; do not create parallel progress or
-design documents. Historical test counts and CI results do not verify current
-source. Report local checks, remote CI and published artifacts separately.
+Verify current source independently of historical test counts and CI results.
+Report local checks, remote CI and published artifacts separately.
 
 ## Implementation boundaries
 
@@ -149,19 +146,6 @@ or coverage rule changes. The evaluation directory separates live MCP checks,
 recorded agent trials and synthetic scorer fixtures. Synthetic traces do not
 establish observed agent behavior, and public product material does not establish
 vendor accuracy or internal behavior.
-
-## Reference records
-
-The user reference catalog and per-entry status are in [REFERENCES.md](REFERENCES.md).
-The 2026-10-18 review read 26 supplied papers in full and reviewed the remaining
-public entries. The following round read nine more scoped papers, recorded in
-`.tmp/implementation-20261019/papers/`. Preserve the reading ledgers and archived
-reports when deleting reproducible environments or caches.
-
-Dependency-Track and Xerj were initially list-only references, then reviewed as
-public overviews on 2026-10-18. Those reviews did not deploy either project or
-upload data. Any later machine-wide installation has its own authorization and
-verification; it does not change this repository's recorded review scope.
 
 <!-- BEGIN SCOPE_CONTROL -->
 ## 范围控制与简洁实现
