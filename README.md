@@ -1138,36 +1138,6 @@ checks. Results are discarded when the scan exits, including on failure, and
 are not reused by later scans. Profile counters separate requests, misses and
 uncached calls; no persistent analysis cache or new evidence semantics is added.
 
-Run the existing deterministic offline benchmark on Linux or macOS before a
-performance change. It uses the Unix `resource` module for memory reporting:
-
-```bash
-uv run --frozen --extra test python scripts/benchmark_monorepo.py --projects 8 --files-per-project 25 --seed 1729 --depth 8 --repeats 3 --warmups 1 > .tmp/benchmark-baseline.json
-uv run --frozen --extra test python scripts/benchmark_monorepo.py --projects 8 --files-per-project 25 --seed 1729 --depth 8 --repeats 3 --warmups 1 --profile off > .tmp/benchmark-uninstrumented.json
-```
-
-OSV request counts are simulated without network access. Keep fixture parameters,
-interpreter, dependencies, and output evidence fixed when comparing changes.
-A local timing sample is a baseline for an experiment, not a CI performance
-guarantee. The series retains every worker sample and discarded warmup, source
-digest, interpreter, installed dependency versions, CPU metadata, scan diagnostics
-and inventory digest. Each worker starts with a fresh fixture and derived cache;
-the OS page cache is uncontrolled. Timing excludes interpreter startup and imports.
-The fixture sets an explicit repository ID and hashes relative paths and input
-bytes, so fresh temporary roots do not change its snapshot identity. Cold and warm
-refreshes, complete queries, paginated traversal and mutation refreshes retain
-separate measurements. Pagination uses 100 records per page by default; use
-`--page-size` to measure another size. Every traversal must match the complete
-inventory. Compare `--profile on` and `--profile off` with identical parameters
-to estimate probe overhead before interpreting stage timings. Peak RSS is the
-whole worker's high-water mark in KiB, including indexing and mutations.
-Use `--cohort evaluation --seed 2718` for a separately chosen fixture seed; do not
-select the best seed after measuring. The summary reports median, minimum, and
-maximum scan times without claiming statistical significance. Current maintenance
-priorities and verification rules are in
-[AGENTS.md](AGENTS.md).
-
-
 ### Release candidate bundles
 
 Run `scripts/build_skill_bundle.py` from a source checkout or extracted source

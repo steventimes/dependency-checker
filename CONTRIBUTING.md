@@ -14,7 +14,7 @@ case and a legitimate control when changing a consequential boundary.
 
 Use the five test modules and the [Development commands](README.md#development).
 Finish a coherent implementation before focused verification. Keep reports,
-benchmark baselines, environments and trial output in `.tmp/`. Do not include
+environments and trial output in `.tmp/`. Do not include
 those files in a patch or bundle. Evidence semantics changes update
 `ANALYSIS_REVISION`; schema changes require a migration/rebuild decision.
 Package version changes belong to a selected release.

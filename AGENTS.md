@@ -9,7 +9,7 @@
 # Dependency Checker maintenance
 
 Read applicable parent AGENTS.md instructions and [README.md](README.md). Preserve
-existing work. Keep reports, caches, benchmark output and raw trial material in
+existing work. Keep reports, caches and raw trial material in
 `.tmp/`; exclude them from commits and release bundles. Commit, push and publish
 only within the user's requested scope.
 
@@ -102,10 +102,6 @@ Address one coherent scope at a time and preserve qualified limitations.
 4. Expose unsupported manifests and source formats. Keep Rust compiler binding,
    framework template/implicit imports, SCSS/Sass and browser/CDN dependencies
    qualified. Preserve environment and variant conditions in lock evidence.
-5. Measure discovery, hashing, parsing, storage and queries before optimizing
-   cache reuse. Use `scripts/benchmark_monorepo.py` with recorded parameters and
-   runtime. Compare inventory, diagnostics and completeness with timings. Keep
-   baselines in `.tmp/`; do not change CI thresholds without evidence.
 
 Current coverage and format-specific limitations are documented in the README
 and `skills/check-dependencies/references/`. Treat those as the current feature

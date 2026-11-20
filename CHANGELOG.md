@@ -251,9 +251,7 @@ unreleased source work, not separate published packages.
   and page; trusted explicit SQLite paths use a read transaction.
 
 - Extend opt-in work accounting to index snapshots, refreshes, query freshness
-  and OSV transfers. The offline benchmark now checks fixture and full evidence
-  digests, measures pagination and supports runs without profiling. Normalize
-  macOS peak memory to KiB; report its whole-worker scope.
+  and OSV transfers.
 
 - Preserve the last published default index when a refresh context fails. Roll
   back failed commits and release database/directory resources on interrupted
@@ -332,8 +330,7 @@ unreleased source work, not separate published packages.
 - Add page-local derivation references to explanations, qualified refresh plans
   to repository context and local read-work counters. These do not establish
   minimal proofs, active installations or source authenticity.
-- Extend reproducible benchmark records and generated regression cases. Add
-  paired benign/adversarial README consumer trials with separate task utility,
+- Add paired benign/adversarial README consumer trials with separate task utility,
   observed exposure and side-effect results.
 - Separate optional scan stages, update planning, SQLite query projections,
   report formats and policy evaluation. Keep CLI/MCP contracts and existing

@@ -30,9 +30,20 @@ from depcheck.indexing import RepositoryIndex, RepositoryIndexer
 from depcheck.indexing.models import INDEX_SCHEMA
 from depcheck.indexing.store import IndexStore
 from depcheck.model import CapabilityState
-from scripts.benchmark_monorepo import _stable_index
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _stable_index(root: Path) -> str:
+    index = RepositoryIndex(root)
+    payload = {
+        "dependencies": index.dependencies(limit=sys.maxsize),
+        "findings": index.findings(limit=sys.maxsize),
+        "projects": index.context()["projects"],
+    }
+    return json.dumps(payload, sort_keys=True).replace(
+        root.resolve().as_posix(), "<root>"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2313,98 +2324,6 @@ def test_package_import_change_invalidates_full_and_filtered_indexes(
     assert {
         (f["code"], f["package"]) for f in RepositoryIndex(tmp_path).findings()
     } == {(f.code, f.package.name) for f in scan.findings}
-
-
-@pytest.mark.parametrize("ecosystem", ["PyPI", "npm"])
-def test_benchmark_mutation_preserves_rebuild_equivalence(
-    tmp_path, ecosystem, monkeypatch
-):
-    monkeypatch.setitem(sys.modules, "resource", None)
-    benchmark = runpy.run_path(str(ROOT / "scripts/benchmark_monorepo.py"))
-
-    benchmark["build_fixture"](
-        tmp_path, projects=1, files_per_project=2, seed=1729, depth=1
-    )
-    result = benchmark["measure_mutation"](tmp_path, ecosystem)
-    assert result["rebuild_equivalent"] is True
-    assert result["ecosystem"] == ecosystem
-    assert result["status"] == "updated"
-    assert result["wall_seconds"] >= 0
-    assert result["changed_reference"] == "benchmarknewpackage"
-    assert result["changed_usage_detected"] is True
-    assert result["counters"]["npm_parse_reuse"] == "not available"
-
-
-def test_benchmark_profiles_preserve_complete_evidence():
-    from scripts.benchmark_monorepo import run_benchmark
-
-    options = dict(projects=1, files_per_project=2, seed=1729, depth=1, page_size=3)
-    plain = run_benchmark(**options, profile_enabled=False)
-    measured = run_benchmark(**options, profile_enabled=True)
-    assert plain["fixture"] == measured["fixture"]
-    assert plain["correctness"] == measured["correctness"]
-    assert plain["scan"]["profile"]["phases"] == {}
-    assert plain["index"]["pagination"]["profile"]["phases"] == {}
-    assert measured["index"]["cold"]["profile"]["phases"]["index.refresh"]["calls"] == 1
-    assert (
-        measured["index"]["cold"]["profile"]["phases"]["storage.work"]["publications"]
-        == 1
-    )
-    pages = measured["index"]["pagination"]
-    phases = pages["profile"]["phases"]
-    assert (
-        phases["query.dependencies"]["calls"] == pages["calls_including_empty_terminal"]
-    )
-    assert phases["query.freshness"]["calls"] == pages["calls_including_empty_terminal"]
-    assert (
-        phases["storage.work"]["snapshot_reads"]
-        == pages["calls_including_empty_terminal"]
-    )
-    assert phases["storage.work"]["snapshot_read_bytes"] > 0
-    assert "publications" not in phases["storage.work"]
-    assert pages["evidence_sha256"] == plain["index"]["pagination"]["evidence_sha256"]
-    for result in (plain, measured):
-        assert result["mutation_refresh"]["PyPI"]["rebuild_equivalent"]
-        assert result["mutation_refresh"]["npm"]["rebuild_equivalent"]
-
-
-@pytest.mark.parametrize("failure", ["repeated-page", "missing-page"])
-def test_benchmark_rejects_incomplete_or_nonadvancing_pages(
-    tmp_path, monkeypatch, failure
-):
-    import scripts.benchmark_monorepo as benchmark
-
-    class Index:
-        def __init__(self, root):
-            pass
-
-        def dependencies(self, **kwargs):
-            return [{"package": "first"}] if failure == "repeated-page" else []
-
-    monkeypatch.setattr(benchmark, "RepositoryIndex", Index)
-    with pytest.raises(RuntimeError, match="inventory"):
-        benchmark.measure_pages(
-            tmp_path,
-            [{"package": "first"}, {"package": "second"}],
-            page_size=1,
-            profile_enabled=True,
-        )
-
-
-@pytest.mark.parametrize("platform, expected", [("darwin", 2), ("linux", 2048)])
-def test_benchmark_peak_rss_normalizes_native_units(monkeypatch, platform, expected):
-    import scripts.benchmark_monorepo as benchmark
-
-    monkeypatch.setattr(Path, "is_file", lambda self: False)
-    monkeypatch.setattr(sys, "platform", platform)
-    monkeypatch.setitem(
-        sys.modules,
-        "resource",
-        SimpleNamespace(
-            RUSAGE_SELF=0, getrusage=lambda who: SimpleNamespace(ru_maxrss=2048)
-        ),
-    )
-    assert benchmark._peak_rss() == (expected, "getrusage")
 
 
 @pytest.mark.parametrize("query", ["inventory", "explanation"])

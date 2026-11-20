@@ -95,13 +95,9 @@ Pyinstrument 另核对相关源码片段，Memray 只读官方概览与许可证
 | AP02 | 补充 Python 环境依赖和任务配置中的工具使用证据 | [Hatch 环境配置](https://hatch.pypa.io/latest/config/environment/overview/)，`EnvironmentInterface.environment_dependencies_complex` / `scripts`；[Poe cmd](https://poethepoet.natn.io/tasks/task_types/cmd.html)，`CmdTask._resolve_commandline` | 优先评估。区分环境声明、任务引用与执行。保留继承、模板、变量、来源覆盖和成员归属的不确定状态，不执行任务、hook 或 shell。 |
 | AP03 | 用动态引用、装饰器注册等样例复核未使用告警的保守性 | [Vulture](https://github.com/jendrikseipp/vulture)，误报说明、白名单与 `Vulture.get_unused_code` | 次优先。借鉴样例和限定方式，不将代码符号评分直接用于包依赖判断，不执行白名单文件。复用现有配置映射和五个测试模块。 |
 | AP04 | 检查现有模块边界约束是否需要覆盖间接导入 | [import-linter](https://github.com/seddonym/import-linter)，`ForbiddenContract.check` | 条件候选。当前已有直接导入约束，先证明间接路径的实际缺口，再选择扩展现有检查或开发期工具，避免维护两套规则。 |
-| AP05 | 在现有阶段计时和进程峰值 RSS 之外定位耗时或分配热点 | [Pyinstrument](https://github.com/joerick/pyinstrument)，`Profiler.start` / `stop`；[Memray](https://github.com/bloomberg/memray)，官方分配分析说明 | 条件候选。先采样自身后端，确有分配问题再考虑 Memray。保留无 profiler 的基准，不增加运行依赖或 CI 阈值。Memray 的平台限制单独处理。 |
 
 2026-10-21 用户授权后，AP01–AP04 已实现并通过本地验证。Hatch 本轮收集物理
-环境声明，不展开模板继承和动态配置，相关状态保持不完整。AP05 采用现有基准、
-cProfile 和 tracemalloc 定位问题，减少无 pytest 配置时的重复位置解析。在固定
-合成夹具的五组前后比较中，扫描中位数从 0.602 秒降至 0.507 秒，完整证据一致。
-这不是全场景速度保证，不新增 profiler 依赖或 CI 阈值。固定来源与实际阅读范围
+环境声明，不展开模板继承和动态配置，相关状态保持不完整。固定来源与实际阅读范围
 保存在 `.tmp/awesome-python-20261021/`，实现与验证在现有活动报告和
 `.tmp/ap-implementation-20261021/`，不进入发布包。
 原有 92 条参考编号保持不变。
@@ -122,7 +118,7 @@ pytest、Hypothesis、Ruff、mypy、uv 和 pip-audit 复用已有实现或参考
 | 任务 | 下一轮候选与本仓库落点 | 原始资料与实施条件 |
 | --- | --- | --- |
 | AR01 | 当前源码已补默认索引的失败上下文处理、发布互斥、初次缺失状态检查和父目录身份检查。落点为 `indexing/store.py`、`filesystem/`，工程测试涵盖写入故障与实际子进程中断。 | 依据 [SQLite 原子提交的故障测试](https://sqlite.org/atomiccommit.html#_testing_atomic_commit_behavior)与[文件替换及损坏说明](https://www.sqlite.org/howtocorrupt.html)，保留事务、私有快照、摘要检查与原子替换。默认缓存的协议协调当前后端写入；显式库路径、手工编辑和旧后端不在同一保证内。进程中断与断电持久性分别验证，后者未获证明。 |
-| AR02 | 已完成累计成本采样，并将 opt-in 工作计量扩展至默认索引快照、刷新、新鲜度与 OSV 传输。现有基准核对输入／完整证据摘要、有／无探针、完整分页及各阶段测量；后续查询视图修正保留一致性，不宣称延迟改善。 | 参考 [OWASP DoS 的设计与输入验证](https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html)。区分每文件、每快照、每次生态调用与整个仓库预算。仅在新测量或回归证明缺口时继续优化，不重复已完成采样，不增加通用调度框架或新的 CI 阈值。 |
+| AR02 | 已将 opt-in 工作计量扩展至默认索引快照、刷新、新鲜度与 OSV 传输；查询视图保留一致性。 | 参考 [OWASP DoS 的设计与输入验证](https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html)。区分每文件、每快照、每次生态调用与整个仓库预算。仅在新测量或回归证明缺口时继续优化，不增加通用调度框架或新的 CI 阈值。 |
 | AH01 | 共享 JSON 数值／Unicode 与 npm lock 路径、坏节点、未知目标的修正，以及私有有界探索，已完成对应轮次的本地验证。回归保留在五个既有测试模块；原生跨平台及当前工作树的完整验证仍须分别确认。 | 从 [Awesome-Fuzzing](https://github.com/secfigo/Awesome-Fuzzing) 延伸核对 [Atheris](https://github.com/google/atheris)。已有实验复用 Hypothesis target 和 Python 行转移观测，不是原生分支覆盖率。Atheris 未安装，仍为可选候选；后续须保留进程、时间、内存和输入边界，不吞掉意外异常或执行被扫描项目。 |
 | AH02 | 已实现显式文件的离线 KEV／EPSS 风险上下文，见 N06；自动下载等仍未实现。 | 从威胁情报分类进一步核对 [CISA 官方 KEV 数据及 schema](https://github.com/cisagov/kev-data)与 [FIRST EPSS](https://www.first.org/epss/)。仅按已有 CVE 标识关联，保留来源、数据日期、缺失和陈旧状态。KEV 收录不证明本项目遭利用，EPSS 是概率信号，不能替代版本匹配、可达性或严重性。不按产品名猜包、不默认联网或阻断发布。 |
 
@@ -149,7 +145,7 @@ AH02 于 2026-10-25 的 N06 轮次完成显式离线文件接入；2026-10-23 �
 运行 Locust，也未审计其全部实现。
 
 值得借鉴的是按用户任务组织场景、逐步增加负载，以及分别记录吞吐、延迟和错误。
-当前后端以 CLI 和 stdio MCP 为入口，已有独立进程基准及离线 MCP 合同检查。
+当前后端以 CLI 和 stdio MCP 为入口，已有离线 MCP 合同检查。
 Locust 原生支持 HTTP；其他协议需要客户端适配和请求事件，官方还要求检查
 [gevent 对协议库的兼容性](https://docs.locust.io/en/stable/testing-other-systems.html)。
 本次没有验证它与 AnyIO／stdio MCP 的组合，也没有为引入压测工具增加 HTTP 服务。
@@ -158,7 +154,7 @@ LP01 保留为条件候选，承接 AR02 的组合成本测量。若出现明确
 先用有界本地场景记录进程数、用户数、输入规模、等待策略、启动与稳态耗时、
 错误及证据完整性，再比较现有工具与 Locust 自定义客户端的成本和新增价值。
 用户数、启动速率和请求速率分别记录，不把 CPU 扫描耗时解释为 HTTP 容量。
-没有实际缺口时继续使用现有基准；不添加运行依赖或 CI 负载阈值。
+没有实际缺口时不添加运行依赖或 CI 负载阈值。
 
 固定来源和阅读记录与本轮 README／CI 修复材料一同保存在
 `.tmp/docs-ci-20261021/`，原 92 条编号不变。
@@ -180,7 +176,7 @@ LP01 保留为条件候选，承接 AR02 的组合成本测量。若出现明确
 | 11 | 论文 | [Less is More? An Empirical Study on Configuration Issues in Python PyPI Ecosystem](https://arxiv.org/abs/2310.12598) | 按真实配置错误设计不完整证据状态和回归样例。 |
 | 12 | 论文 | [Breaking Bad? Semantic Versioning and Impact of Breaking Changes in Maven Central](https://arxiv.org/abs/2110.07889) | 升级建议结合实际 API 使用和破坏性变更证据。 |
 | 13 | 论文 | [Demystifying the Vulnerability Propagation and Its Evolution via Dependency Trees in the NPM Ecosystem](https://arxiv.org/abs/2201.03981) | 沿真实 npm 依赖树定位传播路径与可修复上游。 |
-| 14 | 论文 | [A Comparative Study of Vulnerability Reporting by Software Composition Analysis Tools](https://arxiv.org/abs/2108.12078) | 建立多扫描器对照基准，分别评价误报和漏报。 |
+| 14 | 论文 | [A Comparative Study of Vulnerability Reporting by Software Composition Analysis Tools](https://arxiv.org/abs/2108.12078) | 对照多扫描器的告警差异，分别评价误报和漏报。 |
 | 15 | 论文 | [On the Security Blind Spots of Software Composition Analysis](https://arxiv.org/abs/2306.05534) | 补查 shaded JAR、复制代码等形成的隐藏依赖。 |
 | 16 | 论文 | [SBOM Generation Tools in the Python Ecosystem: an In-Detail Analysis](https://arxiv.org/abs/2409.01214) | 核对可选依赖、远程依赖和版本字段的完整性。 |
 | 17 | 论文 | [A Reality Check on SBOM-based Vulnerability Management: An Empirical Study and A Path Forward](https://arxiv.org/abs/2511.20313) | 将组件清单准确性与函数可达性拆成两阶段验证。 |
